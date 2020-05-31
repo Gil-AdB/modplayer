@@ -9,4 +9,5 @@ edition = "2018"
 [dependencies]
 byteorder = "1"
 portaudio = "0.7"
+crossbeam = "0.7"
 #memmap = { git = "https://github.com/danburkert/memmap-rs" }

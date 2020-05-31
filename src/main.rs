@@ -1,12 +1,13 @@
 #![feature(generators, generator_trait)]
 #![feature(vec_drain_as_slice)]
+#![feature(slice_fill)]
 
 extern crate portaudio;
 
 use std::borrow::{Borrow, BorrowMut};
 use std::cell::{RefCell, UnsafeCell};
 use std::f32::consts::PI;
-use std::{fmt, thread};
+use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::iter::FromIterator;
@@ -25,6 +26,9 @@ use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::thread::sleep;
 use std::time;
+use std::cmp::min;
+use crossbeam::thread;
+use portaudio::{PortAudio, Error};
 
 #[repr(C)]
 #[repr(packed)]
@@ -649,7 +653,7 @@ impl Semaphore {
 
 }
 
-const audio_buf_size: usize = 64;
+const audio_buf_size: usize = 4096*2;
 const audio_num_buffers: usize = 3;
 
 struct ConsumerProducerQueue {
@@ -682,7 +686,7 @@ impl ConsumerProducerQueue {
         }
     }
 
-    fn consume<F: Fn(&[f32;audio_buf_size])>(&mut self, f: F) {
+    fn consume<F: FnMut(&[f32;audio_buf_size])>(&mut self, mut f: F) {
         self.full_count.wait();
         let my_buf = &self.buf[self.back];
         self.back = (self.back + 1) % audio_num_buffers;
@@ -700,54 +704,6 @@ unsafe fn worker(r: Arc<AtomicPtr<i32>>) {
 }
 
 fn main() {
-    let mut q = &mut ConsumerProducerQueue::new();
-    let mut q = Arc::new(AtomicPtr::new(q as * mut ConsumerProducerQueue));
-
-    {
-        let mut q = q.clone();
-        thread::spawn( move || unsafe {
-            let mut idx = 0;
-            let mut q = q.load(Ordering::Acquire);
-
-            let mut temp_buf = [0.0f32; audio_buf_size];
-            let buf_ref = AtomicPtr::new( &mut temp_buf as * mut [f32; audio_buf_size]);
-
-            let mut generator = || {
-                loop {
-                    let mut buf = &mut *buf_ref.load(Ordering::Acquire);
-                    for i in 0..audio_buf_size {
-                        buf[i] = idx as f32;
-                        idx += 1;
-                    }
-                    yield;
-                }
-                return ();
-            };
-
-            (*q).produce(|buf: &mut [f32; audio_buf_size]| {
-                buf_ref.store(buf as * mut [f32; audio_buf_size], Ordering::Release);
-                match Pin::new(&mut generator).resume(()) {
-                    GeneratorState::Yielded(_) => println!("yielded buf[0]={}", buf[0]),
-                    GeneratorState::Complete(_) => {panic!("unexpected value from resume")},
-                }
-            });
-        });
-    }
-
-    sleep(time::Duration::from_secs(1));
-
-    {
-        let mut q = q.load(Ordering::Acquire);
-
-        for idx in 0..100 {
-            unsafe { (*q).consume(|buf: &[f32; 64]| println!("consume: {}", buf[0])); }
-        }
-    }
-
-    sleep(time::Duration::from_secs(5));
-
-    return;
-
     let path = "Revival.XM";
     //let file = File::open(path).expect("failed to open the file");
 
@@ -796,23 +752,23 @@ struct Song<'a> {
     internal_buffer:    Vec<f32>
 }
 
-impl Song<'_> {
-    fn get_buffer(&mut self) -> Vec<f32> {
-        let mut result: Vec<f32> = vec![];
-        result.reserve_exact(buffer_size);
-        while result.len() < buffer_size {
-            if !self.internal_buffer.is_empty() {
-                let copy_size = std::cmp::min(buffer_size - result.len(), self.internal_buffer.len());
-                result.extend(self.internal_buffer.drain(0..copy_size));
-            }
-            if !self.internal_buffer.is_empty() {
-                return result;
-            }
-            self.get_next_tick();
-        }
-
-        return result;
-    }
+impl<'a> Song<'a> {
+    // fn get_buffer(&mut self) -> Vec<f32> {
+    //     let mut result: Vec<f32> = vec![];
+    //     result.reserve_exact(buffer_size);
+    //     while result.len() < buffer_size {
+    //         if !self.internal_buffer.is_empty() {
+    //             let copy_size = std::cmp::min(buffer_size - result.len(), self.internal_buffer.len());
+    //             result.extend(self.internal_buffer.drain(0..copy_size));
+    //         }
+    //         if !self.internal_buffer.is_empty() {
+    //             return result;
+    //         }
+    //         self.get_next_tick();
+    //     }
+    //
+    //     return result;
+    // }
 
     fn get_linear_frequency(note: i16, fine_tune: i32) -> f32 {
         let period = 10.0*12.0*16.0*4.0 - (note as f32)*16.0*4.0 - (fine_tune as f32)/2.0;
@@ -821,65 +777,87 @@ impl Song<'_> {
         frequency as f32
     }
 
-    fn get_next_tick(&mut self) {
-        let tick_duration_in_ms = 2500.0 / self.bpm as f32;
-        let tick_duration_in_frames = (tick_duration_in_ms / 1000.0 * self.rate as f32) as u32;
-        assert!(self.internal_buffer.is_empty());
-        self.internal_buffer.reserve_exact(tick_duration_in_frames as usize * 2usize);
-        let instruments = &self.song_data.instruments;
+    fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; audio_buf_size]>>) -> impl Generator<Yield=(), Return=()> + 'a {
+        move || {
+            let tick_duration_in_ms = 2500.0 / self.bpm as f32;
+            let tick_duration_in_frames = (tick_duration_in_ms / 1000.0 * self.rate as f32) as usize;
 
-        if self.tick == 0 { // new row, set instruments
-            let pattern = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
-            let row = &pattern.rows[self.row];
-            for (i, channel) in row.channels.iter().enumerate() {
-                let output_channel = & mut self.channels[i];
-                if channel.note == 97 {
-                    output_channel.on = false;
-                    continue;
-                }
+            let instruments = &self.song_data.instruments;
 
-                if channel.instrument != 0 {
-                    let instrument = &instruments[channel.instrument as usize];
-                    output_channel.instrument = instrument;
-                    output_channel.sample = &instrument.samples[instrument.sample_indexes[channel.note as usize] as usize];
-                }
+            let mut current_buf_position = 0;
+            let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
+            loop {
+                if self.tick == 0 { // new row, set instruments
+                    let pattern = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
+                    let row = &pattern.rows[self.row];
+                    for (i, channel) in row.channels.iter().enumerate() {
+                        let output_channel = &mut self.channels[i];
+                        if channel.note == 97 {
+                            output_channel.on = false;
+                            continue;
+                        }
 
-                if channel.note >= 1 && channel.note < 97 {
-                    output_channel.on = true;
-                    output_channel.sample_position = 0.0;
-                    self.channels[i].frequency = Song::get_linear_frequency((channel.note as i8 + output_channel.sample.relative_note) as i16, output_channel.sample.finetune as i32);
-                }
-            }
+                        if channel.instrument != 0 {
+                            let instrument = &instruments[channel.instrument as usize];
+                            output_channel.instrument = instrument;
+                            output_channel.sample = &instrument.samples[instrument.sample_indexes[channel.note as usize] as usize];
+                        }
+
+                        if channel.note >= 1 && channel.note < 97 {
+                            output_channel.on = true;
+                            output_channel.sample_position = 0.0;
+                            self.channels[i].frequency = Song::get_linear_frequency((channel.note as i8 + output_channel.sample.relative_note) as i16, output_channel.sample.finetune as i32);
+                        }
+                    }
 //            row
-        } else {
-            // handle effects
-        }
+                } else {
+                    // handle effects
+                }
 
-        self.internal_buffer.resize((tick_duration_in_frames * 2) as usize, 0.0);
-        for channel in & mut self.channels {
-            if !channel.on {
-                continue;
-            }
-            let du = self.rate / channel.frequency;
-            for i in 0..tick_duration_in_frames as usize {
-                self.internal_buffer[i * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0;
-                self.internal_buffer[i * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0;
+//            self.internal_buffer.resize((tick_duration_in_frames * 2) as usize, 0.0);
 
-                channel.sample_position += du;
-                if channel.sample_position > channel.sample.length as f32 {
-                    channel.sample_position = 0.0;
+                let mut current_tick_position = 0usize;
+
+                while current_tick_position < tick_duration_in_frames {
+                    let ticks_to_generate = min(tick_duration_in_frames, audio_buf_size/2 - current_buf_position);
+                    for channel in &mut self.channels {
+                        if !channel.on {
+                            continue;
+                        }
+                        let du = self.rate / channel.frequency;
+                        for i in 0..ticks_to_generate as usize {
+                            buf[(current_buf_position + i) * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0/128.0;
+                            buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0/128.0;
+
+                            channel.sample_position += du;
+                            if channel.sample_position > channel.sample.length as f32 {
+                                channel.sample_position = 0.0;
+                            }
+                        }
+                    }
+                    current_tick_position += ticks_to_generate;
+                    current_buf_position += ticks_to_generate;
+                    // println!("tick: {}, buf: {}, row: {}", self.tick, current_buf_position, self.row);
+                    if current_buf_position == audio_buf_size/2 {
+                        yield;
+                        //let temp_buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
+                        unsafe { buf = &mut *buffer.load(Ordering::Acquire); }
+                        buf.fill(0.0);
+
+                        current_buf_position = 0;
+                    }
+                }
+
+                self.tick += 1;
+                if self.tick > self.speed {
+                    self.row = self.row + 1;
+                    if self.row > 63 {
+                        self.row = 0;
+                        self.song_position = self.song_position + 1;
+                    }
+                    self.tick = 0;
                 }
             }
-        }
-
-        self.tick += 1;
-        if self.tick > self.speed {
-            self.row = self.row + 1;
-            if self.row > 63 {
-                self.row = 0;
-                self.song_position = self.song_position + 1;
-            }
-            self.tick = 0;
         }
     }
 }
@@ -907,7 +885,7 @@ impl Song<'_> {
 
 fn run(song_data : SongData) -> Result<(), pa::Error> {
     const CHANNELS: i32 = 2;
-    const NUM_SECONDS: i32 = 5;
+    const NUM_SECONDS: i32 = 280;
     const SAMPLE_RATE: f64 = 48_000.0;
     const FRAMES_PER_BUFFER: u32 = 4096;
 
@@ -938,56 +916,102 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
         internal_buffer: vec![]
     };
 
-    let buf = song.get_buffer();
+    let mut temp_buf = [0.0f32; audio_buf_size];
+    let mut buf_ref = Arc::new(AtomicPtr::new(&mut temp_buf as *mut [f32; audio_buf_size]));
+    let mut generator = song.get_next_tick_callback(buf_ref.clone());
 
-    let child = thread::spawn(move || {
-        // some work here
-    });
-   // let mut left_saw = 0.0;
-   // let mut right_saw = 0.0;
-    let buf = song.get_buffer();
+    thread::scope(|scope| {
+        let mut q = &mut ConsumerProducerQueue::new();
+        let mut q = Arc::new(AtomicPtr::new(q as *mut ConsumerProducerQueue));
+        {
+            let mut q = q.clone();
+            scope.spawn(move |_| unsafe {
+                let mut idx = 0;
+                let mut q = q.load(Ordering::Acquire);
 
-    let mut count = Arc::new(Mutex::new(0));
 
-    let pa = pa::PortAudio::new()?;
+                // let mut generator = || {
+                //     loop {
+                //         let mut buf = &mut *buf_ref.load(Ordering::Acquire);
+                //         for i in 0..audio_buf_size {
+                //             buf[i] = idx as f32;
+                //             idx += 1;
+                //         }
+                //         yield;
+                //     }
+                //     return ();
+                // };
 
-    let mut settings =
-        pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE, FRAMES_PER_BUFFER)?;
-    // we won't output out of range samples so don't bother clipping them.
+                (*q).produce(|buf: &mut [f32; audio_buf_size]| {
+                    buf_ref.store(buf as *mut [f32; audio_buf_size], Ordering::Release);
+                    if let GeneratorState::Complete(_) = Pin::new(&mut generator).resume(()) { panic!("unexpected value from resume") }
+                });
+            });
+        }
+
+
+        // {
+        //     let mut q = q.load(Ordering::Acquire);
+        //
+        //     for idx in 0..100 {
+        //         unsafe { (*q).consume(|buf: &[f32; 64]| println!("consume: {}", buf[0])); }
+        //     }
+        // }
+
+
+        let mut count = Arc::new(Mutex::new(0));
+
+        let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
+        let pa = match pa_result {
+            Ok(p) => p,
+            Err(e) => return Err(e),
+        };
+
+        let mut settings =
+            pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE, (audio_buf_size/2) as u32)?;
+        // we won't output out of range samples so don't bother clipping them.
 //    settings.flags = pa::stream_flags::CLIP_OFF;
 //
-    // This routine will be called by the PortAudio engine when audio is needed. It may called at
-    // interrupt level on some machines so don't do anything that could mess up the system like
-    // dynamic resource allocation or IO.
-    let guard = {
-        let count = count.clone();
+        // This routine will be called by the PortAudio engine when audio is needed. It may called at
+        // interrupt level on some machines so don't do anything that could mess up the system like
+        // dynamic resource allocation or IO.
+        let guard = {
+            let count = count.clone();
 
-        let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
-       //     println!("{}", frames);
-            let mut idx : usize = 0;
-            let ofs:usize = *count.lock().unwrap() * FRAMES_PER_BUFFER as usize;
+            let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
+                //     println!("{}", frames);
+                let mut idx: usize = 0;
+                let ofs: usize = *count.lock().unwrap() * audio_buf_size as usize;
 
-            for _ in 0..frames {
-                buffer[idx] = buf[idx];
-                buffer[idx + 1] = buf[idx + 1];
-                idx += 2;
-         //       println!("{}", temp);
-            }
-            *count.lock().unwrap() += 1;
-            pa::Continue
+                let mut q = q.load(Ordering::Acquire);
+
+                unsafe { (*q).consume(|buf: &[f32; audio_buf_size]| { buffer.clone_from_slice(buf); }) }
+
+                //    for _ in 0..frames {
+                //        buffer[idx] = buf[idx];
+                //        buffer[idx + 1] = buf[idx + 1];
+                //        idx += 2;
+                // //       println!("{}", temp);
+                //    }
+                *count.lock().unwrap() += 1;
+                pa::Continue
+            };
+            let mut stream = pa.open_non_blocking_stream(settings, callback)?;
+
+            stream.start()?;
+
+            println!("Play for {} seconds.", NUM_SECONDS);
+            pa.sleep(NUM_SECONDS * 1_000);
+
+            stream.stop()?;
+            stream.close()?;
         };
-        let mut stream = pa.open_non_blocking_stream(settings, callback)?;
-
-        stream.start()?;
-
-        println!("Play for {} seconds.", NUM_SECONDS);
-        pa.sleep(NUM_SECONDS * 1_000);
-
-        stream.stop()?;
-        stream.close()?;
-    };
+        Ok(())
+    });
 
     println!("Test finished.");
+
+
 
 //    println!("samples: {}", *count.lock().unwrap());
     Ok(())
