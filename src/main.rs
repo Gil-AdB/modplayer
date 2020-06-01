@@ -678,7 +678,8 @@ impl Semaphore {
 
 }
 
-const audio_buf_size: usize = 4096*2;
+const audio_buf_frames: usize = 64;
+const audio_buf_size: usize = audio_buf_frames*2;
 const audio_num_buffers: usize = 3;
 
 struct ConsumerProducerQueue {
@@ -837,7 +838,7 @@ impl<'a> Song<'a> {
                             output_channel.sample_position = 0.0;
                             output_channel.loop_started = false;
                             self.channels[i].frequency = Song::get_linear_frequency((channel.note as i8 + output_channel.sample.relative_note) as i16, output_channel.sample.finetune as i32);
-                            self.channels[i].du = self.rate / self.channels[i].frequency;
+                            self.channels[i].du = self.channels[i].frequency / self.rate ;
                         }
                     }
 //            row
@@ -850,19 +851,23 @@ impl<'a> Song<'a> {
                 let mut current_tick_position = 0usize;
 
                 while current_tick_position < tick_duration_in_frames {
-                    let ticks_to_generate = min(tick_duration_in_frames, audio_buf_size / 2 - current_buf_position);
+                    let ticks_to_generate = min(tick_duration_in_frames, audio_buf_frames - current_buf_position);
                     self.output_channels(current_buf_position, buf, ticks_to_generate);
                     current_tick_position += ticks_to_generate;
                     current_buf_position += ticks_to_generate;
                     // println!("tick: {}, buf: {}, row: {}", self.tick, current_buf_position, self.row);
-                    if current_buf_position == audio_buf_size / 2 {
+                    if current_buf_position == audio_buf_frames {
+                        // println!("Yielding: {}", current_buf_position);
                         yield;
                         //let temp_buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
                         unsafe { buf = &mut *buffer.load(Ordering::Acquire); }
                         buf.fill(0.0);
 
                         current_buf_position = 0;
+                    } else {
+                        // println!("current_buf_position: {}", current_buf_position)
                     }
+
                 }
 
                 self.tick += 1;
@@ -879,17 +884,28 @@ impl<'a> Song<'a> {
     }
 
     fn output_channels(&mut self, current_buf_position: usize, buf: &mut [f32; audio_buf_size], ticks_to_generate: usize) {
+        // let mut  idx: u32 = 0;
+        let mut cc = 0;
         for channel in &mut self.channels {
+            if channel.on {cc += 1;}
+        }
+        let onecc = 1.0f32 / cc as f32;
+
+        for channel in &mut self.channels {
+            // idx = idx + 1;
             if !channel.on {
                 continue;
             }
 
             for i in 0..ticks_to_generate as usize {
-                buf[(current_buf_position + i) * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0;
-                buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0;
+                buf[(current_buf_position + i) * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * onecc;
+                buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * onecc;
 
+               // if (i & 63) == 0 {print!("{}\n", channel.sample_position);}
                 channel.sample_position += channel.du;
-                if channel.sample_position as u32 >= channel.sample.length {
+
+                if channel.sample_position as u32 >= channel.sample.length  ||
+                    (channel.loop_started && channel.sample_position >= channel.sample.loop_end as f32) {
                     channel.loop_started = true;
                     match channel.sample.loop_type {
                         PingPongLoop => {
@@ -903,6 +919,7 @@ impl<'a> Song<'a> {
                             channel.on = false;
                         }
                     }
+
                     if channel.loop_started && channel.sample_position < channel.sample.loop_start as f32 {
                         // match channel.sample.loop_type {
                         //     PingPongLoop => {
@@ -945,7 +962,7 @@ impl<'a> Song<'a> {
 
 fn run(song_data : SongData) -> Result<(), pa::Error> {
     const CHANNELS: i32 = 2;
-    const NUM_SECONDS: i32 = 100;
+    const NUM_SECONDS: i32 = 500;
     const SAMPLE_RATE: f64 = 48_000.0;
     const FRAMES_PER_BUFFER: u32 = 4096;
 
@@ -1005,6 +1022,7 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
                 // };
 
                 (*q).produce(|buf: &mut [f32; audio_buf_size]| {
+                    // println!("produce {}", audio_buf_size);
                     buf_ref.store(buf as *mut [f32; audio_buf_size], Ordering::Release);
                     if let GeneratorState::Complete(_) = Pin::new(&mut generator).resume(()) { panic!("unexpected value from resume") }
                 });
