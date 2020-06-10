@@ -361,36 +361,55 @@ impl Sample {
 
 #[derive(Debug, Copy, Clone)]
 struct EnvelopePoint {
-    frame_number:                   u16,
-    value:                          u16
+    frame:                   u16,
+    value:                   u16
 }
 
-fn read_envelope<R: Read>(file: &mut R) -> [EnvelopePoint;12] {
-    let mut result = [EnvelopePoint { frame_number: 0, value: 0 }; 12];
+type EnvelopePoints = [EnvelopePoint;12];
+
+fn read_envelope<R: Read>(file: &mut R) -> EnvelopePoints {
+    let mut result = [EnvelopePoint { frame: 0, value: 0 }; 12];
 
     for mut point in &mut result {
-        point.frame_number = read_u16(file);
+        point.frame = read_u16(file);
         point.value = read_u16(file);
     }
     result
 }
 
 #[derive(Debug)]
+struct Envelope {
+    points:             EnvelopePoints,
+    size:               u8,
+    sustain_point:      u8,
+    loop_start_point:   u8,
+    loop_end_point:     u8,
+    on:                 bool,
+    sustain:            bool,
+    has_loop:           bool,
+}
+
+impl Envelope {
+    fn new() -> Envelope {
+        Envelope{
+            points: [EnvelopePoint { frame: 0, value: 0 }; 12],
+            size: 0,
+            sustain_point: 0,
+            loop_start_point: 0,
+            loop_end_point: 0,
+            on: false,
+            sustain: false,
+            has_loop: false
+        }
+    }
+}
+
+#[derive(Debug)]
 struct Instrument {
     name:                           String,
     sample_indexes:                 Vec<u8>,
-    volume_envelope:                [EnvelopePoint;12],
-    panning_envelope:               [EnvelopePoint;12],
-    volume_points:                  u8,
-    panning_points:                 u8,
-    volume_sustain_point:           u8,
-    volume_loop_start_point:        u8,
-    volume_loop_end_point:          u8,
-    panning_sustain_point:          u8,
-    panning_loop_start_point:       u8,
-    panning_loop_end_point:         u8,
-    volume_type:                    u8,
-    panning_type:                   u8,
+    volume_envelope:                Envelope,
+    panning_envelope:               Envelope,
     vibrato_type:                   u8,
     vibrato_sweep:                  u8,
     vibrato_depth:                  u8,
@@ -405,18 +424,8 @@ impl Instrument {
         Instrument{
             name: "".to_string(),
             sample_indexes: vec![0u8; 96],
-            volume_envelope: [EnvelopePoint { frame_number: 0, value: 0 }; 12],
-            panning_envelope: [EnvelopePoint { frame_number: 0, value: 0 }; 12],
-            volume_points: 0,
-            panning_points: 0,
-            volume_sustain_point: 0,
-            volume_loop_start_point: 0,
-            volume_loop_end_point: 0,
-            panning_sustain_point: 0,
-            panning_loop_start_point: 0,
-            panning_loop_end_point: 0,
-            volume_type: 0,
-            panning_type: 0,
+            volume_envelope: Envelope::new(),
+            panning_envelope: Envelope::new(),
             vibrato_type: 0,
             vibrato_sweep: 0,
             vibrato_depth: 0,
@@ -529,18 +538,26 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Ve
             instruments.push(Instrument {
                 name,
                 sample_indexes,
-                volume_envelope,
-                panning_envelope,
-                volume_points,
-                panning_points,
-                volume_sustain_point,
-                volume_loop_start_point,
-                volume_loop_end_point,
-                panning_sustain_point,
-                panning_loop_start_point,
-                panning_loop_end_point,
-                volume_type,
-                panning_type,
+                volume_envelope: Envelope{
+                    points: volume_envelope,
+                    size: volume_points,
+                    sustain_point: volume_sustain_point,
+                    loop_start_point: volume_loop_start_point,
+                    loop_end_point: volume_loop_end_point,
+                    on: (volume_type & 1) == 1,
+                    sustain: (volume_type & 2) == 2,
+                    has_loop: (volume_type & 4) == 4,
+                },
+                panning_envelope: Envelope{
+                    points: panning_envelope,
+                    size: panning_points,
+                    sustain_point: panning_sustain_point,
+                    loop_start_point: panning_loop_start_point,
+                    loop_end_point: panning_loop_end_point,
+                    on: (panning_type & 1) == 1,
+                    sustain: (panning_type & 2) == 2,
+                    has_loop: (panning_type & 4) == 4,
+                },
                 vibrato_type,
                 vibrato_sweep,
                 vibrato_depth,
@@ -678,7 +695,7 @@ impl Semaphore {
 
 }
 
-const audio_buf_frames: usize = 64;
+const audio_buf_frames: usize = 1024;
 const audio_buf_size: usize = audio_buf_frames*2;
 const audio_num_buffers: usize = 3;
 
@@ -751,16 +768,93 @@ fn main() {
 }
 
 #[derive(Clone,Copy,Debug)]
+struct EnvelopeState {
+    frame:       u32,
+    idx:         u32,
+    // instrument:         &'a Instrument,
+}
+
+impl EnvelopeState {
+    fn new() -> EnvelopeState {
+        EnvelopeState { frame: 0, idx: 0 }
+    }
+
+    // pre: e.on && e.size > 0
+    // default: panning envelope: middle (0x80?), volume envelope - max (0x40)
+    fn handle(&mut self, e: &mut Envelope) -> u16 {
+        if e.size == 1 {
+            // if !e.sustain {return default;}
+            return e.points[0].value;
+        }
+
+        if e.has_loop && self.frame >= e.points[e.loop_end_point as usize].frame as u32 {
+            self.idx = e.loop_start_point as u32;
+            self.frame = e.points[self.idx as usize].frame as u32
+        }
+
+        if (e.sustain && self.idx == e.sustain_point as u32) || self.idx == e.size as u32 {
+            return e.points[self.idx as usize].value;
+        }
+
+        if self.frame >= e.points[(self.idx + 1) as usize].frame as u32 {
+            self.idx +=1;
+        }
+
+        let retval = EnvelopeState::lerp(self.frame as u16, &e.points[self.idx as usize], &e.points[(self.idx + 1) as usize]);
+
+        self.frame += 1;
+        retval
+    }
+
+    fn lerp(frame: u16, e1: &EnvelopePoint, e2: &EnvelopePoint) -> u16 {
+        if frame == e1.frame {
+            return e1.value;
+        } else if frame == e2.frame {
+            return e2.value;
+        }
+
+        let p = (frame - e1.frame) as f32/ (e2.frame - e1.frame) as f32;
+        ((e2.value as f32 - e1.value as f32) * p  + e1.value as f32) as u16
+    }
+
+    // fn next_tick(& mut self) {
+    //     if self.instrument.volume_points > 0 {
+    //         self.volume_frame += 1;
+    //         if self.volume_frame >= self.instrument.volume_envelope[self.volume_idx + 1].frame_number {
+    //             self.volume_idx +=1;
+    //             if self.volume_idx > self.instrument.volume_loop_end_point as u32 {
+    //                 self.volume_idx = self.instrument.volume_loop_start_point as u32;
+    //                 self.volume_frame = self.instrument.volume_envelope[self.volume_idx];
+    //
+    //             }
+    //
+    //         }
+    //     }
+    //     // if self.volume_frame > self.instrument.panning_loop_end_point {
+    //     //
+    //     // }
+    //     // self.panning_frame  += 1;
+    // }
+
+    fn reset(& mut self, pos: u32) {
+        self.frame = pos;
+    }
+}
+
+#[derive(Clone,Copy,Debug)]
 struct ChannelData<'a> {
-    instrument:         &'a Instrument,
-    sample:             &'a Sample,
-    note:               u8,
-    frequency:          f32,
-    du:                 f32,
-    volume:             u32,
-    sample_position:    f32,
-    loop_started:       bool,
-    on:                 bool,
+    instrument:                 &'a Instrument,
+    sample:                     &'a Sample,
+    note:                       u8,
+    frequency:                  f32,
+    du:                         f32,
+    volume:                     u32,
+    sample_position:            f32,
+    loop_started:               bool,
+    volume_envelope_state:      EnvelopeState,
+    panning_envelope_state:     EnvelopeState,
+    fadeout_vol:                u16,
+    on:                         bool,
 }
 
 enum Op {
@@ -810,41 +904,11 @@ impl<'a> Song<'a> {
             let tick_duration_in_ms = 2500.0 / self.bpm as f32;
             let tick_duration_in_frames = (tick_duration_in_ms / 1000.0 * self.rate as f32) as usize;
 
-            let instruments = &self.song_data.instruments;
 
             let mut current_buf_position = 0;
             let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
             loop {
-                if self.tick == 0 { // new row, set instruments
-                    let pattern = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
-                    let row = &pattern.rows[self.row];
-
-                    println!("{} {} {} {}", self.speed, self.bpm, self.row, row);
-                    for (i, channel) in row.channels.iter().enumerate() {
-                        let output_channel = &mut self.channels[i];
-                        if channel.note == 97 {
-                            output_channel.on = false;
-                            continue;
-                        }
-
-                        if channel.instrument != 0 {
-                            let instrument = &instruments[channel.instrument as usize];
-                            output_channel.instrument = instrument;
-                            output_channel.sample = &instrument.samples[instrument.sample_indexes[channel.note as usize] as usize];
-                        }
-
-                        if channel.note >= 1 && channel.note < 97 {
-                            output_channel.on = true;
-                            output_channel.sample_position = 0.0;
-                            output_channel.loop_started = false;
-                            self.channels[i].frequency = Song::get_linear_frequency((channel.note as i8 + output_channel.sample.relative_note) as i16, output_channel.sample.finetune as i32);
-                            self.channels[i].du = self.channels[i].frequency / self.rate ;
-                        }
-                    }
-//            row
-                } else {
-                    // handle effects
-                }
+                self.process_row();
 
 //            self.internal_buffer.resize((tick_duration_in_frames * 2) as usize, 0.0);
 
@@ -870,24 +934,79 @@ impl<'a> Song<'a> {
 
                 }
 
-                self.tick += 1;
-                if self.tick > self.speed {
-                    self.row = self.row + 1;
-                    if self.row > 63 {
-                        self.row = 0;
-                        self.song_position = self.song_position + 1;
-                    }
-                    self.tick = 0;
-                }
+                self.next_tick()
             }
         }
     }
 
-    fn output_channels(&mut self, current_buf_position: usize, buf: &mut [f32; audio_buf_size], ticks_to_generate: usize) {
+    fn next_tick(&mut self) {
+        self.tick += 1;
+        if self.tick > self.speed {
+            self.row = self.row + 1;
+            if self.row > 63 {
+                self.row = 0;
+                self.song_position = self.song_position + 1;
+            }
+            self.tick = 0;
+        }
+    }
+
+    fn process_row(&mut self) {
+        let instruments = &self.song_data.instruments;
+
+        let patterns = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
+        let row = &patterns.rows[self.row];
+
+        println!("{} {} {} {}", self.speed, self.bpm, self.row, row);
+        for (i, pattern) in row.channels.iter().enumerate() {
+            let channel = &mut self.channels[i];
+            if self.tick == 0 { // new row, set instruments
+
+                if pattern.note == 97 { // note off
+                    // channel.on = false;
+                    continue;
+                }
+
+                let mut reset_envelope = false;
+                if pattern.instrument != 0 {
+                    let instrument = &instruments[pattern.instrument as usize];
+                    channel.instrument = instrument;
+                    channel.sample = &instrument.samples[instrument.sample_indexes[pattern.note as usize] as usize];
+                    reset_envelope = true;
+                }
+
+                if pattern.note >= 1 && pattern.note < 97 { // trigger note
+                    channel.on = true;
+                    channel.sample_position = 0.0;
+                    channel.loop_started = false;
+                    channel.frequency = Song::get_linear_frequency((pattern.note as i8 + channel.sample.relative_note) as i16, channel.sample.finetune as i32);
+                    channel.du = channel.frequency / self.rate;
+                    reset_envelope = true;
+                }
+
+                if reset_envelope {
+                    channel.volume_envelope_state.reset(0);
+                    channel.panning_envelope_state.reset(0);
+                    channel.fadeout_vol = 65535;
+                }
+            }
+
+            // handle effects
+            // match pattern.effect {
+            //     0xC
+            // }
+
+            // channel.volume = (FadeOutVol/65536)*(EnvelopeVol/64)*(GlobalVol/64)*(Vol/64)*Scale;
+
+        }
+//            row
+    }
+
+    fn output_channels<'b>(&'b mut self, current_buf_position: usize, buf: &mut [f32; audio_buf_size], ticks_to_generate: usize) {
         // let mut  idx: u32 = 0;
         let mut cc = 0;
         for channel in &mut self.channels {
-            if channel.on {cc += 1;}
+            if channel.on { cc += 1; }
         }
         let onecc = 1.0f32 / cc as f32;
 
@@ -901,15 +1020,15 @@ impl<'a> Song<'a> {
                 buf[(current_buf_position + i) * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * onecc;
                 buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * onecc;
 
-               // if (i & 63) == 0 {print!("{}\n", channel.sample_position);}
+                // if (i & 63) == 0 {print!("{}\n", channel.sample_position);}
                 channel.sample_position += channel.du;
 
-                if channel.sample_position as u32 >= channel.sample.length  ||
+                if channel.sample_position as u32 >= channel.sample.length ||
                     (channel.loop_started && channel.sample_position >= channel.sample.loop_end as f32) {
                     channel.loop_started = true;
                     match channel.sample.loop_type {
                         PingPongLoop => {
-                            channel.sample_position = (channel.sample.loop_end-1) as f32;
+                            channel.sample_position = (channel.sample.loop_end - 1) as f32;
                             channel.du = -channel.du;
                         }
                         ForwardLoop => {
@@ -923,7 +1042,7 @@ impl<'a> Song<'a> {
                     if channel.loop_started && channel.sample_position < channel.sample.loop_start as f32 {
                         // match channel.sample.loop_type {
                         //     PingPongLoop => {
-                            channel.du = -channel.du;
+                        channel.du = -channel.du;
                         // }
                         //     _ => {}
                         // }
@@ -989,6 +1108,9 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
             volume: 0,
             sample_position: 0.0,
             loop_started: false,
+            volume_envelope_state: EnvelopeState::new(),
+            panning_envelope_state: EnvelopeState::new(),
+            fadeout_vol: 65535,
             on: false
         }; 32],
         deferred_ops: vec![],
