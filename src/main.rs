@@ -87,6 +87,14 @@ impl Pattern {
             format!("{}{}", Pattern::notes[((self.note - 1) % 12) as usize], (((self.note - 1) / 12) + '0' as u8) as char )
         }
     }
+
+    fn get_x(&self) -> u8 {
+        self.effect_param >> 4
+    }
+
+    fn get_y(&self) -> u8 {
+        self.effect_param & 0xf
+    }
 }
 
 //impl fmt::Debug for Pattern {
@@ -841,13 +849,14 @@ impl VibratoState {
 struct EnvelopeState {
     frame:      u16,
     sustained:  bool,
+    looped:     bool,
     idx:        usize,
     // instrument:         &'a Instrument,
 }
 
 impl EnvelopeState {
     fn new() -> EnvelopeState {
-        EnvelopeState { frame: 0, sustained: false, idx: 0 }
+        EnvelopeState { frame: 0, sustained: false, looped: false, idx: 0 }
     }
 
     fn handle(&mut self, env: &Envelope, channel_sustained: bool, default: u16) -> u16 {
@@ -858,7 +867,7 @@ impl EnvelopeState {
         }
 
         // set sustained if channel is sustained, we have a sustain point and we reached the sustain point
-        if !self.sustained && env.sustain && channel_sustained && self.frame == env.points[env.sustain_point as usize].frame {
+        if !self.looped && !self.sustained && env.sustain && channel_sustained && self.frame == env.points[env.sustain_point as usize].frame {
             self.sustained = true;
         }
 
@@ -869,6 +878,7 @@ impl EnvelopeState {
 
         // loop
         if env.has_loop && self.frame == env.points[env.loop_end_point as usize].frame {
+            self.looped = true;
             self.idx = env.loop_start_point as usize;
             self.frame = env.points[self.idx].frame;
         }
@@ -977,6 +987,7 @@ struct ChannelData<'a> {
     instrument:                 &'a Instrument,
     sample:                     &'a Sample,
     note:                       u8,
+    period:                     f32,
     frequency:                  f32,
     du:                         f32,
     volume:                     u8,
@@ -989,11 +1000,22 @@ struct ChannelData<'a> {
     sustained:                  bool,
     vibrato_state:              VibratoState,
     frequency_shift:            f32,
-    period_shift:               i32,
+    period_shift:               f32,
     on:                         bool,
 }
 
-// impl ChannelData {
+impl ChannelData<'_> {
+    fn set_note(&mut self, note: i16, fine_tune: i32) {
+        self.period = 10.0 * 12.0 * 16.0 * 4.0 - (note * 16 * 4) as f32  - fine_tune as f32 / 2.0;
+        self.frequency_shift = 0.0;
+        self.period_shift = 0.0;
+    }
+
+    fn update_frequency(&mut self, rate: f32) {
+        let two = 2.0f32;
+        self.frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - (self.period/* + self.period_shift*/)) / (12.0 * 16.0 * 4.0));
+        self.du = self.frequency / rate;
+    }
 //     fn new(song_data : SongData) -> ChannelData {
 //         ChannelData {
 //             instrument: &song_data.instruments[0],
@@ -1014,7 +1036,7 @@ struct ChannelData<'a> {
 //             on: false
 //         }
 //     }
-// }
+}
 
 enum Op {
 }
@@ -1053,7 +1075,7 @@ impl<'a> Song<'a> {
     // }
 
     fn get_linear_frequency(note: i16, fine_tune: i32, period_offset: i32) -> f32 {
-        let period = 10.0 * 12.0 * 16.0 * 4.0 - (note as f32) * 16.0 * 4.0 - (fine_tune as f32) / 2.0 + period_offset as f32;
+        let period = 10.0 * 12.0 * 16.0 * 4.0 - (note * 16 * 4) as f32  - (fine_tune / 2) as f32 + period_offset as f32;
         let two = 2.0f32;
         let frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - period) / (12.0 * 16.0 * 4.0));
         frequency as f32
@@ -1123,9 +1145,12 @@ impl<'a> Song<'a> {
         }
 
         for (i, pattern) in row.channels.iter().enumerate() {
-            // if i > 1 { break; }
+            // if i != 12 { continue; }
             let channel = &mut self.channels[i];
             if first_tick { // new row, set instruments
+
+                channel.frequency_shift = 0.0;
+                channel.period_shift = 0.0;
 
                 if pattern.note == 97 { // note off
                     channel.sustained = false;
@@ -1147,8 +1172,8 @@ impl<'a> Song<'a> {
                     channel.on = true;
                     channel.sample_position = 0.0;
                     channel.loop_started = false;
-                    channel.frequency = Song::get_linear_frequency((pattern.note as i8 + channel.sample.relative_note) as i16, channel.sample.finetune as i32, 0);
-                    channel.du = channel.frequency / self.rate;
+                    channel.set_note((pattern.note as i8 + channel.sample.relative_note) as i16, channel.sample.finetune as i32);
+                    channel.update_frequency(self.rate);
                     channel.sustained = true;
                     reset_envelope = true;
                 }
@@ -1162,18 +1187,19 @@ impl<'a> Song<'a> {
 
             if !first_tick && ((0xb0 <= pattern.volume && pattern.volume <= 0xbf) || pattern.effect == 0x4 || pattern.effect == 0x6) {
                 channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::SIN) as f32;
-                channel.frequency += channel.frequency_shift;
-                channel.du = channel.frequency / self.rate;
+                channel.update_frequency(self.rate);
+                // channel.frequency += channel.frequency_shift;
+                // channel.du = channel.frequency / self.rate;
             }
 
             match pattern.volume {
-                0x10..=0x50 => { <Song<'a>>::set_volume(first_tick, pattern.volume - 0x10, channel); }       // set volume
-                0x60..=0x6f => { <Song<'a>>::volume_slide(first_tick, (pattern.volume & 0xf) as i8, channel);}       // Volume slide down
-                0x70..=0x7f => { <Song<'a>>::volume_slide(first_tick, -((pattern.volume & 0xf) as i8), channel);}    // Volume slide up
-                0x80..=0x8f => { <Song<'a>>::fine_volume_slide(first_tick, (pattern.volume & 0xf) as i8, channel);}   // Fine volume slide down
-                0x90..=0x9f => { <Song<'a>>::fine_volume_slide(first_tick, -((pattern.volume & 0xf) as i8), channel);}// Fine volume slide up
-                0xa0..=0xaf => { channel.vibrato_state.speed = (pattern.volume & 0xf) as i8; }// Set vibrato speed
-                0xb0..=0xbf => { if first_tick {channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8);} else {channel.vibrato_state.next_tick();}} // Vibrato
+                0x10..=0x50 => { Song::set_volume(channel, first_tick, pattern.volume - 0x10); }       // set volume
+                0x60..=0x6f => { Song::volume_slide(channel, first_tick, (pattern.volume & 0xf) as i8);}       // Volume slide down
+                0x70..=0x7f => { Song::volume_slide(channel, first_tick, -((pattern.volume & 0xf) as i8));}    // Volume slide up
+                0x80..=0x8f => { Song::fine_volume_slide(channel, first_tick, (pattern.volume & 0xf) as i8);}   // Fine volume slide down
+                0x90..=0x9f => { Song::fine_volume_slide(channel, first_tick, -((pattern.volume & 0xf) as i8));}// Fine volume slide up
+                // 0xa0..=0xaf => { channel.vibrato_state.speed = (pattern.volume & 0xf) as i8; }// Set vibrato speed
+                // 0xb0..=0xbf => { if first_tick {channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8);} else {channel.vibrato_state.next_tick();}} // Vibrato
                 0xc0..=0xcf => {}// Set panning
                 0xd0..=0xdf => {}// Panning slide left
                 0xe0..=0xef => {}// Panning slide right
@@ -1185,10 +1211,14 @@ impl<'a> Song<'a> {
 
             // handle effects
             match pattern.effect {
+                0x0 => {  // Arpeggio
+                    // Song::arpeggio(channel, self.tick, pattern.get_x(), pattern.get_y());
+                    // channel.update_frequency(self.rate);
+                }
                 0x1 => {} // Porta up
                 0x2 => {} // Porta down
                 0x4 => {if first_tick {channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8);} else {channel.vibrato_state.next_tick();}} // vibrato
-                0xC => { <Song<'a>>::set_volume(first_tick, pattern.effect_param, channel); } // set volume
+                0xC => { Song::set_volume(channel, first_tick, pattern.effect_param); } // set volume
 
                 _ => {}
             }
@@ -1199,26 +1229,37 @@ impl<'a> Song<'a> {
             let scale = 1.0;
 
             // FinalVol = (FadeOutVol/65536)*(EnvelopeVol/64)*(GlobalVol/64)*(Vol/64)*Scale;
+            channel.update_frequency(self.rate);
             channel.output_volume = (channel.fadeout_vol as f32 / 65536.0) * (envelope_volume as f32 / 64.0) * (self.volume as f32 / 64.0) * (channel.volume as f32 / 64.0) * scale;
         }
 //            row
     }
 
-    fn set_volume(first_tick: bool, volume: u8, channel: &mut ChannelData) {
+    fn arpeggio(channel: &mut ChannelData, tick: u32, x:u8, y: u8) {
+        match tick % 3 {
+            0 => {channel.period_shift = 0.0;}
+            1 => {channel.period_shift = x as f32;}
+            2 => {channel.period_shift = y as f32;}
+            _ => {}
+        }
+    }
+
+
+    fn set_volume(channel: &mut ChannelData, first_tick: bool, volume: u8, ) {
         if first_tick {
             channel.volume = if volume <= 0x40 {volume} else {0x40};
         }
     }
 
-    fn volume_slide(first_tick: bool, volume: i8, channel: &mut ChannelData) {
-        if !first_tick {<Song<'a>>::volume_slide_inner(volume, channel);}
+    fn volume_slide(channel: &mut ChannelData, first_tick: bool, volume: i8) {
+        if !first_tick { Song::volume_slide_inner(channel, volume);}
     }
 
-    fn fine_volume_slide(first_tick: bool, volume: i8, channel: &mut ChannelData) {
-        if first_tick {<Song<'a>>::volume_slide_inner(volume, channel);}
+    fn fine_volume_slide(channel: &mut ChannelData, first_tick: bool, volume: i8) {
+        if first_tick { Song::volume_slide_inner(channel, volume);}
     }
 
-    fn volume_slide_inner(volume: i8, channel: &mut ChannelData) {
+    fn volume_slide_inner(channel: &mut ChannelData, volume: i8) {
         let mut new_volume = channel.volume as i32 + volume as i32;
 
         new_volume = if new_volume < 0 { 0 } else { volume as i32 };
@@ -1324,7 +1365,7 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
 
 
     let mut song = Song {
-        song_position: 0,
+        song_position: 2,
         row: 0,
         tick: 0,
         rate: 48000.0,
@@ -1336,6 +1377,7 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
             instrument: &song_data.instruments[0],
             sample: &song_data.instruments[0].samples[0],
             note: 0,
+            period: 0.0,
             frequency: 0.0,
             du: 0.0,
             volume: 64,
@@ -1348,7 +1390,7 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
             sustained: false,
             vibrato_state: VibratoState::new(),
             frequency_shift: 0.0,
-            period_shift: 0,
+            period_shift: 0.0,
             on: false
         }; 32],
         deferred_ops: vec![],
