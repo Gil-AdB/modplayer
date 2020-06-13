@@ -1002,6 +1002,8 @@ struct ChannelData<'a> {
     frequency_shift:            f32,
     period_shift:               f32,
     on:                         bool,
+    last_porta_up:              f32,
+    last_porta_down:            f32,
 }
 
 impl ChannelData<'_> {
@@ -1013,7 +1015,7 @@ impl ChannelData<'_> {
 
     fn update_frequency(&mut self, rate: f32) {
         let two = 2.0f32;
-        self.frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - (self.period/* + self.period_shift*/)) / (12.0 * 16.0 * 4.0));
+        self.frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - (self.period + self.period_shift)) / (12.0 * 16.0 * 4.0)) + self.frequency_shift;
         self.du = self.frequency / rate;
     }
 //     fn new(song_data : SongData) -> ChannelData {
@@ -1147,7 +1149,8 @@ impl<'a> Song<'a> {
         for (i, pattern) in row.channels.iter().enumerate() {
             // if i != 12 { continue; }
             let channel = &mut self.channels[i];
-            if first_tick { // new row, set instruments
+            if (pattern.effect == 0xe && pattern.get_x() == 0xd && self.tick == pattern.get_y() as u32) ||
+                (!(pattern.effect == 0xe && pattern.get_x() == 0xd) && first_tick) { // new row, set instruments
 
                 channel.frequency_shift = 0.0;
                 channel.period_shift = 0.0;
@@ -1215,12 +1218,20 @@ impl<'a> Song<'a> {
                     // Song::arpeggio(channel, self.tick, pattern.get_x(), pattern.get_y());
                     // channel.update_frequency(self.rate);
                 }
-                0x1 => {} // Porta up
-                0x2 => {} // Porta down
-                0x4 => {if first_tick {channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8);} else {channel.vibrato_state.next_tick();}} // vibrato
+                0x1 => { Song::porta_up(channel, first_tick, pattern.effect_param, self.rate); } // Porta up
+                0x2 => { Song::porta_down(channel, first_tick, pattern.effect_param, self.rate); } // Porta down
+                //0x3 => { Song::porta_to_note(channel, first_tick, pattern.effect_param, self.rate); } // Porta to note
+                0x4 => { if first_tick {channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8); } else {channel.vibrato_state.next_tick();} } // vibrato
                 0xC => { Song::set_volume(channel, first_tick, pattern.effect_param); } // set volume
 
                 _ => {}
+            }
+
+            if pattern.effect == 0xe {
+                match pattern.get_x() {
+                    0xe => {Song::set_volume(channel, self.tick == pattern.get_y() as u32, 0);}
+                    _ => {}
+                }
             }
 
 
@@ -1229,7 +1240,7 @@ impl<'a> Song<'a> {
             let scale = 1.0;
 
             // FinalVol = (FadeOutVol/65536)*(EnvelopeVol/64)*(GlobalVol/64)*(Vol/64)*Scale;
-            channel.update_frequency(self.rate);
+            // channel.update_frequency(self.rate);
             channel.output_volume = (channel.fadeout_vol as f32 / 65536.0) * (envelope_volume as f32 / 64.0) * (self.volume as f32 / 64.0) * (channel.volume as f32 / 64.0) * scale;
         }
 //            row
@@ -1245,7 +1256,7 @@ impl<'a> Song<'a> {
     }
 
 
-    fn set_volume(channel: &mut ChannelData, first_tick: bool, volume: u8, ) {
+    fn set_volume(channel: &mut ChannelData, first_tick: bool, volume: u8) {
         if first_tick {
             channel.volume = if volume <= 0x40 {volume} else {0x40};
         }
@@ -1268,6 +1279,28 @@ impl<'a> Song<'a> {
         channel.volume = new_volume as u8;
     }
 
+    fn porta_up(channel: &mut ChannelData, first_tick: bool, amount: u8, rate: f32) {
+        if first_tick {
+            if amount != 0 {
+                channel.last_porta_up = amount as f32;
+            }
+        } else {
+            channel.period_shift -= channel.last_porta_up;
+            channel.update_frequency(rate);
+        }
+    }
+
+    fn porta_down(channel: &mut ChannelData, first_tick: bool, amount: u8, rate: f32) {
+        if first_tick {
+            if amount != 0 {
+                channel.last_porta_down = amount as f32;
+            }
+        } else {
+            channel.period_shift += channel.last_porta_down;
+            channel.update_frequency(rate);
+        }
+    }
+
     // fn porta_inner(frequncy_shift: i8, channel: &mut ChannelData) {
     //     channel.frequency_shift += frequency_shift;
     // }
@@ -1280,7 +1313,7 @@ impl<'a> Song<'a> {
         for channel in &mut self.channels {
             if channel.on { cc += 1; }
         }
-        let onecc = 1.0f32 / cc as f32;
+        let onecc = 1.0f32;// / cc as f32;
 
         for channel in &mut self.channels {
             // idx = idx + 1;
@@ -1391,7 +1424,9 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
             vibrato_state: VibratoState::new(),
             frequency_shift: 0.0,
             period_shift: 0.0,
-            on: false
+            on: false,
+            last_porta_up: 0.0,
+            last_porta_down: 0.0
         }; 32],
         deferred_ops: vec![],
         internal_buffer: vec![]
