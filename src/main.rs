@@ -1068,7 +1068,7 @@ impl<'a> Song<'a> {
             let mut current_buf_position = 0;
             let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
             loop {
-                self.process_row();
+                self.process_tick();
 
 //            self.internal_buffer.resize((tick_duration_in_frames * 2) as usize, 0.0);
 
@@ -1101,9 +1101,9 @@ impl<'a> Song<'a> {
 
     fn next_tick(&mut self) {
         self.tick += 1;
-        if self.tick > self.speed {
+        if self.tick >= self.speed {
             self.row = self.row + 1;
-            if self.row > 63 {
+            if self.row >= self.song_data.patterns[self.song_data.pattern_order[self.song_position as usize] as usize].rows.len() {
                 self.row = 0;
                 self.song_position = self.song_position + 1;
             }
@@ -1111,16 +1111,20 @@ impl<'a> Song<'a> {
         }
     }
 
-    fn process_row(&mut self) {
+    fn process_tick(&mut self) {
         let instruments = &self.song_data.instruments;
 
         let patterns = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
         let row = &patterns.rows[self.row];
+        let first_tick = self.tick == 0;
 
-        println!("{} {} {} {}", self.speed, self.bpm, self.row, row);
+        if first_tick {
+            println!("{} {} {}", self.song_position, self.row, row);
+        }
+
         for (i, pattern) in row.channels.iter().enumerate() {
+            // if i > 1 { break; }
             let channel = &mut self.channels[i];
-            let first_tick = self.tick == 0;
             if first_tick { // new row, set instruments
 
                 if pattern.note == 97 { // note off
@@ -1143,7 +1147,7 @@ impl<'a> Song<'a> {
                     channel.on = true;
                     channel.sample_position = 0.0;
                     channel.loop_started = false;
-                    channel.frequency = Song::get_linear_frequency((pattern.note as i8 + channel.sample.relative_note) as i16, channel.sample.finetune as i32);
+                    channel.frequency = Song::get_linear_frequency((pattern.note as i8 + channel.sample.relative_note) as i16, channel.sample.finetune as i32, 0);
                     channel.du = channel.frequency / self.rate;
                     channel.sustained = true;
                     reset_envelope = true;
@@ -1158,6 +1162,8 @@ impl<'a> Song<'a> {
 
             if !first_tick && ((0xb0 <= pattern.volume && pattern.volume <= 0xbf) || pattern.effect == 0x4 || pattern.effect == 0x6) {
                 channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::SIN) as f32;
+                channel.frequency += channel.frequency_shift;
+                channel.du = channel.frequency / self.rate;
             }
 
             match pattern.volume {
@@ -1253,11 +1259,12 @@ impl<'a> Song<'a> {
                     channel.loop_started = true;
                     match channel.sample.loop_type {
                         PingPongLoop => {
-                            channel.sample_position = (channel.sample.loop_end - 1) as f32;
+                            channel.sample_position = (channel.sample.loop_end - 1) as f32 - (channel.sample_position - channel.sample.loop_end as f32);
+                            // channel.sample_position = (channel.sample.loop_end - 1) as f32;
                             channel.du = -channel.du;
                         }
                         ForwardLoop => {
-                            channel.sample_position = channel.sample.loop_start as f32;
+                            channel.sample_position = (channel.sample_position - channel.sample.loop_end as f32) + channel.sample.loop_start as f32;
                         }
                         NoLoop => {
                             channel.on = false;
