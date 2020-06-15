@@ -1112,7 +1112,7 @@ impl<'a> Song<'a> {
     // }
 
     fn get_linear_frequency(note: i16, fine_tune: i32, period_offset: i32) -> f32 {
-        let period = 10.0 * 12.0 * 16.0 * 4.0 - (note * 16 * 4) as f32  - (fine_tune / 2) as f32 + period_offset as f32;
+        let period = 10.0 * 12.0 * 16.0 * 4.0 - (note * 16 * 4) as f32  - (fine_tune as f32) / 2.0 + period_offset as f32;
         let two = 2.0f32;
         let frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - period) / (12.0 * 16.0 * 4.0));
         frequency as f32
@@ -1213,11 +1213,19 @@ impl<'a> Song<'a> {
                 }
 
                 if pattern.note >= 1 && pattern.note < 97 { // trigger note
+                    let tone = pattern.note as i8 + channel.sample.relative_note;
+                    if tone > 12 * 10 {
+                        continue;
+                    }
+
                     channel.on = true;
                     channel.sample_position = 0.0;
                     channel.loop_started = false;
                     channel.frequency_shift = 0.0;
                     channel.period_shift = 0.0;
+
+                    println!("channel: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, channel.sample.relative_note, pattern.note as i8 + channel.sample.relative_note, channel.volume);
+
                     channel.set_note((pattern.note as i8 + channel.sample.relative_note) as i16, channel.sample.finetune as i32);
                     channel.update_frequency(self.rate);
                     channel.sustained = true;
@@ -1379,10 +1387,10 @@ impl<'a> Song<'a> {
             if channel.on { cc += 1; }
         }
         // let onecc = 1.0f32;// / cc as f32;
-        print!("position: {}, row: {}\n", self.song_position, self.row);
+        println!("position: {}, row: {}", self.song_position, self.row);
 
         for channel in &mut self.channels {
-            print!("on: {}, channel: {}, instrument: {}, frequency: {}, volume: {}\n", channel.on, idx, channel.instrument.name, channel.frequency, channel.volume);
+            println!("on: {:5}, channel: {:2}, instrument: {:22}, frequency: {:6}, volume: {:2}", channel.on, idx, channel.instrument.name, channel.frequency, channel.volume);
             idx = idx + 1;
             if !channel.on {
                 continue;
@@ -1462,10 +1470,7 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
     const SAMPLE_RATE: f64 = 48_000.0;
     const FRAMES_PER_BUFFER: u32 = 4096;
 
-    println!(
-        "PortAudio Test: output sawtooth wave. SR = {}, BufSize = {}",
-        SAMPLE_RATE, FRAMES_PER_BUFFER
-    );
+    //crossterm::
 
 
     let mut song = Song {
