@@ -1209,6 +1209,7 @@ impl<'a> Song<'a> {
                     let instrument = &instruments[pattern.instrument as usize];
                     channel.instrument = instrument;
                     channel.sample = &instrument.samples[instrument.sample_indexes[pattern.note as usize] as usize];
+                    channel.volume = channel.sample.volume;
                     reset_envelope = true;
                 }
 
