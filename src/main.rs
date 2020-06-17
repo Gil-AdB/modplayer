@@ -9,7 +9,7 @@ use std::cell::{RefCell, UnsafeCell};
 use std::f32::consts::PI;
 use std::fmt;
 use std::fs::File;
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
+use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write, stdout};
 use std::iter::FromIterator;
 use std::num::Wrapping;
 use std::ops::{Deref, DerefMut, Generator, GeneratorState};
@@ -31,7 +31,13 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::channel;
 use std::thread::sleep;
 use std::time;
-use crossterm_cursor;
+// use term::stdout;
+
+use crossterm::{
+    ExecutableCommand, execute,
+    cursor::{MoveTo, RestorePosition, SavePosition}
+};
+use getch::Getch;
 
 #[repr(C)]
 #[repr(packed)]
@@ -178,6 +184,11 @@ struct SongData {
 fn read_string<R: Read>(file: &mut R, size: usize) -> String {
     let mut buf = vec!(0u8; size);
     file.read_exact(&mut buf).unwrap();
+    for c in &mut buf {
+        if *c < 32 || *c > 127 {
+            *c = 32;
+        }
+    }
     String::from_utf8_lossy(&buf).parse().unwrap()
 }
 
@@ -293,7 +304,7 @@ fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usi
     patterns
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum LoopType {
     NoLoop,
     ForwardLoop,
@@ -806,14 +817,20 @@ fn main() {
 
 #[derive(Clone,Copy,Debug)]
 struct PortaToNoteState {
-    target_frequency:           f32,
+    target_note:                Note,
     speed:                      u8,
+    target_frequency:            f32
 }
 
 
 impl PortaToNoteState {
     fn new() -> PortaToNoteState {
         PortaToNoteState {
+            target_note: Note{
+                note: 0.0,
+                finetune: 0.0,
+                period: 0.0
+            },
             target_frequency: 0.0,
             speed: 0
         }
@@ -1016,17 +1033,54 @@ impl EnvelopeState {
 }
 
 #[derive(Clone,Copy,Debug)]
+struct Note {
+    note:       f32,
+    finetune:   f32,
+    period:     f32
+}
+
+impl Note {
+    fn set_note(&mut self, note: f32, finetune: f32) {
+        self.note = note;
+        self.finetune = finetune;
+        self.period = 10.0 * 12.0 * 16.0 * 4.0 - (self.note * 16.0 * 4.0)  - self.finetune / 2.0
+    }
+
+
+    fn frequency(&self, period_shift: f32) -> f32 {
+        //let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
+        let period = self.period - (period_shift * 16.0 * 4.0);
+        let two = 2.0f32;
+        let freq = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - period) / (12.0 * 16.0 * 4.0));
+        return freq
+    }
+
+    const NOTES: [&'static str;12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
+
+    fn to_string(&self) -> String {
+        if self.note == 97.0 || self.note == 0.0 { "   ".to_string() } else {
+            format!("{}{}", Self::NOTES[((self.note as u8 - 1) % 12) as usize], (((self.note as u8 - 1) / 12) + '0' as u8) as char )
+        }
+    }
+
+
+}
+
+
+#[derive(Clone,Copy,Debug)]
 struct ChannelData<'a> {
     instrument:                 &'a Instrument,
     sample:                     &'a Sample,
-    note:                       u8,
-    period:                     f32,
+    // note:                       u8,
+    // period:                     f32,
+    note:                       Note,
     frequency:                  f32,
     du:                         f32,
     volume:                     u8,
     output_volume:              f32,
     sample_position:            f32,
     loop_started:               bool,
+    ping:                       bool,
     volume_envelope_state:      EnvelopeState,
     panning_envelope_state:     EnvelopeState,
     fadeout_vol:                u16,
@@ -1042,16 +1096,62 @@ struct ChannelData<'a> {
 
 impl ChannelData<'_> {
     fn set_note(&mut self, note: i16, fine_tune: i32) {
-        self.period = 10.0 * 12.0 * 16.0 * 4.0 - (note * 16 * 4) as f32  - fine_tune as f32 / 2.0;
+        self.note.set_note(note as f32, fine_tune as f32);
         self.frequency_shift = 0.0;
         self.period_shift = 0.0;
+        self.frequency = self.note.frequency(self.period_shift);
     }
 
     fn update_frequency(&mut self, rate: f32) {
-        let two = 2.0f32;
-        self.frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - (self.period + self.period_shift)) / (12.0 * 16.0 * 4.0)) + self.frequency_shift;
+        // self.frequency = self.note.frequency(self.period_shift) + self.frequency_shift;
+        self.frequency = self.note.frequency(self.period_shift) + self.frequency_shift;
         self.du = self.frequency / rate;
     }
+
+    fn reset_envelopes(&mut self) {
+        self.volume_envelope_state.reset(0, &self.instrument.volume_envelope);
+        self.panning_envelope_state.reset(0, &self.instrument.panning_envelope);
+        self.fadeout_vol = 65535;
+    }
+
+
+    fn trigger_note(&mut self, pattern: &Pattern, rate: f32) {
+        let mut reset_envelope = false;
+        if pattern.note >= 1 && pattern.note < 97 { // trigger note
+
+            let tone = match self.get_tone(pattern) {
+                Ok(p) => p,
+                Err(e) => return,
+            };
+
+            self.on = true;
+            self.sample_position = 0.0;
+            self.loop_started = false;
+            self.ping = true;
+            self.frequency_shift = 0.0;
+            self.period_shift = 0.0;
+
+            // println!("channel: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, channel.sample.relative_note, pattern.note as i8 + channel.sample.relative_note, channel.volume);
+
+            self.set_note(tone as i16, self.sample.finetune as i32);
+            self.update_frequency(rate);
+            self.sustained = true;
+            reset_envelope = true;
+        }
+
+        if reset_envelope {
+            self.reset_envelopes();
+        }
+    }
+
+    fn get_tone(&mut self, pattern: &Pattern) -> Result<i8, bool> {
+        let tone = pattern.note as i8 + self.sample.relative_note;
+        if tone > 12 * 10 || tone < 0 {
+            return Err(false);
+        }
+        Ok(tone)
+    }
+
 //     fn new(song_data : SongData) -> ChannelData {
 //         ChannelData {
 //             instrument: &song_data.instruments[0],
@@ -1090,7 +1190,6 @@ struct Song<'a> {
     channels:           [ChannelData<'a>;32],
     deferred_ops:       Vec<Op>,
     internal_buffer:    Vec<f32>,
-    cursor:             crossterm_cursor::TerminalCursor,
 }
 
 impl<'a> Song<'a> {
@@ -1136,7 +1235,7 @@ impl<'a> Song<'a> {
                 while current_tick_position < tick_duration_in_frames {
                     let ticks_to_generate = min(tick_duration_in_frames, AUDIO_BUF_FRAMES - current_buf_position);
 
-                    self.cursor.goto(1,1);
+                    crossterm::execute!(stdout(), MoveTo(1,1));
                     self.output_channels(current_buf_position, buf, ticks_to_generate);
                     current_tick_position += ticks_to_generate;
                     current_buf_position += ticks_to_generate;
@@ -1185,15 +1284,15 @@ impl<'a> Song<'a> {
 
         for (i, pattern) in row.channels.iter().enumerate() {
             // if i != 12 { continue; }
-            let channel = &mut self.channels[i];
+            let mut channel = &mut (self.channels[i]);
 
-            // channel.frequency_shift = 0.0;
-            // channel.period_shift = 0.0;
-
+            if first_tick && pattern.is_porta_to_note() && pattern.instrument != 0 {
+                channel.volume = channel.sample.volume;
+            }
 
             if !pattern.is_porta_to_note() &&
                 ((pattern.is_note_delay() && self.tick == pattern.get_y() as u32) ||
-                (!pattern.is_note_delay() && first_tick)) { // new row, set instruments
+                    (!pattern.is_note_delay() && first_tick)) { // new row, set instruments
 
 
                 if pattern.note == 97 { // note off
@@ -1204,49 +1303,30 @@ impl<'a> Song<'a> {
                     }
                 }
 
-                let mut reset_envelope = false;
                 if pattern.instrument != 0 {
                     let instrument = &instruments[pattern.instrument as usize];
                     channel.instrument = instrument;
                     channel.sample = &instrument.samples[instrument.sample_indexes[pattern.note as usize] as usize];
                     channel.volume = channel.sample.volume;
-                    reset_envelope = true;
                 }
 
-                if pattern.note >= 1 && pattern.note < 97 { // trigger note
-                    let tone = pattern.note as i8 + channel.sample.relative_note;
-                    if tone > 12 * 10 {
-                        continue;
-                    }
+                channel.frequency_shift = 0.0;
+                channel.period_shift = 0.0;
 
-                    channel.on = true;
-                    channel.sample_position = 0.0;
-                    channel.loop_started = false;
-                    channel.frequency_shift = 0.0;
-                    channel.period_shift = 0.0;
 
-                    println!("channel: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, channel.sample.relative_note, pattern.note as i8 + channel.sample.relative_note, channel.volume);
-
-                    channel.set_note((pattern.note as i8 + channel.sample.relative_note) as i16, channel.sample.finetune as i32);
-                    channel.update_frequency(self.rate);
-                    channel.sustained = true;
-                    reset_envelope = true;
+                let mut reset_envelope = false;
+                if pattern.instrument != 0 {
+                    channel.reset_envelopes();
                 }
 
-                if reset_envelope {
-                    channel.volume_envelope_state.reset(0, &channel.instrument.volume_envelope);
-                    channel.panning_envelope_state.reset(0, &channel.instrument.panning_envelope);
-                    channel.fadeout_vol = 65535;
-                }
+                channel.trigger_note(pattern, self.rate);
             }
 
 
-            // if !first_tick && ((0xb0 <= pattern.volume && pattern.volume <= 0xbf) || pattern.effect == 0x4 || pattern.effect == 0x6) {
-            //     channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::SIN) as f32;
-            //     channel.update_frequency(self.rate);
-            //     // channel.frequency += channel.frequency_shift;
-            //     // channel.du = channel.frequency / self.rate;
-            // }
+            if !first_tick && ((0xb0 <= pattern.volume && pattern.volume <= 0xbf) || pattern.effect == 0x4 || pattern.effect == 0x6) {
+                channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::SIN) as f32;
+                channel.update_frequency(self.rate);
+            }
 
             match pattern.volume {
                 0x10..=0x50 => { Song::set_volume(channel, first_tick, pattern.volume - 0x10); }       // set volume
@@ -1255,11 +1335,11 @@ impl<'a> Song<'a> {
                 0x80..=0x8f => { Song::fine_volume_slide(channel, first_tick, (pattern.volume & 0xf) as i8); }   // Fine volume slide down
                 0x90..=0x9f => { Song::fine_volume_slide(channel, first_tick, -((pattern.volume & 0xf) as i8)); }// Fine volume slide up
                 0xa0..=0xaf => { channel.vibrato_state.speed = (pattern.volume & 0xf) as i8; }// Set vibrato speed
-                0xb0..=0xbf => { if first_tick {channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8);} else {channel.vibrato_state.next_tick();}} // Vibrato
+                0xb0..=0xbf => { if first_tick { channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8); } else { channel.vibrato_state.next_tick(); } } // Vibrato
                 0xc0..=0xcf => {}// Set panning
                 0xd0..=0xdf => {}// Panning slide left
                 0xe0..=0xef => {}// Panning slide right
-                0xf0..=0xff => {}// Tone porta
+                0xf0..=0xff => {Song::porta_to_note(channel, pattern.volume & 0xf, first_tick, pattern, self.rate); }// Tone porta
 
                 _ => {}
             }
@@ -1275,7 +1355,7 @@ impl<'a> Song<'a> {
                 }
                 0x1 => { Song::porta_up(channel, first_tick, pattern.effect_param, self.rate); } // Porta up
                 0x2 => { Song::porta_down(channel, first_tick, pattern.effect_param, self.rate); } // Porta down
-                0x3 => { Song::porta_to_note(channel, first_tick, pattern.note, pattern.effect_param, self.rate); } // Porta to note
+                0x3 => { Song::porta_to_note(channel,pattern.effect_param, first_tick, pattern, self.rate); } // Porta to note
                 0x4 => { if first_tick { channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8); } else { channel.vibrato_state.next_tick(); } } // vibrato
                 0xC => { Song::set_volume(channel, first_tick, pattern.effect_param); } // set volume
 
@@ -1290,9 +1370,14 @@ impl<'a> Song<'a> {
             }
 
 
-            let envelope_volume = channel.volume_envelope_state.handle1(&channel.instrument.volume_envelope, channel.sustained, 64);
-            let envelope_panning = channel.panning_envelope_state.handle1(&channel.instrument.panning_envelope, channel.sustained, 128);
-            let scale = 1.0;
+            let mut ves = channel.volume_envelope_state;
+            let envelope_volume = channel.volume_envelope_state.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
+            let envelope_volume1 = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
+            if envelope_volume != envelope_volume1 {
+                let banana = 1;
+            }
+            let envelope_panning = channel.panning_envelope_state.handle(&channel.instrument.panning_envelope, channel.sustained, 128);
+            let scale = 0.8;
 
             // FinalVol = (FadeOutVol/65536)*(EnvelopeVol/64)*(GlobalVol/64)*(Vol/64)*Scale;
             // channel.update_frequency(self.rate);
@@ -1334,20 +1419,43 @@ impl<'a> Song<'a> {
         channel.volume = new_volume as u8;
     }
 
-    fn porta_to_note(channel: &mut ChannelData, first_tick: bool, note: u8, speed: u8, rate: f32) {
+    fn porta_to_note(channel: &mut ChannelData, speed: u8, first_tick: bool, pattern: &Pattern, rate: f32) {
+        // let speed = pattern.effect_param;
+
         if first_tick {
             if speed != 0 {
-                if is_note_valid(note) {
-                    channel.porta_to_note.target_frequency = Song::get_linear_frequency(note as i16, 0, 0);
-                }
                 channel.porta_to_note.speed = speed;
             }
-        } else {
-            if channel.frequency < channel.porta_to_note.target_frequency {
-                channel.frequency_shift += channel.porta_to_note.speed as f32;
-            } else if channel.frequency > channel.porta_to_note.target_frequency {
-                channel.frequency_shift -= channel.porta_to_note.speed as f32;
+
+            if is_note_valid(pattern.note) {
+                channel.porta_to_note.target_note.set_note((pattern.note as i16 + channel.sample.relative_note as i16) as f32, channel.sample.finetune as f32);
+                channel.porta_to_note.target_frequency = channel.porta_to_note.target_note.frequency(0.0);
             }
+
+        } else {
+            let mut up = true;
+            if channel.note.period < channel.porta_to_note.target_note.period {
+                channel.note.period += channel.porta_to_note.speed as f32 * 4.0;
+                up = true;
+
+            } else if channel.note.period > channel.porta_to_note.target_note.period {
+                channel.note.period -= channel.porta_to_note.speed as f32 * 4.0;
+                up = false;
+            }
+
+            if up {
+                if channel.note.period > channel.porta_to_note.target_note.period {
+                    channel.note = channel.porta_to_note.target_note;
+                    channel.period_shift = 0.0;
+                    channel.frequency_shift = 0.0;
+                }
+            } else if channel.note.period < channel.porta_to_note.target_note.period {
+                    channel.note = channel.porta_to_note.target_note;
+                    channel.period_shift = 0.0;
+                    channel.frequency_shift = 0.0;
+                }
+
+
             channel.update_frequency(rate);
         }
     }
@@ -1356,10 +1464,13 @@ impl<'a> Song<'a> {
     fn porta_up(channel: &mut ChannelData, first_tick: bool, amount: u8, rate: f32) {
         if first_tick {
             if amount != 0 {
-                channel.last_porta_up = amount as f32;
+                channel.last_porta_up = amount as f32 * 4.0;
             }
         } else {
-            channel.period_shift -= channel.last_porta_up;
+            channel.note.period -= channel.last_porta_up;
+            if channel.note.period < 1.0 {
+                channel.note.period = 1.0;
+            }
             channel.update_frequency(rate);
         }
     }
@@ -1367,10 +1478,13 @@ impl<'a> Song<'a> {
     fn porta_down(channel: &mut ChannelData, first_tick: bool, amount: u8, rate: f32) {
         if first_tick {
             if amount != 0 {
-                channel.last_porta_down = amount as f32;
+                channel.last_porta_down = amount as f32 * 4.0;
             }
         } else {
-            channel.period_shift += channel.last_porta_down;
+            channel.note.period += channel.last_porta_down;
+            if channel.note.period > 31999.0 {
+                channel.note.period = 31999.0;
+            }
             channel.update_frequency(rate);
         }
     }
@@ -1387,15 +1501,22 @@ impl<'a> Song<'a> {
         for channel in &mut self.channels {
             if channel.on { cc += 1; }
         }
+
         // let onecc = 1.0f32;// / cc as f32;
-        println!("position: {}, row: {}", self.song_position, self.row);
+        println!("position: {:3}, row: {:3}", self.song_position, self.row);
+        println!("  on  | channel |       instrument       |  frequency  | volume  | sample_position");
 
         for channel in &mut self.channels {
-            println!("on: {:5}, channel: {:2}, instrument: {:22}, frequency: {:6}, volume: {:2}", channel.on, idx, channel.instrument.name, channel.frequency, channel.volume);
+
+            println!("{:5} | {:7} | {:22} | {:<11} | {:7} | {:19}, {:5}, {:7} {}",
+                     channel.on, idx, channel.instrument.name.trim(), channel.frequency + channel.frequency_shift, channel.volume, channel.sample_position, channel.note.to_string(), channel.note.period, channel.period_shift);
             idx = idx + 1;
+             // if idx != 8 {continue;}
+
             if !channel.on {
                 continue;
             }
+
 
             // print!("channel: {}, instrument: {}, frequency: {}, volume: {}\n", idx, channel.instrument.name, channel.frequency, channel.volume);
 
@@ -1404,7 +1525,11 @@ impl<'a> Song<'a> {
                 buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.output_volume;
 
                 // if (i & 63) == 0 {print!("{}\n", channel.sample_position);}
-                channel.sample_position += channel.du;
+                if channel.sample.loop_type == PingPongLoop && !channel.ping {
+                    channel.sample_position -= channel.du;
+                } else {
+                    channel.sample_position += channel.du;
+                }
 
                 if channel.sample_position as u32 >= channel.sample.length ||
                     (channel.loop_started && channel.sample_position >= channel.sample.loop_end as f32) {
@@ -1412,8 +1537,9 @@ impl<'a> Song<'a> {
                     match channel.sample.loop_type {
                         PingPongLoop => {
                             channel.sample_position = (channel.sample.loop_end - 1) as f32 - (channel.sample_position - channel.sample.loop_end as f32);
+                            channel.ping = false;
                             // channel.sample_position = (channel.sample.loop_end - 1) as f32;
-                            channel.du = -channel.du;
+                            // channel.du = -channel.du;
                         }
                         ForwardLoop => {
                             channel.sample_position = (channel.sample_position - channel.sample.loop_end as f32) + channel.sample.loop_start as f32;
@@ -1423,20 +1549,20 @@ impl<'a> Song<'a> {
                             break;
                         }
                     }
+                }
 
-                    if channel.loop_started && channel.sample_position < channel.sample.loop_start as f32 {
-                        // match channel.sample.loop_type {
-                        //     PingPongLoop => {
-                        channel.du = -channel.du;
-                        // }
-                        //     _ => {}
-                        // }
-                        channel.sample_position = channel.sample.loop_start as f32 + (channel.sample.loop_start as f32 - channel.sample_position) as f32;
-                    }
-                    if channel.sample_position as u32 >= channel.sample.length {
-                        channel.on = false;
-                        break;
-                    }
+                if channel.loop_started && channel.sample_position < channel.sample.loop_start as f32 {
+                    match channel.sample.loop_type {
+                        PingPongLoop => {
+                            channel.ping = true;
+                        }
+                            _ => {}
+                        }
+                    channel.sample_position = channel.sample.loop_start as f32 + (channel.sample.loop_start as f32 - channel.sample_position) as f32;
+                }
+                if channel.sample_position as u32 >= channel.sample.length {
+                    channel.on = false;
+                    break;
                 }
             }
         }
@@ -1486,14 +1612,18 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
         channels: [ChannelData {
             instrument: &song_data.instruments[0],
             sample: &song_data.instruments[0].samples[0],
-            note: 0,
-            period: 0.0,
+            note: Note{
+                note: 0.0,
+                finetune: 0.0,
+                period: 0.0
+            },
             frequency: 0.0,
             du: 0.0,
             volume: 64,
             output_volume: 1.0,
             sample_position: 0.0,
             loop_started: false,
+            ping: true,
             volume_envelope_state: EnvelopeState::new(),
             panning_envelope_state: EnvelopeState::new(),
             fadeout_vol: 65535,
@@ -1508,7 +1638,6 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
         }; 32],
         deferred_ops: vec![],
         internal_buffer: vec![],
-        cursor: crossterm_cursor::cursor(),
     };
 
     let mut temp_buf = [0.0f32; AUDIO_BUF_SIZE];
@@ -1596,8 +1725,17 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
 
             stream.start()?;
 
+
+            let getter = Getch::new();
             println!("Play for {} seconds.", NUM_SECONDS);
-            pa.sleep(NUM_SECONDS * 1_000);
+
+            loop {
+
+                if let Ok(ch) = getter.getch() {if ch == 'q' as u8 {break};}
+
+
+                pa.sleep(1_000);
+            }
 
             stream.stop()?;
             stream.close()?;
