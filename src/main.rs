@@ -15,7 +15,7 @@ use std::num::Wrapping;
 use std::ops::{Deref, DerefMut, Generator, GeneratorState};
 use std::os::raw::*;
 use std::pin::Pin;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
 
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use portaudio as pa;
@@ -28,7 +28,7 @@ use std::fmt::Debug;
 use std::ptr::null;
 use std::slice::SliceIndex;
 use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread::sleep;
 use std::time;
 // use term::stdout;
@@ -108,6 +108,8 @@ impl Pattern {
         self.effect == 0xe && self.get_x() == 0xd
     }
 
+    fn has_vibrato(&self) -> bool {self.get_volume_effect() == 0xb || self.effect == 0x4 || self.effect == 0x6}
+
     fn get_x(&self) -> u8 {
         self.effect_param >> 4
     }
@@ -115,6 +117,14 @@ impl Pattern {
     fn get_y(&self) -> u8 {
         self.effect_param & 0xf
     }
+
+    fn get_volume_effect(&self) -> u8 {
+        self.volume & 0xf0 >> 4
+    }
+    fn get_volume_param(&self) -> u8 {
+        self.volume & 0xf
+    }
+
 }
 
 //impl fmt::Debug for Pattern {
@@ -766,12 +776,12 @@ impl ConsumerProducerQueue {
         CPQHolder{q: Arc::new(AtomicPtr::new(Box::into_raw(q) as *mut ConsumerProducerQueue))}
     }
 
-        fn produce<F: FnMut(&mut[f32; AUDIO_BUF_SIZE])>(&mut self, mut f: F) {
+        fn produce<F: FnMut(&mut[f32; AUDIO_BUF_SIZE]) -> bool>(&mut self, mut f: F) {
         loop {
             self.empty_count.wait();
             let my_buf = &mut self.buf[self.front];
             self.front = (self.front + 1) % AUDIO_NUM_BUFFERS;
-            f(my_buf);
+            if !f(my_buf) { return; }
             self.full_count.signal()
         }
     }
@@ -819,7 +829,6 @@ fn main() {
 struct PortaToNoteState {
     target_note:                Note,
     speed:                      u8,
-    target_frequency:            f32
 }
 
 
@@ -831,7 +840,6 @@ impl PortaToNoteState {
                 finetune: 0.0,
                 period: 0.0
             },
-            target_frequency: 0.0,
             speed: 0
         }
     }
@@ -873,18 +881,25 @@ impl VibratoState {
         }
     }
 
+    fn set_depth(&mut self, depth: i8) {
+        if depth != 0 {
+            self.depth = depth;
+        }
+    }
+
 
     fn get_frequency_shift(&mut self, wave_control: WaveControl) -> i32 {
         let mut delta = 0;
+        let vibrato_pos = (self.pos >> 2) & 31;
         match wave_control {
-            WaveControl::SIN => { delta = (VibratoState::SIN_TABLE[(self.pos & 31) as usize] * self.depth as i32); }
+            WaveControl::SIN => { delta = (VibratoState::SIN_TABLE[vibrato_pos as usize] * self.depth as i32); }
             WaveControl::RAMP => {
-                let mut temp:i32 = ((self.pos & 31) * 8) as i32;
+                let mut temp:i32 = (vibrato_pos * 8) as i32;
                 delta = if self.pos < 0 { 255 - temp } else { temp } as i32
             }
             WaveControl::SQUARE => { delta = 255; }
         }
-        ((delta / 128) * 4 * (if self.pos < 0 { -1 } else { 1 })) as i32
+        ((delta >> 5) * (if self.pos < 0 { -1 } else { 1 })) as i32
     }
 
     fn next_tick(&mut self) {
@@ -992,8 +1007,9 @@ impl EnvelopeState {
             return e2.value;
         }
 
-        let p = (frame - e1.frame) as f32/ (e2.frame - e1.frame) as f32;
-        ((e2.value as f32 - e1.value as f32) * p  + e1.value as f32) as u16
+        let t = (frame - e1.frame) as f32 / (e2.frame - e1.frame) as f32;
+
+        return ((1.0 - t) * e1.value as f32 + t * e2.value as f32) as u16;
     }
 
     // fn next_tick(& mut self) {
@@ -1069,29 +1085,33 @@ impl Note {
 
 #[derive(Clone,Copy,Debug)]
 struct ChannelData<'a> {
-    instrument:                 &'a Instrument,
-    sample:                     &'a Sample,
-    // note:                       u8,
-    // period:                     f32,
-    note:                       Note,
-    frequency:                  f32,
-    du:                         f32,
-    volume:                     u8,
-    output_volume:              f32,
-    sample_position:            f32,
-    loop_started:               bool,
-    ping:                       bool,
-    volume_envelope_state:      EnvelopeState,
-    panning_envelope_state:     EnvelopeState,
-    fadeout_vol:                u16,
-    sustained:                  bool,
-    vibrato_state:              VibratoState,
-    frequency_shift:            f32,
-    period_shift:               f32,
-    on:                         bool,
-    last_porta_up:              f32,
-    last_porta_down:            f32,
-    porta_to_note:              PortaToNoteState,
+    instrument:                     &'a Instrument,
+    sample:                         &'a Sample,
+    // note:                           u8,
+    // period:                         f32,
+    note:                           Note,
+    frequency:                      f32,
+    du:                             f32,
+    volume:                         u8,
+    output_volume:                  f32,
+    sample_position:                f32,
+    loop_started:                   bool,
+    ping:                           bool,
+    volume_envelope_state:          EnvelopeState,
+    panning_envelope_state:         EnvelopeState,
+    fadeout_vol:                    u16,
+    sustained:                      bool,
+    vibrato_state:                  VibratoState,
+    frequency_shift:                f32,
+    period_shift:                   f32,
+    on:                             bool,
+    last_porta_up:                  f32,
+    last_porta_down:                f32,
+    last_volume_slide:              u8,
+    last_fine_volume_slide_up:      u8,
+    last_fine_volume_slide_down:    u8,
+    porta_to_note:                  PortaToNoteState,
+    last_sample_offset:             u32,
 }
 
 impl ChannelData<'_> {
@@ -1177,19 +1197,44 @@ impl ChannelData<'_> {
 enum Op {
 }
 
+struct BPM {
+    bpm:                        u32,
+    tick_duration_in_ms:        f32,
+    tick_duration_in_frames:    usize,
+
+}
+
+impl BPM {
+    fn new(bpm: u32, rate: f32) -> BPM {
+        let mut ret = BPM{
+            bpm: 0,
+            tick_duration_in_ms: 0.0,
+            tick_duration_in_frames: 0
+        };
+        ret.update(bpm, rate);
+        ret
+    }
+    fn update(&mut self, bpm: u32, rate: f32) {
+        self.bpm = bpm;
+        self.tick_duration_in_ms = 2500.0 / self.bpm as f32;
+        self.tick_duration_in_frames = (self.tick_duration_in_ms / 1000.0 * rate) as usize;
+
+    }
+}
+
 const BUFFER_SIZE: usize = 4096;
 struct Song<'a> {
-    song_position:      usize,
-    row:                usize,
-    tick:               u32,
-    rate:               f32,
-    speed:              u32,
-    bpm:                u32,
-    volume:             u32,
-    song_data:          &'a SongData,
-    channels:           [ChannelData<'a>;32],
-    deferred_ops:       Vec<Op>,
-    internal_buffer:    Vec<f32>,
+    song_position:              usize,
+    row:                        usize,
+    tick:                       u32,
+    rate:                       f32,
+    speed:                      u32,
+    volume:                     u32,
+    song_data:                  &'a SongData,
+    channels:                   [ChannelData<'a>;32],
+    deferred_ops:               Vec<Op>,
+    internal_buffer:            Vec<f32>,
+    bpm:                        BPM,
 }
 
 impl<'a> Song<'a> {
@@ -1217,23 +1262,23 @@ impl<'a> Song<'a> {
         frequency as f32
     }
 
-    fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>) -> impl Generator<Yield=(), Return=()> + 'a {
+    fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>, rx: Receiver<i32>) -> impl Generator<Yield=(), Return=()> + 'a {
         move || {
-            let tick_duration_in_ms = 2500.0 / self.bpm as f32;
-            let tick_duration_in_frames = (tick_duration_in_ms / 1000.0 * self.rate as f32) as usize;
-
+            self.bpm.update(self.bpm.bpm, self.rate);
 
             let mut current_buf_position = 0;
             let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
             loop {
+                if !self.handle_commands(&rx) {return;}
+
                 self.process_tick();
 
 //            self.internal_buffer.resize((tick_duration_in_frames * 2) as usize, 0.0);
 
                 let mut current_tick_position = 0usize;
 
-                while current_tick_position < tick_duration_in_frames {
-                    let ticks_to_generate = min(tick_duration_in_frames, AUDIO_BUF_FRAMES - current_buf_position);
+                while current_tick_position < self.bpm.tick_duration_in_frames {
+                    let ticks_to_generate = min(self.bpm.tick_duration_in_frames, AUDIO_BUF_FRAMES - current_buf_position);
 
                     crossterm::execute!(stdout(), MoveTo(1,1));
                     self.output_channels(current_buf_position, buf, ticks_to_generate);
@@ -1259,6 +1304,31 @@ impl<'a> Song<'a> {
         }
     }
 
+    fn handle_commands(&mut self, rx: & Receiver<i32>) -> bool {
+        loop {
+            if let Ok(cmd) = rx.try_recv() {
+                if cmd == -1 {
+                    return false;
+                }
+                if cmd == 0 && self.song_position < (self.song_data.song_length - 1) as usize {
+                    self.song_position += 1;
+                    self.row = 0;
+                    self.tick = 0;
+                }
+                if cmd == 1 && self.song_position > 0 as usize {
+                    self.song_position -= 1;
+                    self.row = 0;
+                    self.tick = 0;
+                }
+                if cmd == 2 {
+                    self.row = 0;
+                    self.tick = 0;
+                }
+            } else { break; }
+        }
+        return true;
+    }
+
     fn next_tick(&mut self) {
         self.tick += 1;
         if self.tick >= self.speed {
@@ -1282,6 +1352,7 @@ impl<'a> Song<'a> {
         //     // println!("{} {} {}", self.song_position, self.row, row);
         // }
 
+        let mut missing = String::new();
         for (i, pattern) in row.channels.iter().enumerate() {
             // if i != 12 { continue; }
             let mut channel = &mut (self.channels[i]);
@@ -1322,24 +1393,24 @@ impl<'a> Song<'a> {
                 channel.trigger_note(pattern, self.rate);
             }
 
-
-            if !first_tick && ((0xb0 <= pattern.volume && pattern.volume <= 0xbf) || pattern.effect == 0x4 || pattern.effect == 0x6) {
+            // handle vibrto
+            if !first_tick && pattern.has_vibrato() { // vibrate
                 channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::SIN) as f32;
                 channel.update_frequency(self.rate);
             }
 
             match pattern.volume {
                 0x10..=0x50 => { Song::set_volume(channel, first_tick, pattern.volume - 0x10); }       // set volume
-                0x60..=0x6f => { Song::volume_slide(channel, first_tick, (pattern.volume & 0xf) as i8); }       // Volume slide down
-                0x70..=0x7f => { Song::volume_slide(channel, first_tick, -((pattern.volume & 0xf) as i8)); }    // Volume slide up
-                0x80..=0x8f => { Song::fine_volume_slide(channel, first_tick, (pattern.volume & 0xf) as i8); }   // Fine volume slide down
-                0x90..=0x9f => { Song::fine_volume_slide(channel, first_tick, -((pattern.volume & 0xf) as i8)); }// Fine volume slide up
-                0xa0..=0xaf => { channel.vibrato_state.speed = (pattern.volume & 0xf) as i8; }// Set vibrato speed
-                0xb0..=0xbf => { if first_tick { channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8); } else { channel.vibrato_state.next_tick(); } } // Vibrato
+                0x60..=0x6f => { Song::volume_slide(channel, first_tick, pattern.get_volume_param() as i8); }       // Volume slide down
+                0x70..=0x7f => { Song::volume_slide(channel, first_tick, -(pattern.get_volume_param() as i8)); }    // Volume slide up
+                0x80..=0x8f => { Song::fine_volume_slide(channel, first_tick, pattern.get_volume_param() as i8); }   // Fine volume slide down
+                0x90..=0x9f => { Song::fine_volume_slide(channel, first_tick, -(pattern.get_volume_param() as i8)); }// Fine volume slide up
+                0xa0..=0xaf => { channel.vibrato_state.set_speed((pattern.get_volume_param() * 4) as i8); } // Set vibrato speed (*4 is probably because S3M did this in order to support finer vibrato)
+                0xb0..=0xbf => { Song::vibrato(channel, first_tick, 0,pattern.get_volume_param()) } // Vibrato
                 0xc0..=0xcf => {}// Set panning
                 0xd0..=0xdf => {}// Panning slide left
                 0xe0..=0xef => {}// Panning slide right
-                0xf0..=0xff => {Song::porta_to_note(channel, pattern.volume & 0xf, first_tick, pattern, self.rate); }// Tone porta
+                0xf0..=0xff => {Song::porta_to_note(channel, first_tick, pattern.volume & 0xf, pattern.note, self.rate); }// Tone porta
 
                 _ => {}
             }
@@ -1355,36 +1426,83 @@ impl<'a> Song<'a> {
                 }
                 0x1 => { Song::porta_up(channel, first_tick, pattern.effect_param, self.rate); } // Porta up
                 0x2 => { Song::porta_down(channel, first_tick, pattern.effect_param, self.rate); } // Porta down
-                0x3 => { Song::porta_to_note(channel,pattern.effect_param, first_tick, pattern, self.rate); } // Porta to note
-                0x4 => { if first_tick { channel.vibrato_state.set_speed((pattern.volume & 0xf) as i8); } else { channel.vibrato_state.next_tick(); } } // vibrato
+                0x3 => { Song::porta_to_note(channel, first_tick,pattern.effect_param,  pattern.note, self.rate); } // Porta to note
+                0x4 => { Song::vibrato(channel, first_tick, pattern.get_x() * 4, pattern.get_y()); } // vibrato
+                0x5 => { // porta to note + volume slide
+                    Song::porta_to_note(channel, first_tick, 0,0, self.rate);
+                    Song::volume_slide_main(channel, first_tick, pattern.effect_param);
+                }
+                0x6 => { // vibrato + volume slide
+                    Song::vibrato(channel, first_tick, 0, 0);
+                    Song::volume_slide_main(channel, first_tick, pattern.effect_param);
+                }
+                0x9 => { // sample offset
+                    if first_tick && pattern.instrument != 0 {
+                        if pattern.effect_param != 0 {
+                            channel.last_sample_offset = pattern.effect_param as u32 * 256;
+                        }
+                        channel.sample_position = channel.last_sample_offset as f32;
+                    }
+                }
+                0xA => {
+                    Song::volume_slide_main(channel, first_tick, pattern.effect_param);
+                }
                 0xC => { Song::set_volume(channel, first_tick, pattern.effect_param); } // set volume
+                0xF => {
+                    if first_tick {
+                        self.bpm.update(pattern.effect_param as u32, self.rate);
+                    }
+                }
 
-                _ => {}
+                0x10 => {
+                    if first_tick {
+                        self.volume = if pattern.effect_param <= 0x40 {pattern.effect_param} else {0x40} as u32;
+                    }
+                    // self.set_global_volume(first_tick, pattern.effect_param);
+                } // set global volume
+
+                _ => {missing.push_str(format!("channel: {}, eff: {:x},", i, pattern.effect).as_ref());}
             }
 
             if pattern.effect == 0xe {
                 match pattern.get_x() {
-                    0xd => { Song::set_volume(channel, self.tick == pattern.get_y() as u32, 0); }
-                    _ => {}
+                    0xc => { Song::set_volume(channel, self.tick == pattern.get_y() as u32, 0); }
+                    0xa => { Song::fine_volume_slide_up(channel, first_tick, pattern.get_y());} // volume slide up
+                    0xb => { Song::fine_volume_slide_down(channel, first_tick, pattern.get_y());} // volume slide up
+                    _ => {missing.push_str(format!("channel: {}, eff: 0xe{:x},", i, pattern.get_x()).as_ref());}
                 }
             }
 
 
-            let mut ves = channel.volume_envelope_state;
+            // let mut ves = channel.volume_envelope_state;
             let envelope_volume = channel.volume_envelope_state.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
-            let envelope_volume1 = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
-            if envelope_volume != envelope_volume1 {
-                let banana = 1;
-            }
+            // let envelope_volume1 = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
+            // if envelope_volume != envelope_volume1 {
+            //     let banana = 1;
+            // }
             let envelope_panning = channel.panning_envelope_state.handle(&channel.instrument.panning_envelope, channel.sustained, 128);
-            let scale = 0.8;
+            let scale = 0.9;
 
             // FinalVol = (FadeOutVol/65536)*(EnvelopeVol/64)*(GlobalVol/64)*(Vol/64)*Scale;
             // channel.update_frequency(self.rate);
-            channel.output_volume = (channel.fadeout_vol as f32 / 65536.0) * (envelope_volume as f32 / 64.0) * (self.volume as f32 / 64.0) * (channel.volume as f32 / 64.0) * scale;
+            channel.output_volume = (channel.fadeout_vol as f32 / 65536.0) * (envelope_volume as f32 / 64.0) * (channel.volume as f32 / 64.0) * scale;
         }
+        crossterm::execute!(stdout(), MoveTo(36,1));
+        println!("{}", missing);
+
 //            row
     }
+
+
+    fn vibrato(channel: &mut ChannelData, first_tick: bool, speed:u8, depth: u8) {
+        if first_tick {
+            channel.vibrato_state.set_speed(speed as i8);
+            channel.vibrato_state.set_depth(depth as i8);
+        } else {
+            channel.vibrato_state.next_tick();
+        }
+    }
+
 
     fn arpeggio(channel: &mut ChannelData, tick: u32, x:u8, y: u8) {
         match tick % 3 {
@@ -1402,6 +1520,41 @@ impl<'a> Song<'a> {
         }
     }
 
+    fn volume_slide_main(channel: &mut ChannelData, first_tick: bool, param: u8) {
+        if first_tick {
+            if param != 0 {
+                channel.last_volume_slide = param;
+            }
+        } else {
+            let up = channel.last_volume_slide >> 4;
+            let down = channel.last_volume_slide & 0xf;
+            if up != 0 {
+                Song::volume_slide(channel, first_tick, up as i8);
+            } else if down != 0 {
+                Song::volume_slide(channel, first_tick, - (down as i8));
+            }
+        }
+    }
+
+    fn fine_volume_slide_up(channel: &mut ChannelData, first_tick: bool, speed: u8) {
+        if first_tick {
+            if speed != 0 {
+                channel.last_fine_volume_slide_up = speed;
+            }
+            Song::volume_slide(channel, first_tick, channel.last_fine_volume_slide_up as i8);
+        }
+    }
+
+    fn fine_volume_slide_down(channel: &mut ChannelData, first_tick: bool, speed: u8) {
+        if first_tick {
+            if speed != 0 {
+                channel.last_fine_volume_slide_down = speed;
+            }
+            Song::volume_slide(channel, first_tick, -(channel.last_fine_volume_slide_down as i8));
+        }
+    }
+
+
     fn volume_slide(channel: &mut ChannelData, first_tick: bool, volume: i8) {
         if !first_tick { Song::volume_slide_inner(channel, volume);}
     }
@@ -1413,13 +1566,13 @@ impl<'a> Song<'a> {
     fn volume_slide_inner(channel: &mut ChannelData, volume: i8) {
         let mut new_volume = channel.volume as i32 + volume as i32;
 
-        new_volume = if new_volume < 0 { 0 } else { volume as i32 };
-        new_volume = if new_volume > 0x40 { 0x40 } else { volume as i32 };
+        new_volume = if new_volume < 0 { 0 } else { new_volume as i32 };
+        new_volume = if new_volume > 0x40 { 0x40 } else { new_volume as i32 };
 
         channel.volume = new_volume as u8;
     }
 
-    fn porta_to_note(channel: &mut ChannelData, speed: u8, first_tick: bool, pattern: &Pattern, rate: f32) {
+    fn porta_to_note(channel: &mut ChannelData, first_tick: bool, speed: u8, note: u8, rate: f32) {
         // let speed = pattern.effect_param;
 
         if first_tick {
@@ -1427,9 +1580,8 @@ impl<'a> Song<'a> {
                 channel.porta_to_note.speed = speed;
             }
 
-            if is_note_valid(pattern.note) {
-                channel.porta_to_note.target_note.set_note((pattern.note as i16 + channel.sample.relative_note as i16) as f32, channel.sample.finetune as f32);
-                channel.porta_to_note.target_frequency = channel.porta_to_note.target_note.frequency(0.0);
+            if is_note_valid(note) {
+                channel.porta_to_note.target_note.set_note((note as i16 + channel.sample.relative_note as i16) as f32, channel.sample.finetune as f32);
             }
 
         } else {
@@ -1506,6 +1658,7 @@ impl<'a> Song<'a> {
         println!("position: {:3}, row: {:3}", self.song_position, self.row);
         println!("  on  | channel |       instrument       |  frequency  | volume  | sample_position");
 
+        let global_volume = (self.volume / 0x40) as f32;
         for channel in &mut self.channels {
 
             println!("{:5} | {:7} | {:22} | {:<11} | {:7} | {:19}, {:5}, {:7} {}",
@@ -1521,8 +1674,8 @@ impl<'a> Song<'a> {
             // print!("channel: {}, instrument: {}, frequency: {}, volume: {}\n", idx, channel.instrument.name, channel.frequency, channel.volume);
 
             for i in 0..ticks_to_generate as usize {
-                buf[(current_buf_position + i) * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.output_volume;
-                buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.output_volume;
+                buf[(current_buf_position + i) * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.output_volume * global_volume;
+                buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.output_volume * global_volume;
 
                 // if (i & 63) == 0 {print!("{}\n", channel.sample_position);}
                 if channel.sample.loop_type == PingPongLoop && !channel.ping {
@@ -1570,31 +1723,10 @@ impl<'a> Song<'a> {
     }
 }
 
-// struct DoubleBuffer {
-//     buf: [Mutex<[f32; 64]>; 2],
-//     producer_position: std::sync::atomic::AtomicUsize,
-//     consumer_position: std::sync::atomic::AtomicUsize,
-// }
-//
-// impl DoubleBuffer {
-//     fn produce(&mut self, f: fn(&[f32;64]))  {
-//         let producer_position = self.producer_position as usize;
-//         // f(buf[self.buf[current_producer].lock()]);
-//         // *self.producer.lock() = 1 - current_producer;
-//     }
-//
-//     fn consume(&mut self, f: fn(&[f32;64])) {
-//         let producer_position = self.producer_position as usize;
-//         let consumer_buf = self.buf[1 - producer_position].lock().unwrap();
-//         f(consumer_buf.borrow());
-//         *producer_position.get_mut() = 1 - producer_position
-//     }
-// }
-
 fn run(song_data : SongData) -> Result<(), pa::Error> {
     const CHANNELS: i32 = 2;
     const NUM_SECONDS: i32 = 500;
-    const SAMPLE_RATE: f64 = 48_000.0;
+    const SAMPLE_RATE: f64= 48_000.0;
     const FRAMES_PER_BUFFER: u32 = 4096;
 
     //crossterm::
@@ -1604,9 +1736,9 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
         song_position: 0,
         row: 0,
         tick: 0,
-        rate: 48000.0,
+        rate: SAMPLE_RATE as f32,
         speed: song_data.tempo as u32,
-        bpm: song_data.bpm as u32,
+        bpm: BPM::new(song_data.bpm as u32, SAMPLE_RATE as f32),
         volume: 64,
         song_data: &song_data,
         channels: [ChannelData {
@@ -1634,115 +1766,97 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
             on: false,
             last_porta_up: 0.0,
             last_porta_down: 0.0,
+            last_volume_slide: 0,
+            last_fine_volume_slide_up: 0,
+            last_fine_volume_slide_down: 0,
             porta_to_note: PortaToNoteState::new(),
+            last_sample_offset: 0
         }; 32],
         deferred_ops: vec![],
         internal_buffer: vec![],
     };
 
+    let (tx, rx): (Sender<i32>, Receiver<i32>) = mpsc::channel();
+
+
     let mut temp_buf = [0.0f32; AUDIO_BUF_SIZE];
     let mut buf_ref = Arc::new(AtomicPtr::new(&mut temp_buf as *mut [f32; AUDIO_BUF_SIZE]));
-    let mut generator = song.get_next_tick_callback(buf_ref.clone());
+    let mut generator = song.get_next_tick_callback(buf_ref.clone(), rx);
+
+    let mut q = ConsumerProducerQueue::new();
+
+    let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
+    let pa = match pa_result {
+        Ok(p) => p,
+        Err(e) => return Err(e),
+    };
+
+    let mut settings =
+        pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE, (AUDIO_BUF_SIZE /2) as u32)?;
+
+    let mut qclone = q.clone();
+
+    // This routine will be called by the PortAudio engine when audio is needed. It may called at
+    // interrupt level on some machines so don't do anything that could mess up the system like
+    // dynamic resource allocation or IO.
+    let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
+        unsafe { qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); }) }
+        pa::Continue
+    };
+
+
+    let mut stream = pa.open_non_blocking_stream(settings, callback)?;
 
     thread::scope(|scope| {
-        let mut q = ConsumerProducerQueue::new();
-//        let mut q = Arc::new(AtomicPtr::new(q as *mut ConsumerProducerQueue));
         {
             let mut q = q.clone();
             scope.spawn(move |_| unsafe {
                 let mut idx = 0;
                 let mut q = q.get();
 
-
-                // let mut generator = || {
-                //     loop {
-                //         let mut buf = &mut *buf_ref.load(Ordering::Acquire);
-                //         for i in 0..AUDIO_BUF_SIZE {
-                //             buf[i] = idx as f32;
-                //             idx += 1;
-                //         }
-                //         yield;
-                //     }
-                //     return ();
-                // };
-
-                q.produce(|buf: &mut [f32; AUDIO_BUF_SIZE]| {
+                q.produce(|buf: &mut [f32; AUDIO_BUF_SIZE]| -> bool {
                     // println!("produce {}", AUDIO_BUF_SIZE);
                     buf_ref.store(buf as *mut [f32; AUDIO_BUF_SIZE], Ordering::Release);
-                    if let GeneratorState::Complete(_) = Pin::new(&mut generator).resume(()) { panic!("unexpected value from resume") }
+                    if let GeneratorState::Complete(_) = Pin::new(&mut generator).resume(()) { return false; }
+                    true
                 });
             });
         }
 
 
-        // {
-        //     let mut q = q.load(Ordering::Acquire);
-        //
-        //     for idx in 0..100 {
-        //         unsafe { (*q).consume(|buf: &[f32; 64]| println!("consume: {}", buf[0])); }
-        //     }
-        // }
 
-
-        let mut count = Arc::new(Mutex::new(0));
-
-        let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
-        let pa = match pa_result {
-            Ok(p) => p,
-            Err(e) => return Err(e),
-        };
-
-        let mut settings =
-            pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE, (AUDIO_BUF_SIZE /2) as u32)?;
-        // we won't output out of range samples so don't bother clipping them.
 //    settings.flags = pa::stream_flags::CLIP_OFF;
 //
-        // This routine will be called by the PortAudio engine when audio is needed. It may called at
-        // interrupt level on some machines so don't do anything that could mess up the system like
-        // dynamic resource allocation or IO.
-        let guard = {
-            let count = count.clone();
+        stream.start();
+//
 
-            let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
-                //     println!("{}", frames);
-                let mut idx: usize = 0;
-                let ofs: usize = *count.lock().unwrap() * AUDIO_BUF_SIZE as usize;
+        let getter = Getch::new();
+        println!("Play for {} seconds.", NUM_SECONDS);
 
-                let mut q = q.get();
-
-                unsafe { q.consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); }) }
-
-                //    for _ in 0..frames {
-                //        buffer[idx] = buf[idx];
-                //        buffer[idx + 1] = buf[idx + 1];
-                //        idx += 2;
-                // //       println!("{}", temp);
-                //    }
-                *count.lock().unwrap() += 1;
-                pa::Continue
-            };
-            let mut stream = pa.open_non_blocking_stream(settings, callback)?;
-
-            stream.start()?;
-
-
-            let getter = Getch::new();
-            println!("Play for {} seconds.", NUM_SECONDS);
-
-            loop {
-
-                if let Ok(ch) = getter.getch() {if ch == 'q' as u8 {break};}
-
-
-                pa.sleep(1_000);
+        loop {
+            if let Ok(ch) = getter.getch() {
+                if ch == 'q' as u8 {
+                    tx.send(-1);
+                    break;
+                };
+                if ch == 'n' as u8 {
+                    tx.send(0);
+                };
+                if ch == 'p' as u8 {
+                    tx.send(1);
+                };
+                if ch == 'r' as u8 {
+                    tx.send(2);
+                };
             }
 
-            stream.stop()?;
-            stream.close()?;
-        };
-        Ok(())
+
+            //pa.sleep(1_000);
+        }
     });
 
+    stream.stop()?;
+    stream.close()?;
     println!("Test finished.");
 
 
