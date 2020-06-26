@@ -1,4 +1,4 @@
-use crate::channel::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume};
+use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume};
 use crate::instrument::{Instrument, Sample};
 use crate::pattern::Pattern;
 use crate::xm_reader::is_note_valid;
@@ -6,7 +6,7 @@ use crate::xm_reader::is_note_valid;
 pub(crate) mod channel_state;
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Channel<'a> {
+pub(crate) struct ChannelState<'a> {
     pub(crate) instrument:                     &'a Instrument,
     pub(crate) sample:                         &'a Sample,
     pub(crate) note:                           Note,
@@ -34,7 +34,7 @@ pub(crate) struct Channel<'a> {
     pub(crate) last_sample_offset:             u32,
 }
 
-impl Channel<'_> {
+impl ChannelState<'_> {
     fn set_note(&mut self, note: i16, fine_tune: i32) {
         self.note.set_note(note as f32, fine_tune as f32);
         self.frequency_shift = 0.0;
@@ -71,7 +71,7 @@ impl Channel<'_> {
 
             let tone = match self.get_tone(pattern) {
                 Ok(p) => p,
-                Err(e) => return,
+                Err(_e) => return,
             };
 
             self.on = true;
@@ -81,7 +81,7 @@ impl Channel<'_> {
             self.frequency_shift = 0.0;
             self.period_shift = 0.0;
 
-            // println!("channel: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, self.sample.relative_note, pattern.note as i8 + self.sample.relative_note, self.volume);
+            // println!("channel_state: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, self.sample.relative_note, pattern.note as i8 + self.sample.relative_note, self.volume);
 
             self.set_note(tone as i16, self.sample.finetune as i32);
             self.update_frequency(rate);
@@ -181,7 +181,7 @@ impl Channel<'_> {
     }
 
     fn volume_slide_inner(&mut self, volume: i8) {
-        let mut new_volume = self.volume.volume as i32  + volume as i32;
+        let new_volume = self.volume.volume as i32  + volume as i32;
         self.volume.retrig(new_volume);
     }
 

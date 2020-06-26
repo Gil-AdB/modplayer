@@ -1,17 +1,14 @@
 use std::cmp::min;
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, stdout, Write};
+use std::io::{stdout, Write};
 use std::ops::Generator;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::Receiver;
 
-use crossterm::{
-    cursor::{MoveTo, RestorePosition, SavePosition}, ExecutableCommand,
-    execute
-};
+use crossterm::cursor::MoveTo;
 
-use crate::channel::Channel;
-use crate::channel::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl};
+use crate::channel_state::ChannelState;
+use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl};
 use crate::instrument::LoopType;
 use crate::producer_consumer_queue::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE};
 use crate::xm_reader::SongData;
@@ -41,19 +38,66 @@ impl BPM {
     }
 }
 
-const BUFFER_SIZE: usize = 4096;
+struct GlobalVolume {
+    volume:                     u32,
+    last_volume_slide:          u8,
+}
+
+impl GlobalVolume {
+    pub fn new() -> Self {
+        GlobalVolume { volume: 64, last_volume_slide: 0 }
+    }
+
+    fn volume_slide(&mut self, first_tick: bool, param: u8) {
+        if first_tick {
+            if param != 0 {
+                self.last_volume_slide = param;
+            }
+        } else {
+            let up = self.last_volume_slide >> 4;
+            let down = self.last_volume_slide & 0xf;
+            if up != 0 {
+                self.handle_volume_slide(first_tick, up as i8);
+            } else if down != 0 {
+                self.handle_volume_slide(first_tick, - (down as i8));
+            }
+        }
+    }
+
+    fn handle_volume_slide(&mut self, first_tick: bool, volume: i8) {
+        if !first_tick { self.volume_slide_inner(volume);}
+    }
+
+    // fn fine_volume_slide(&mut self, first_tick: bool, volume: i8) {
+    //     if first_tick { self.volume_slide_inner(volume);}
+    // }
+
+    fn volume_slide_inner(&mut self, volume: i8) {
+        let mut new_volume = self.volume as i32  + volume as i32;
+        new_volume = if new_volume < 0 {0} else if volume > 64 { 64 } else { new_volume };
+        self.volume = new_volume as u32;
+    }
+
+    fn set_volume(&mut self, first_tick: bool, volume: u8) {
+        if first_tick {
+            self.volume = if volume <= 0x40 { volume } else { 0x40 } as u32;
+        }
+    }
+
+}
+
+// const BUFFER_SIZE: usize = 4096;
 pub(crate) struct Song<'a> {
     song_position:              usize,
     row:                        usize,
     tick:                       u32,
     rate:                       f32,
     speed:                      u32,
-    volume:                     u32,
+    global_volume:              GlobalVolume,
     song_data:                  &'a SongData,
-    channels:                   [Channel<'a>;32],
-    internal_buffer:            Vec<f32>,
+    channels:                   [ChannelState<'a>;32],
+    // internal_buffer:            Vec<f32>,
     bpm:                        BPM,
-    last_volume_slide:          u8,
 }
 
 impl<'a> Song<'a> {
@@ -82,9 +126,9 @@ impl<'a> Song<'a> {
             rate: sample_rate,
             speed: song_data.tempo as u32,
             bpm: BPM::new(song_data.bpm as u32, sample_rate as f32),
-            volume: 64,
+            global_volume: GlobalVolume::new(),
             song_data: &song_data,
-            channels: [Channel {
+            channels: [ChannelState {
                 instrument: &song_data.instruments[0],
                 sample: &song_data.instruments[0].samples[0],
                 note: Note::new(),
@@ -111,16 +155,15 @@ impl<'a> Song<'a> {
                 porta_to_note: PortaToNoteState::new(),
                 last_sample_offset: 0
             }; 32],
-            internal_buffer: vec![],
-            last_volume_slide: 0
         }
     }
-    fn get_linear_frequency(note: i16, fine_tune: i32, period_offset: i32) -> f32 {
-        let period = 10.0 * 12.0 * 16.0 * 4.0 - (note * 16 * 4) as f32  - (fine_tune as f32) / 2.0 + period_offset as f32;
-        let two = 2.0f32;
-        let frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - period) / (12.0 * 16.0 * 4.0));
-        frequency as f32
-    }
+
+    // fn get_linear_frequency(note: i16, fine_tune: i32, period_offset: i32) -> f32 {
+    //     let period = 10.0 * 12.0 * 16.0 * 4.0 - (note * 16 * 4) as f32  - (fine_tune as f32) / 2.0 + period_offset as f32;
+    //     let two = 2.0f32;
+    //     let frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - period) / (12.0 * 16.0 * 4.0));
+    //     frequency as f32
+    // }
 
     pub(crate) fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>, rx: Receiver<i32>) -> impl Generator<Yield=(), Return=()> + 'a {
         move || {
@@ -140,7 +183,7 @@ impl<'a> Song<'a> {
                 while current_tick_position < self.bpm.tick_duration_in_frames {
                     let ticks_to_generate = min(self.bpm.tick_duration_in_frames, AUDIO_BUF_FRAMES - current_buf_position);
 
-                    if let Err(e) = crossterm::execute!(stdout(), MoveTo(1,1)) {}
+                    if let Err(_e) = crossterm::execute!(stdout(), MoveTo(1,1)) {}
                     self.output_channels(current_buf_position, buf, ticks_to_generate);
                     current_tick_position += ticks_to_generate;
                     current_buf_position += ticks_to_generate;
@@ -201,36 +244,6 @@ impl<'a> Song<'a> {
         }
     }
 
-    fn volume_slide_global(&mut self, first_tick: bool, param: u8) {
-        if first_tick {
-            if param != 0 {
-                self.last_volume_slide = param;
-            }
-        } else {
-            let up = self.last_volume_slide >> 4;
-            let down = self.last_volume_slide & 0xf;
-            if up != 0 {
-                self.volume_slide(first_tick, up as i8);
-            } else if down != 0 {
-                self.volume_slide(first_tick, - (down as i8));
-            }
-        }
-    }
-
-    fn volume_slide(&mut self, first_tick: bool, volume: i8) {
-        if !first_tick { self.volume_slide_inner(volume);}
-    }
-
-    fn fine_volume_slide(&mut self, first_tick: bool, volume: i8) {
-        if first_tick { self.volume_slide_inner(volume);}
-    }
-
-    fn volume_slide_inner(&mut self, volume: i8) {
-        let mut new_volume = self.volume as i32  + volume as i32;
-        new_volume = if new_volume < 0 {0} else if volume > 64 { 64 } else { new_volume };
-        self.volume = new_volume as u32;
-    }
-
     fn process_tick(&mut self) {
         let instruments = &self.song_data.instruments;
 
@@ -245,7 +258,8 @@ impl<'a> Song<'a> {
         let mut missing = String::new();
         for (i, pattern) in row.channels.iter().enumerate() {
             // if i != 12 { continue; }
-            let mut channel = &mut (self.channels[i]);
+            let mut channel = &mut self.channels[i];
+            //let mut channel_state = &mut self.channels.split_at_mut(i).1[0];//channel_borrow_mut(i);
 
             if first_tick && pattern.is_porta_to_note() && pattern.instrument != 0 {
                 channel.volume.retrig(channel.sample.volume as i32);
@@ -273,7 +287,7 @@ impl<'a> Song<'a> {
                 channel.period_shift = 0.0;
 
 
-                let mut reset_envelope = false;
+                // let mut reset_envelope = false;
                 if pattern.instrument != 0 {
                     channel.reset_envelopes();
                 }
@@ -355,18 +369,17 @@ impl<'a> Song<'a> {
                 }
 
                 0x10 => { // set global volume
-                    if first_tick {
-                        self.volume = if pattern.effect_param <= 0x40 {pattern.effect_param} else {0x40} as u32;
-                    }
-                    // self.set_global_volume(first_tick, pattern.effect_param);
+                    self.global_volume.set_volume(first_tick, pattern.effect_param);
                 }
-
+                0x11 => { // global volume slide
+                    self.global_volume.volume_slide(first_tick, pattern.effect_param);
+                }
                 0x14 => {
                     if self.tick == pattern.effect_param as u32 {
                         channel.key_off();
                     }
                 }
-                _ => {missing.push_str(format!("channel: {}, eff: {:x},", i, pattern.effect).as_ref());}
+                _ => {missing.push_str(format!("channel_state: {}, eff: {:x},", i, pattern.effect).as_ref());}
             }
 
             if pattern.effect == 0xe {
@@ -374,25 +387,25 @@ impl<'a> Song<'a> {
                     0xc => { channel.set_volume(self.tick == pattern.get_y() as u32, 0); }
                     0xa => { channel.fine_volume_slide_up(first_tick, pattern.get_y());} // volume slide up
                     0xb => { channel.fine_volume_slide_down(first_tick, pattern.get_y());} // volume slide up
-                    _ => {missing.push_str(format!("channel: {}, eff: 0xe{:x},", i, pattern.get_x()).as_ref());}
+                    _ => {missing.push_str(format!("channel_state: {}, eff: 0xe{:x},", i, pattern.get_x()).as_ref());}
                 }
             }
 
 
-            // let mut ves = channel.volume_envelope_state;
+            // let mut ves = channel_state.volume_envelope_state;
             let envelope_volume = channel.volume_envelope_state.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
-            // let envelope_volume1 = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
+            // let envelope_volume1 = ves.handle(&channel_state.instrument.volume_envelope, channel_state.sustained, 64);
             // if envelope_volume != envelope_volume1 {
             //     let banana = 1;
             // }
-            let envelope_panning = channel.panning_envelope_state.handle(&channel.instrument.panning_envelope, channel.sustained, 128);
+            let _envelope_panning = channel.panning_envelope_state.handle(&channel.instrument.panning_envelope, channel.sustained, 128);
             let scale = 0.9;
 
             // FinalVol = (FadeOutVol/65536)*(EnvelopeVol/64)*(GlobalVol/64)*(Vol/64)*Scale;
-            // channel.update_frequency(self.rate);
+            // channel_state.update_frequency(self.rate);
 
-
-            channel.volume.output_volume = (channel.fadeout_vol as f32 / 65536.0) * (envelope_volume as f32 / 64.0) * (channel.volume.get_volume() as f32 / 64.0) * scale;
+            let global_volume = self.global_volume.volume as f32 / 64.0 ;
+            channel.volume.output_volume = (channel.fadeout_vol as f32 / 65536.0) * (envelope_volume as f32 / 64.0) * (channel.volume.get_volume() as f32 / 64.0) * global_volume * scale;
         }
         if !missing.is_empty() {
             if let Err(_) = crossterm::execute!(stdout(), MoveTo(0,40)) {}
@@ -402,23 +415,26 @@ impl<'a> Song<'a> {
 //            row
     }
 
-    // fn porta_inner(frequncy_shift: i8, channel: &mut ChannelData) {
-    //     channel.frequency_shift += frequency_shift;
+    // fn channel_borrow_mut<'b>(&'b mut self, i: usize) -> &'b mut ChannelState<'a> {
+    //     let channels = &mut (self.channels);
+    //     let (_, r) = channels.split_at_mut(i);
+    //     r[0].borrow_mut()
+    // }
+
+    // fn porta_inner(frequncy_shift: i8, channel_state: &mut ChannelData) {
+    //     channel_state.frequency_shift += frequency_shift;
     // }
 
 
 
     fn output_channels(&mut self, current_buf_position: usize, buf: &mut [f32; AUDIO_BUF_SIZE], ticks_to_generate: usize) {
         let mut  idx: u32 = 0;
-        let mut cc = 0;
-        for channel in &mut self.channels {
-            if channel.on { cc += 1; }
-        }
 
         // let onecc = 1.0f32;// / cc as f32;
-        let global_volume = self.volume as f32 / 64.0 ;
-        println!("position: {:3}, row: {:3}, global volume: {:5}, {}", self.song_position, self.row, self.volume, global_volume);
-        println!("  on  | channel |       instrument       |  frequency  | volume  | sample_position");
+        // FT2 quirk: global volume is used at channel volu,e calculation time, not at mixing time
+        //let global_volume = self.volume as f32 / 64.0 ;
+        println!("position: {:3}, row: {:3}", self.song_position, self.row);
+        println!("  on  | channel_state |       instrument       |  frequency  | volume  | sample_position");
 
         for channel in &mut self.channels {
 
@@ -432,13 +448,13 @@ impl<'a> Song<'a> {
             }
 
 
-            // print!("channel: {}, instrument: {}, frequency: {}, volume: {}\n", idx, channel.instrument.name, channel.frequency, channel.volume);
+            // print!("channel_state: {}, instrument: {}, frequency: {}, volume: {}\n", idx, channel_state.instrument.name, channel_state.frequency, channel_state.volume);
 
             for i in 0..ticks_to_generate as usize {
-                buf[(current_buf_position + i) * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.volume.output_volume * global_volume;
-                buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.volume.output_volume * global_volume;
+                buf[(current_buf_position + i) * 2] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.volume.output_volume;// * global_volume;
+                buf[(current_buf_position + i) * 2 + 1] += channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.volume.output_volume;// * global_volume;
 
-                // if (i & 63) == 0 {print!("{}\n", channel.sample_position);}
+                // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
                 if channel.sample.loop_type == LoopType::PingPongLoop && !channel.ping {
                     channel.sample_position -= channel.du;
                 } else {
@@ -452,8 +468,8 @@ impl<'a> Song<'a> {
                         LoopType::PingPongLoop => {
                             channel.sample_position = (channel.sample.loop_end - 1) as f32 - (channel.sample_position - channel.sample.loop_end as f32);
                             channel.ping = false;
-                            // channel.sample_position = (channel.sample.loop_end - 1) as f32;
-                            // channel.du = -channel.du;
+                            // channel_state.sample_position = (channel_state.sample.loop_end - 1) as f32;
+                            // channel_state.du = -channel_state.du;
                         }
                         LoopType::NoLoop => {
                             channel.on = false;

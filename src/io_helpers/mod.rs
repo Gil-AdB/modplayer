@@ -58,6 +58,6 @@ pub(crate) fn read_i8_vec<R: Read>(file: &mut R, size: usize) -> Vec<i8> {
     file.read_exact(&mut buf).unwrap();
 
     let mut rdr = Cursor::new(buf);
-    rdr.read_i8_into(result.as_mut_slice());
+    rdr.read_i8_into(result.as_mut_slice()).unwrap();
     result
 }

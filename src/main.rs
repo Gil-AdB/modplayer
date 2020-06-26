@@ -1,53 +1,36 @@
 #![feature(generators, generator_trait)]
 #![feature(vec_drain_as_slice)]
 #![feature(slice_fill)]
+#![feature(in_band_lifetimes)]
 
+
+extern crate portaudio;
+
+use std::ops::{Generator, GeneratorState};
+use std::pin::Pin;
+use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
+
+use crossbeam::thread;
+use getch::Getch;
+use portaudio as pa;
+
+use crate::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
+use crate::song::Song;
+use crate::xm_reader::{read_xm, SongData};
 
 mod io_helpers;
 mod xm_reader;
 mod envelope;
 mod instrument;
-mod channel;
+mod channel_state;
 mod pattern;
 mod producer_consumer_queue;
 mod song;
 
 
-
-extern crate portaudio;
-
-use std::borrow::{Borrow, BorrowMut};
-use std::cell::{RefCell, UnsafeCell};
-use std::f32::consts::PI;
-use std::fmt;
-use std::fs::File;
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write, stdout};
-use std::iter::FromIterator;
-use std::num::Wrapping;
-use std::ops::{Deref, DerefMut, Generator, GeneratorState};
-use std::os::raw::*;
-use std::pin::Pin;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
-
-use portaudio as pa;
-
-// use crate::LoopType::{ForwardLoop, NoLoop, PingPongLoop};
-use crossbeam::thread;
-use portaudio::{Error, PortAudio};
-use std::cmp::min;
-use std::fmt::Debug;
-use std::ptr::null;
-use std::slice::SliceIndex;
-use std::sync::atomic::{AtomicPtr, Ordering};
-use std::sync::mpsc::{channel, Sender, Receiver};
-use std::thread::sleep;
-use std::time;
-use crate::xm_reader::{read_xm, SongData};
-use crate::song::Song;
 // use term::stdout;
-
-use getch::Getch;
-use crate::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue};
 
 // #[repr(C)]
 // #[repr(packed)]
@@ -80,7 +63,7 @@ fn main() {
     let path = "children.XM";
     //let file = File::open(path).expect("failed to open the file");
 
-    run(read_xm(path));
+    run(read_xm(path)).unwrap();
 //    let mmap = unsafe { Mmap::map(&file).expect("failed to map the file") };
 //
 //    println!("File Size: {}", mmap.len());
@@ -101,9 +84,6 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
     const CHANNELS: i32 = 2;
     const NUM_SECONDS: i32 = 500;
     const SAMPLE_RATE: f32 = 48_000.0;
-    const FRAMES_PER_BUFFER: u32 = 4096;
-
-    //crossterm::
 
 
     let mut song = Song::new(&song_data, SAMPLE_RATE);
@@ -111,19 +91,21 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
 
 
     let mut temp_buf = [0.0f32; AUDIO_BUF_SIZE];
-    let mut buf_ref = Arc::new(AtomicPtr::new(&mut temp_buf as *mut [f32; AUDIO_BUF_SIZE]));
+    let buf_ref = Arc::new(AtomicPtr::new(&mut temp_buf as *mut [f32; AUDIO_BUF_SIZE]));
     let mut generator = song.get_next_tick_callback(buf_ref.clone(), rx);
 
-    let mut q = ProducerConsumerQueue::new();
+    let q = ProducerConsumerQueue::new();
 
-    let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
-    let pa = match pa_result {
-        Ok(p) => p,
-        Err(e) => return Err(e),
-    };
+    // let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
+    // let pa = match pa_result {
+    //     Ok(p) => p,
+    //     Err(e) => return Err(e),
+    // };
 
-    let mut settings =
-        pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE as f64, (AUDIO_BUF_SIZE /2) as u32)?;
+    let pa = pa::PortAudio::new()?;
+
+    let settings =
+        pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE as f64, (AUDIO_BUF_SIZE / 2) as u32)?;
 
     let mut qclone = q.clone();
 
@@ -131,7 +113,8 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
     // interrupt level on some machines so don't do anything that could mess up the system like
     // dynamic resource allocation or IO.
     let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
-        unsafe { qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); }) }
+        if frames != AUDIO_BUF_FRAMES {panic!("unexpected frame size: {}", frames);}
+        qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); });
         pa::Continue
     };
 
@@ -141,9 +124,8 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
     thread::scope(|scope| {
         {
             let mut q = q.clone();
-            scope.spawn(move |_| unsafe {
-                let mut idx = 0;
-                let mut q = q.get();
+            scope.spawn(move |_| {
+                let q = q.get();
 
                 q.produce(|buf: &mut [f32; AUDIO_BUF_SIZE]| -> bool {
                     // println!("produce {}", AUDIO_BUF_SIZE);
@@ -158,7 +140,7 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
 
 //    settings.flags = pa::stream_flags::CLIP_OFF;
 //
-        stream.start();
+        stream.start().unwrap();
 //
 
         let getter = Getch::new();
@@ -167,27 +149,27 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
         loop {
             if let Ok(ch) = getter.getch() {
                 if ch == 'q' as u8 {
-                    tx.send(-1);
+                    tx.send(-1).ok();
                     break;
                 };
                 if ch == 'n' as u8 {
-                    tx.send(0);
+                    tx.send(0).ok();
                 };
                 if ch == 'p' as u8 {
-                    tx.send(1);
+                    tx.send(1).ok();
                 };
                 if ch == 'r' as u8 {
-                    tx.send(2);
+                    tx.send(2).ok();
                 };
             }
 
 
             //pa.sleep(1_000);
         }
-    });
+        stream.stop().unwrap();
+        stream.close().unwrap();
+    }).ok();
 
-    stream.stop()?;
-    stream.close()?;
     println!("Test finished.");
 
 

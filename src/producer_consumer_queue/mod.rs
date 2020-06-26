@@ -56,7 +56,7 @@ impl PCQHolder {
 
 impl ProducerConsumerQueue {
     pub(crate) fn new() -> PCQHolder {
-        let mut q = Box::new(ProducerConsumerQueue {
+        let q = Box::new(ProducerConsumerQueue {
             full_count: Semaphore::new(0),
             empty_count: Semaphore::new(AUDIO_NUM_BUFFERS - 1),
             // consumer: Arc::new((Mutex::new(false), Default::default())),

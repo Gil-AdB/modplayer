@@ -30,8 +30,8 @@ impl fmt::Debug for Row {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
         for pattern in &self.channels {
-            if first { first = false; } else { write!(f, "|"); }
-            write!(f, "{}", pattern);
+            if first { first = false; } else { write!(f, "|")?; }
+            write!(f, "{}", pattern)?;
         }
         Ok(())
     }
@@ -41,8 +41,8 @@ impl fmt::Display for Row {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
         for pattern in &self.channels {
-            if first { first = false; } else { write!(f, "|"); }
-            write!(f, "{}", pattern);
+            if first { first = false; } else { write!(f, "|")?; }
+            write!(f, "{}", pattern)?;
         }
         Ok(())
     }
@@ -236,7 +236,7 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Ve
             let volume_fadeout = fio::read_u16(file);
             let _reserved = fio::read_u16(file);
 
-            file.seek(SeekFrom::Start(instrument_pos + header_size as u64));
+            file.seek(SeekFrom::Start(instrument_pos + header_size as u64)).unwrap();
             instruments.push(Instrument {
                 name,
                 sample_indexes,

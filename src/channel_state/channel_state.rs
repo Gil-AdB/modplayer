@@ -63,12 +63,12 @@ impl VibratoState {
 
 
     pub(crate) fn get_frequency_shift(&mut self, wave_control: WaveControl) -> i32 {
-        let mut delta = 0;
+        let delta;
         let vibrato_pos = (self.pos >> 2) & 31;
         match wave_control {
-            WaveControl::SIN => { delta = (SIN_TABLE[vibrato_pos as usize] * self.depth as i32); }
+            WaveControl::SIN => { delta = SIN_TABLE[vibrato_pos as usize] * self.depth as i32; }
             WaveControl::RAMP => {
-                let mut temp:i32 = (vibrato_pos * 8) as i32;
+                let temp:i32 = (vibrato_pos * 8) as i32;
                 delta = if self.pos < 0 { 255 - temp } else { temp } as i32
             }
             WaveControl::SQUARE => { delta = 255; }
@@ -114,12 +114,12 @@ impl TremoloState {
 
 
     pub(crate) fn get_volume_shift(&mut self, wave_control: WaveControl) -> i32 {
-        let mut delta = 0;
+        let delta;
         let termolo_pos = (self.pos >> 2) & 31;
         match wave_control {
-            WaveControl::SIN => { delta = (SIN_TABLE[termolo_pos as usize] as i32); }
+            WaveControl::SIN => { delta = SIN_TABLE[termolo_pos as usize] as i32; }
             WaveControl::RAMP => {
-                let mut temp:i32 = (termolo_pos * 8) as i32;
+                let temp:i32 = (termolo_pos * 8) as i32;
                 delta = if self.pos < 0 { 255 - temp } else { temp } as i32
             }
             WaveControl::SQUARE => { delta = 255; }
@@ -155,7 +155,7 @@ impl EnvelopeState {
             return env.points[0].value
         }
 
-        // set sustained if channel is sustained, we have a sustain point and we reached the sustain point
+        // set sustained if channel_state is sustained, we have a sustain point and we reached the sustain point
         if !self.looped && !self.sustained && env.sustain && channel_sustained && self.frame == env.points[env.sustain_point as usize].frame {
             self.sustained = true;
         }
@@ -191,40 +191,40 @@ impl EnvelopeState {
 
     // pre: e.on && e.size > 0
 //    default: panning envelope: middle (0x80?), volume envelope - max (0x40)
-    fn handle1(&mut self, e: &Envelope, sustained: bool, default: u16) -> u16 {
-        // fn handle(&mut self, e: &Envelope, channel_sustained: bool) -> u16 {
-        if !e.on || e.size < 1 { return default;} // bail out
-        if e.size == 1 {
-            // if !e.sustain {return default;}
-            return e.points[0].value;
-        }
-
-        if e.has_loop && self.frame >= e.points[e.loop_end_point as usize].frame as u32 as u16 {
-            self.frame = e.points[e.loop_start_point as usize].frame as u32 as u16
-        }
-
-        let mut idx:usize = 0;
-        loop {
-            if idx >= e.size as usize - 2 { break; }
-            if e.points[idx].frame as u32 <= self.frame as u32 && e.points[idx+1].frame as u32 >= self.frame as u32 {
-                break;
-            }
-            idx += 1;
-        }
-
-        // if sustained && (e.sustain && self.idx == e.sustain_point as u32) && self.idx == e.size as u32 {
-        //     return e.points[self.idx as usize].value;
-        // }
-
-        let retval = EnvelopeState::lerp(self.frame as u16, &e.points[idx as usize], &e.points[(idx + 1) as usize]);
-
-
-        if !sustained || !e.sustain || self.frame != e.points[e.sustain_point as usize].frame as u32 as u16 {
-            self.frame += 1;
-        }
-
-        retval
-    }
+//     fn handle1(&mut self, e: &Envelope, sustained: bool, default: u16) -> u16 {
+//         // fn handle(&mut self, e: &Envelope, channel_sustained: bool) -> u16 {
+//         if !e.on || e.size < 1 { return default;} // bail out
+//         if e.size == 1 {
+//             // if !e.sustain {return default;}
+//             return e.points[0].value;
+//         }
+//
+//         if e.has_loop && self.frame >= e.points[e.loop_end_point as usize].frame as u32 as u16 {
+//             self.frame = e.points[e.loop_start_point as usize].frame as u32 as u16
+//         }
+//
+//         let mut idx:usize = 0;
+//         loop {
+//             if idx >= e.size as usize - 2 { break; }
+//             if e.points[idx].frame as u32 <= self.frame as u32 && e.points[idx+1].frame as u32 >= self.frame as u32 {
+//                 break;
+//             }
+//             idx += 1;
+//         }
+//
+//         // if sustained && (e.sustain && self.idx == e.sustain_point as u32) && self.idx == e.size as u32 {
+//         //     return e.points[self.idx as usize].value;
+//         // }
+//
+//         let retval = EnvelopeState::lerp(self.frame as u16, &e.points[idx as usize], &e.points[(idx + 1) as usize]);
+//
+//
+//         if !sustained || !e.sustain || self.frame != e.points[e.sustain_point as usize].frame as u32 as u16 {
+//             self.frame += 1;
+//         }
+//
+//         retval
+//     }
 
     fn lerp(frame: u16, e1: &EnvelopePoint, e2: &EnvelopePoint) -> u16 {
         if frame == e1.frame {
