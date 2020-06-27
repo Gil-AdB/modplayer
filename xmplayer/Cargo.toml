@@ -1,0 +1,21 @@
+[package]
+name = "xmplayer"
+version = "0.1.0"
+authors = ["gilad.benor@gmail.com <gil-ad@tufin.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+
+[lib]
+name = "xmplayer"
+crate-type = ["rlib"]
+
+[dependencies]
+byteorder = "1"
+crossbeam = "0.7"
+#crossterm_cursor = "0.4.0"
+#crossterm_input = "0.5.0"
+term = "0.6.1"
+crossterm = "0.17.5"
+getch = "0.2.1"

@@ -34,7 +34,7 @@ impl Semaphore {
 
 }
 
-pub(crate) struct ProducerConsumerQueue {
+pub struct ProducerConsumerQueue {
     full_count: Semaphore,
     empty_count: Semaphore,
     buf: [[f32; AUDIO_BUF_SIZE]; AUDIO_NUM_BUFFERS],
@@ -43,19 +43,19 @@ pub(crate) struct ProducerConsumerQueue {
 }
 
 #[derive(Clone)]
-pub(crate) struct PCQHolder {
+pub struct PCQHolder {
     q: Arc<AtomicPtr<ProducerConsumerQueue>>,
 }
 
 impl PCQHolder {
-    pub(crate) fn get(&mut self) -> &mut ProducerConsumerQueue {
+    pub fn get(&mut self) -> &mut ProducerConsumerQueue {
         unsafe{&mut *self.q.load(Ordering::Acquire)}
     }
 }
 
 
 impl ProducerConsumerQueue {
-    pub(crate) fn new() -> PCQHolder {
+    pub fn new() -> PCQHolder {
         let q = Box::new(ProducerConsumerQueue {
             full_count: Semaphore::new(0),
             empty_count: Semaphore::new(AUDIO_NUM_BUFFERS - 1),
@@ -67,7 +67,7 @@ impl ProducerConsumerQueue {
         PCQHolder{q: Arc::new(AtomicPtr::new(Box::into_raw(q) as *mut ProducerConsumerQueue))}
     }
 
-    pub(crate) fn produce<F: FnMut(&mut[f32; AUDIO_BUF_SIZE]) -> bool>(&mut self, mut f: F) {
+    pub fn produce<F: FnMut(&mut[f32; AUDIO_BUF_SIZE]) -> bool>(&mut self, mut f: F) {
         loop {
             self.empty_count.wait();
             let my_buf = &mut self.buf[self.front];
@@ -77,7 +77,7 @@ impl ProducerConsumerQueue {
         }
     }
 
-    pub(crate) fn consume<F: FnMut(&[f32; AUDIO_BUF_SIZE])>(&mut self, mut f: F) {
+    pub fn consume<F: FnMut(&[f32; AUDIO_BUF_SIZE])>(&mut self, mut f: F) {
         self.full_count.wait();
         let my_buf = &self.buf[self.back];
         self.back = (self.back + 1) % AUDIO_NUM_BUFFERS;

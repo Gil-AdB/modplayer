@@ -1,8 +1,4 @@
 #![feature(generators, generator_trait)]
-#![feature(vec_drain_as_slice)]
-#![feature(slice_fill)]
-#![feature(in_band_lifetimes)]
-
 
 extern crate portaudio;
 
@@ -16,67 +12,17 @@ use crossbeam::thread;
 use getch::Getch;
 use portaudio as pa;
 
-use crate::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
-use crate::song::Song;
-use crate::xm_reader::{read_xm, SongData};
-
-mod io_helpers;
-mod xm_reader;
-mod envelope;
-mod instrument;
-mod channel_state;
-mod pattern;
-mod producer_consumer_queue;
-mod song;
-
-
-// use term::stdout;
-
-// #[repr(C)]
-// #[repr(packed)]
-// struct NativeXmheader {
-//     id:                 [c_char;17usize],
-//     name:               [c_char;20usize],
-//     sig:                c_char,
-//     tracker_name:       [c_char;20usize],
-//     ver:                c_ushort,
-//     header_size:        c_uint,
-//     song_length:        c_ushort,
-//     restart_position:   c_ushort,
-//     channel_count:      c_ushort,
-//     pattern_count:      c_ushort,
-//     instrument_count:   c_ushort,
-//     flags:              c_ushort,
-//     tempo:              c_ushort,
-//     bpm:                c_ushort,
-//     pattern_order:      [c_uchar;256usize],
-// }
-//
-// struct XMPatternHeader {
-//     header_length:      c_uint,
-//     packing:            c_uchar,
-//     row_count:          c_ushort,
-//     packed_size:        c_ushort,
-// }
+use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
+use xmplayer::song::Song;
+use xmplayer::xm_reader::{read_xm, SongData};
+use std::env;
 
 fn main() {
-    let path = "children.XM";
+    if env::args().len() < 1 {return;}
+    let path = env::args().nth(1).unwrap();
     //let file = File::open(path).expect("failed to open the file");
 
-    run(read_xm(path)).unwrap();
-//    let mmap = unsafe { Mmap::map(&file).expect("failed to map the file") };
-//
-//    println!("File Size: {}", mmap.len());
-//
-//    let _header =  unsafe {&*(mmap.as_ptr() as * const XMHeader)};
-//
-//    let mut _pattern_offset = mem::size_of::<XMHeader>() as isize;
-//    for pattern_idx in 0.._header.pattern_count {
-//        let _pattern = unsafe {{&*(mmap.as_ptr().offset(_pattern_offset) as * const XMPatternHeader)}};
-//        _pattern_offset = _pattern_offset + _pattern.packed_size as isize;
-//    }
-//
-//    let _banana = 1;
+    run(read_xm(path.as_str())).unwrap();
 
 }
 
@@ -149,17 +95,17 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
         loop {
             if let Ok(ch) = getter.getch() {
                 if ch == 'q' as u8 {
-                    tx.send(-1).ok();
+                    tx.send(-1);
                     break;
                 };
                 if ch == 'n' as u8 {
-                    tx.send(0).ok();
+                    tx.send(0);
                 };
                 if ch == 'p' as u8 {
-                    tx.send(1).ok();
+                    tx.send(1);
                 };
                 if ch == 'r' as u8 {
-                    tx.send(2).ok();
+                    tx.send(2);
                 };
             }
 

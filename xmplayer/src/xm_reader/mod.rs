@@ -348,7 +348,7 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
 }
 
 #[derive(Debug)]
-pub(crate) struct SongData {
+pub struct SongData {
     id: String,
     name: String,
     song_type: SongType,
@@ -366,7 +366,7 @@ pub(crate) struct SongData {
 }
 
 
-pub(crate) fn read_xm(path: &str) -> SongData {
+pub fn read_xm(path: &str) -> SongData {
     let f = File::open(path).expect("failed to open the file");
     let file_len = f.metadata().expect("Can't read file metadata").len();
     let mut file = BufReader::new(f);

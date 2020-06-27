@@ -87,7 +87,7 @@ impl GlobalVolume {
 }
 
 // const BUFFER_SIZE: usize = 4096;
-pub(crate) struct Song<'a> {
+pub struct Song<'a> {
     song_position:              usize,
     row:                        usize,
     tick:                       u32,
@@ -118,7 +118,7 @@ impl<'a> Song<'a> {
     //     return result;
     // }
 
-    pub(crate) fn new(song_data: &SongData, sample_rate: f32) -> Song {
+    pub fn new(song_data: &SongData, sample_rate: f32) -> Song {
         Song {
             song_position: 0,
             row: 0,
@@ -165,7 +165,7 @@ impl<'a> Song<'a> {
     //     frequency as f32
     // }
 
-    pub(crate) fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>, rx: Receiver<i32>) -> impl Generator<Yield=(), Return=()> + 'a {
+    pub fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>, rx: Receiver<i32>) -> impl Generator<Yield=(), Return=()> + 'a {
         move || {
             self.bpm.update(self.bpm.bpm, self.rate);
 
