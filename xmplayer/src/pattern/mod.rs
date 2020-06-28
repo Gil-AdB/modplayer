@@ -1,7 +1,7 @@
 use std::fmt;
 use std::string::ToString;
 
-//#[derive(Debug)]
+#[derive(Clone)]
 pub(crate) struct Pattern {
     pub(crate) note: u8,
     pub(crate) instrument: u8,
@@ -15,7 +15,7 @@ impl Pattern {
     const NOTES: [&'static str; 12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
 
     fn get_note(&self) -> String {
-        if self.note == 97 || self.note == 0 { "   ".to_string() } else {
+        if self.note == 97 {"OFF". to_string() } else if self.note == 0 { "   ".to_string() } else {
             format!("{}{}", Pattern::NOTES[((self.note - 1) % 12) as usize], (((self.note - 1) / 12) + '0' as u8) as char)
         }
     }

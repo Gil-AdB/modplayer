@@ -93,6 +93,7 @@ impl Sample {
 #[derive(Debug)]
 pub(crate) struct Instrument {
     pub(crate) name: String,
+    pub(crate) idx: u8,
     pub(crate) sample_indexes: Vec<u8>,
     pub(crate) volume_envelope: Envelope,
     pub(crate) panning_envelope: Envelope,
@@ -109,6 +110,7 @@ impl Instrument {
     pub(crate) fn new() -> Instrument {
         Instrument {
             name: "".to_string(),
+            idx: 0,
             sample_indexes: vec![0u8; 96],
             volume_envelope: Envelope::new(),
             panning_envelope: Envelope::new(),

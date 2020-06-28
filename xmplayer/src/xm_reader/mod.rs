@@ -22,6 +22,8 @@ pub(crate) fn is_note_valid(note: u8) -> bool {
     note > 0 && note < 97
 }
 
+
+#[derive(Clone)]
 pub(crate) struct Row {
     pub(crate) channels: Vec<Pattern>
 }
@@ -206,7 +208,7 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Ve
 
     instruments.push(Instrument::new());
 
-    for _instrument_idx in 0..instrument_count {
+    for instrument_idx in 0..instrument_count {
         let instrument_pos = file.seek(SeekFrom::Current(0)).unwrap();
         let header_size = fio::read_u32(file);
         let name = fio::read_string(file, 22);
@@ -239,6 +241,7 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Ve
             file.seek(SeekFrom::Start(instrument_pos + header_size as u64)).unwrap();
             instruments.push(Instrument {
                 name,
+                idx: (instrument_idx + 1) as u8,
                 sample_indexes,
                 volume_envelope: Envelope {
                     points: volume_envelope,
@@ -322,10 +325,25 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
     let bpm = fio::read_u16(file);
     dbg!(bpm);
 
-    let pattern_order = fio::read_bytes(file, 256);
+    let mut pattern_order = fio::read_bytes(file, 256);
     dbg!(&pattern_order);
+    
+    let mut patterns = read_patterns(file, pattern_count as usize, channel_count as usize);
 
-    let patterns = read_patterns(file, pattern_count as usize, channel_count as usize);
+    // fix empty patterns at end
+    for idx in 0..pattern_order.len() {
+        if pattern_order[idx] >= patterns.len() as u8 {
+            pattern_order[idx] = patterns.len() as u8;
+        }
+    }
+    
+    patterns.push(Patterns{ rows: vec![Row{ channels: vec![Pattern{
+        note: 0,
+        instrument: 0,
+        volume: 0,
+        effect: 0,
+        effect_param: 0
+    }; channel_count as usize] }; 64] });
 
     let instruments = read_instruments(file, instrument_count as usize);
 
@@ -383,4 +401,10 @@ pub fn read_xm(path: &str) -> SongData {
     //  dbg!(file.seek(SeekFrom::Current(0)));
 
     song_data
+}
+
+pub fn print_xm(data: &SongData) {
+    dbg!(&data.patterns[data.pattern_order[22] as usize]);
+    println!("=====================================================================");
+    dbg!(&data.patterns[data.pattern_order[23] as usize]);
 }

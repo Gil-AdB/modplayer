@@ -18,7 +18,6 @@ pub(crate) struct ChannelState<'a> {
     pub(crate) ping:                           bool,
     pub(crate) volume_envelope_state:          EnvelopeState,
     pub(crate) panning_envelope_state:         EnvelopeState,
-    pub(crate) fadeout_vol:                    u16,
     pub(crate) sustained:                      bool,
     pub(crate) vibrato_state:                  VibratoState,
     pub(crate) tremolo_state:                  TremoloState,
@@ -46,8 +45,10 @@ impl ChannelState<'_> {
         self.sustained = false;
         if !self.instrument.volume_envelope.on {
             self.on = false;
+            self.volume.retrig(0);
             return false;
         }
+        self.volume.fadeout_speed = self.instrument.volume_fadeout as i32;
         return true;
     }
 
@@ -61,12 +62,10 @@ impl ChannelState<'_> {
     pub(crate) fn reset_envelopes(&mut self) {
         self.volume_envelope_state.reset(0, &self.instrument.volume_envelope);
         self.panning_envelope_state.reset(0, &self.instrument.panning_envelope);
-        self.fadeout_vol = 65535;
     }
 
 
     pub(crate) fn trigger_note(&mut self, pattern: &Pattern, rate: f32) {
-        let mut reset_envelope = false;
         if pattern.note >= 1 && pattern.note < 97 { // trigger note
 
             let tone = match self.get_tone(pattern) {
@@ -86,10 +85,6 @@ impl ChannelState<'_> {
             self.set_note(tone as i16, self.sample.finetune as i32);
             self.update_frequency(rate);
             self.sustained = true;
-            reset_envelope = true;
-        }
-
-        if reset_envelope {
             self.reset_envelopes();
         }
     }
@@ -130,10 +125,9 @@ impl ChannelState<'_> {
         }
     }
 
-
     pub(crate) fn set_volume(&mut self, first_tick: bool, volume: u8) {
         if first_tick {
-            self.volume.retrig(volume as i32);
+            self.volume.set_volume(volume as i32);
         }
     }
 
@@ -182,7 +176,7 @@ impl ChannelState<'_> {
 
     fn volume_slide_inner(&mut self, volume: i8) {
         let new_volume = self.volume.volume as i32  + volume as i32;
-        self.volume.retrig(new_volume);
+        self.volume.set_volume(new_volume);
     }
 
     pub(crate) fn porta_to_note(&mut self, first_tick: bool, speed: u8, note: u8, rate: f32) {

@@ -14,16 +14,21 @@ use portaudio as pa;
 
 use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
 use xmplayer::song::Song;
-use xmplayer::xm_reader::{read_xm, SongData};
+use xmplayer::xm_reader::{read_xm, SongData, print_xm};
 use std::env;
 
 fn main() {
-    if env::args().len() < 1 {return;}
+    if env::args().len() < 2 {return;}
     let path = env::args().nth(1).unwrap();
     //let file = File::open(path).expect("failed to open the file");
 
-    run(read_xm(path.as_str())).unwrap();
+    let data = read_xm(path.as_str());
 
+    if env::args().len() > 2 {
+        print_xm(&data);
+    } else {
+        run(data).unwrap();
+    }
 }
 
 fn run(song_data : SongData) -> Result<(), pa::Error> {
@@ -112,10 +117,11 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
 
             //pa.sleep(1_000);
         }
-        stream.stop().unwrap();
-        stream.close().unwrap();
+
     }).ok();
 
+    stream.stop().unwrap();
+    stream.close().unwrap();
     println!("Test finished.");
 
 

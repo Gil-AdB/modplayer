@@ -174,7 +174,7 @@ impl EnvelopeState {
 
         // reached the end
         if self.idx == (env.size - 2) as usize && self.frame == env.points[self.idx + 1].frame {
-            return env.points[self.idx + 1].frame
+            return env.points[self.idx + 1].value
         }
 
         let retval = EnvelopeState::lerp(self.frame, &env.points[self.idx], &env.points[self.idx + 1]);
@@ -191,40 +191,40 @@ impl EnvelopeState {
 
     // pre: e.on && e.size > 0
 //    default: panning envelope: middle (0x80?), volume envelope - max (0x40)
-//     fn handle1(&mut self, e: &Envelope, sustained: bool, default: u16) -> u16 {
-//         // fn handle(&mut self, e: &Envelope, channel_sustained: bool) -> u16 {
-//         if !e.on || e.size < 1 { return default;} // bail out
-//         if e.size == 1 {
-//             // if !e.sustain {return default;}
-//             return e.points[0].value;
-//         }
-//
-//         if e.has_loop && self.frame >= e.points[e.loop_end_point as usize].frame as u32 as u16 {
-//             self.frame = e.points[e.loop_start_point as usize].frame as u32 as u16
-//         }
-//
-//         let mut idx:usize = 0;
-//         loop {
-//             if idx >= e.size as usize - 2 { break; }
-//             if e.points[idx].frame as u32 <= self.frame as u32 && e.points[idx+1].frame as u32 >= self.frame as u32 {
-//                 break;
-//             }
-//             idx += 1;
-//         }
-//
-//         // if sustained && (e.sustain && self.idx == e.sustain_point as u32) && self.idx == e.size as u32 {
-//         //     return e.points[self.idx as usize].value;
-//         // }
-//
-//         let retval = EnvelopeState::lerp(self.frame as u16, &e.points[idx as usize], &e.points[(idx + 1) as usize]);
-//
-//
-//         if !sustained || !e.sustain || self.frame != e.points[e.sustain_point as usize].frame as u32 as u16 {
-//             self.frame += 1;
-//         }
-//
-//         retval
-//     }
+    pub fn handle1(&mut self, e: &Envelope, sustained: bool, default: u16) -> u16 {
+        // fn handle(&mut self, e: &Envelope, channel_sustained: bool) -> u16 {
+        if !e.on || e.size < 1 { return default;} // bail out
+        if e.size == 1 {
+            // if !e.sustain {return default;}
+            return e.points[0].value;
+        }
+
+        if e.has_loop && self.frame >= e.points[e.loop_end_point as usize].frame as u32 as u16 {
+            self.frame = e.points[e.loop_start_point as usize].frame as u32 as u16
+        }
+
+        let mut idx:usize = 0;
+        loop {
+            if idx >= e.size as usize - 2 { break; }
+            if e.points[idx].frame as u32 <= self.frame as u32 && e.points[idx+1].frame as u32 >= self.frame as u32 {
+                break;
+            }
+            idx += 1;
+        }
+
+        // if sustained && (e.sustain && self.idx == e.sustain_point as u32) && self.idx == e.size as u32 {
+        //     return e.points[self.idx as usize].value;
+        // }
+
+        let retval = EnvelopeState::lerp(self.frame as u16, &e.points[idx as usize], &e.points[(idx + 1) as usize]);
+
+
+        if !sustained || !e.sustain || self.frame != e.points[e.sustain_point as usize].frame as u32 as u16 {
+            self.frame += 1;
+        }
+
+        retval
+    }
 
     fn lerp(frame: u16, e1: &EnvelopePoint, e2: &EnvelopePoint) -> u16 {
         if frame == e1.frame {
@@ -310,7 +310,7 @@ impl Note {
     const NOTES: [&'static str;12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
 
     pub(crate) fn to_string(&self) -> String {
-        if self.note == 97.0 || self.note == 0.0 { "   ".to_string() } else {
+        if self.note == 97.0 || self.note == 0.0 { (self.note as u32).to_string() } else {
             format!("{}{}", Self::NOTES[((self.note as u8 - 1) % 12) as usize], (((self.note as u8 - 1) / 12) + '0' as u8) as char )
         }
     }
@@ -321,14 +321,22 @@ pub(crate) struct Volume {
     pub(crate) volume:         u8,
     pub(crate) volume_shift:   i32,
     pub(crate) output_volume:  f32,
+    pub(crate) fadeout_vol:    i32,
+    pub(crate) fadeout_speed:  i32,
+    pub(crate) envelope_vol:   i32,
+    pub(crate) global_vol:     i32,
 }
 
 impl Volume {
     pub(crate) fn new() -> Volume {
-        Volume{
+        Volume {
             volume: 0,
             volume_shift: 0,
-            output_volume: 1.0
+            output_volume: 1.0,
+            fadeout_vol: 65536,
+            fadeout_speed: 0,
+            envelope_vol: 0,
+            global_vol: 0
         }
     }
 
@@ -338,7 +346,14 @@ impl Volume {
     }
 
     pub(crate) fn retrig(&mut self, vol: i32) {
-        self.volume = if vol > 64 {64} else if vol < 0 {0} else { vol } as u8;
+        self.set_volume(vol);
         self.volume_shift  = 0;
+        self.fadeout_speed = 0;
+        self.fadeout_vol = 65536;
+        self.fadeout_speed = 0;
+    }
+
+    pub(crate) fn set_volume(&mut self, vol: i32) {
+        self.volume = if vol > 64 { 64 } else if vol < 0 { 0 } else { vol } as u8;
     }
 }
