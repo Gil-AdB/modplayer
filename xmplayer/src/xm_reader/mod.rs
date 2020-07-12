@@ -68,6 +68,16 @@ fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usi
         let pattern_size = fio::read_u16(file);
 
         let mut pos = 0usize;
+        if pattern_size == 0 {
+            patterns.push(Patterns{ rows: vec![Row{ channels: vec![Pattern{
+                note: 0,
+                instrument: 0,
+                volume: 0,
+                effect: 0,
+                effect_param: 0
+            }; channel_count] }; 64] });
+            continue;
+        }
 
         let mut rows: Vec<Row> = vec![];
         rows.reserve_exact(row_count as usize);
@@ -324,10 +334,14 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
 
     let bpm = fio::read_u16(file);
     dbg!(bpm);
+    let mut stream_position = 0;
+    if let Ok(pos) = file.stream_position() {stream_position = pos;} else {stream_position = 20}
 
-    let mut pattern_order = fio::read_bytes(file, 256);
+    let mut pattern_order = fio::read_bytes(file, (60 + header_size - stream_position as u32) as usize);
     dbg!(&pattern_order);
-    
+
+
+
     let mut patterns = read_patterns(file, pattern_count as usize, channel_count as usize);
 
     // fix empty patterns at end

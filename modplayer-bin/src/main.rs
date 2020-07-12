@@ -1,11 +1,12 @@
 #![feature(generators, generator_trait)]
+#![feature(async_closure)]
 
 extern crate portaudio;
 
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 use std::sync::{Arc, mpsc};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, Ordering, AtomicBool};
 use std::sync::mpsc::{Receiver, Sender};
 
 use crossbeam::thread;
@@ -13,9 +14,13 @@ use getch::Getch;
 use portaudio as pa;
 
 use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
-use xmplayer::song::Song;
+use xmplayer::song::{Song, PlaybackCmd};
 use xmplayer::xm_reader::{read_xm, SongData, print_xm};
 use std::env;
+use std::sync::atomic::Ordering::Release;
+use std::time::Duration;
+use std::io::{Read, ErrorKind, Error};
+
 
 fn main() {
     if env::args().len() < 2 {return;}
@@ -36,9 +41,8 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
     const NUM_SECONDS: i32 = 500;
     const SAMPLE_RATE: f32 = 48_000.0;
 
-
     let mut song = Song::new(&song_data, SAMPLE_RATE);
-    let (tx, rx): (Sender<i32>, Receiver<i32>) = mpsc::channel();
+    let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
 
 
     let mut temp_buf = [0.0f32; AUDIO_BUF_SIZE];
@@ -65,13 +69,17 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
     // dynamic resource allocation or IO.
     let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
         if frames != AUDIO_BUF_FRAMES {panic!("unexpected frame size: {}", frames);}
-        qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); });
-        pa::Continue
+        if !qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); }) {
+            pa::Complete
+        } else {
+            pa::Continue
+        }
     };
 
 
     let mut stream = pa.open_non_blocking_stream(settings, callback)?;
-
+    let stopped = Arc::new(AtomicBool::from(false));
+    let thread_stopped = stopped.clone();
     thread::scope(|scope| {
         {
             let mut q = q.clone();
@@ -84,7 +92,9 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
                     if let GeneratorState::Complete(_) = Pin::new(&mut generator).resume(()) { return false; }
                     true
                 });
+               thread_stopped.store(true, Ordering::Release);
             });
+
         }
 
 
@@ -93,39 +103,45 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
 //
         stream.start().unwrap();
 //
-
-        let getter = Getch::new();
         println!("Play for {} seconds.", NUM_SECONDS);
-
-        loop {
-            if let Ok(ch) = getter.getch() {
-                if ch == 'q' as u8 {
-                    tx.send(-1);
-                    break;
-                };
-                if ch == 'n' as u8 {
-                    tx.send(0);
-                };
-                if ch == 'p' as u8 {
-                    tx.send(1);
-                };
-                if ch == 'r' as u8 {
-                    tx.send(2);
-                };
-            }
-
-
-            //pa.sleep(1_000);
-        }
-
+        mainloop(tx, stopped);
     }).ok();
 
     stream.stop().unwrap();
     stream.close().unwrap();
+
     println!("Test finished.");
 
 
 
 //    println!("samples: {}", *count.lock().unwrap());
     Ok(())
+}
+
+fn mainloop(tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
+
+    let getter = Getch::new();
+
+    loop {
+        if stopped.load(Ordering::Acquire) {break;}
+
+        // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
+        let input = getter.getch();
+        if let Ok(ch) = input {
+            if ch == 'q' as u8 {
+                let _ = tx.send(PlaybackCmd::Quit);
+                break;
+            }
+            if ch == 'n' as u8 {
+                let _ = tx.send(PlaybackCmd::Next);
+            }
+            if ch == 'p' as u8 {
+                let _ = tx.send(PlaybackCmd::Prev);
+            }
+            if ch == 'r' as u8 {
+                let _ = tx.send(PlaybackCmd::Restart);
+            }
+        }
+        //pa.sleep(1_000);
+    }
 }

@@ -1,8 +1,10 @@
 #![feature(generators, generator_trait)]
 #![feature(vec_drain_as_slice)]
 #![feature(slice_fill)]
-// #![feature(in_band_lifetimes)]
-
+#![feature(const_fn)]
+#![feature(seek_convenience)]
+#[macro_use]
+extern crate lazy_static;
 
 pub mod io_helpers;
 pub mod xm_reader;
@@ -12,6 +14,7 @@ pub mod channel_state;
 pub mod pattern;
 pub mod producer_consumer_queue;
 pub mod song;
+pub mod tables;
 
 
 #[cfg(test)]

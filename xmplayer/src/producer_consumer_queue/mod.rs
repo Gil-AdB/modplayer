@@ -1,5 +1,6 @@
 use std::sync::{Arc, Condvar, Mutex};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, Ordering, AtomicBool};
+use std::sync::atomic::Ordering::{Acquire, Release};
 
 pub const AUDIO_BUF_FRAMES: usize = 1024;
 pub const AUDIO_BUF_SIZE: usize = AUDIO_BUF_FRAMES *2;
@@ -35,11 +36,12 @@ impl Semaphore {
 }
 
 pub struct ProducerConsumerQueue {
-    full_count: Semaphore,
-    empty_count: Semaphore,
-    buf: [[f32; AUDIO_BUF_SIZE]; AUDIO_NUM_BUFFERS],
-    front: usize,
-    back: usize,
+    full_count:         Semaphore,
+    empty_count:        Semaphore,
+    buf:                [[f32; AUDIO_BUF_SIZE]; AUDIO_NUM_BUFFERS],
+    front:              usize,
+    back:               usize,
+    stopped:            AtomicBool,
 }
 
 #[derive(Clone)]
@@ -62,26 +64,32 @@ impl ProducerConsumerQueue {
             // consumer: Arc::new((Mutex::new(false), Default::default())),
             buf: [[0.0f32; AUDIO_BUF_SIZE]; AUDIO_NUM_BUFFERS],
             front: 0,
-            back: 0
+            back: 0,
+            stopped: AtomicBool::from(false),
         });
         PCQHolder{q: Arc::new(AtomicPtr::new(Box::into_raw(q) as *mut ProducerConsumerQueue))}
     }
 
-    pub fn produce<F: FnMut(&mut[f32; AUDIO_BUF_SIZE]) -> bool>(&mut self, mut f: F) {
+    pub fn produce<F: FnMut(&mut[f32; AUDIO_BUF_SIZE]) -> bool>(&mut self, mut f: F) -> bool {
         loop {
             self.empty_count.wait();
             let my_buf = &mut self.buf[self.front];
             self.front = (self.front + 1) % AUDIO_NUM_BUFFERS;
-            if !f(my_buf) { return; }
+            if !f(my_buf) { self.stopped.store(true, Release);self.full_count.signal(); return false; }
             self.full_count.signal()
         }
     }
 
-    pub fn consume<F: FnMut(&[f32; AUDIO_BUF_SIZE])>(&mut self, mut f: F) {
+    pub fn consume<F: FnMut(&[f32; AUDIO_BUF_SIZE])>(&mut self, mut f: F) -> bool {
         self.full_count.wait();
+        if self.stopped.load(Acquire) == true {
+            return false;
+        }
+
         let my_buf = &self.buf[self.back];
         self.back = (self.back + 1) % AUDIO_NUM_BUFFERS;
         f(my_buf);
         self.empty_count.signal();
+        true
     }
 }
