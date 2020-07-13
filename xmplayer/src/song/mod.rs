@@ -163,6 +163,8 @@ impl<'a> Song<'a> {
                 on: false,
                 last_porta_up: 0,
                 last_porta_down: 0,
+                last_fine_porta_up: 0,
+                last_fine_porta_down: 0,
                 last_volume_slide: 0,
                 last_fine_volume_slide_up: 0,
                 last_fine_volume_slide_down: 0,
@@ -209,24 +211,23 @@ impl<'a> Song<'a> {
         );
         if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
 
-        println!("on | channel |         instrument         |  frequency  | volume  |sample_position| note | period | envvol | globalvol | fadeout | panning | du");
+        println!("on | channel |         instrument         |  frequency  | volume  |sample_position| note | period | envvol | globalvol | fadeout | panning");
 
         let mut idx = 0u32;
         for channel in &self.channels {
             idx = idx + 1;
 //            if idx != 1  {continue;}
             if channel.on {
-                println!("{:3}| {:7} | {:26} | {:<11} |{:7}|{:14}|  {:4}| {:7}|{:7}|{:10}|{:8}|{:8}|{:8}      ",
+                println!("{:3}| {:7} | {:26} | {:<11} |{:7}|{:14}|  {:4}| {:7}|{:7}|{:10}|{:8}|{:8}      ",
                          if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
                          if channel.on { channel.frequency + channel.frequency_shift } else { 0.0 },
                          Song::range(channel.volume.get_volume() as u32, 0, 64, 8),
-                         Song::range((channel.sample_position + channel.du * (self.bpm.tick_duration_in_frames as f32 / 2.0)) as u32, 0, channel.sample.length - 1, 14),
+                         Song::range((channel.sample_position + channel.du * self.bpm.tick_duration_in_frames as f32) as u32, 0, channel.sample.length - 1, 14),
                          channel.note.to_string(), channel.note.period,
                          Song::range(channel.volume.envelope_vol as u32, 0, 16384, 7),
                          Song::range(channel.volume.global_vol as u32, 0, 64, 10),
                          Song::range(channel.volume.fadeout_vol as u32, 0, 65536, 8),
                          Song::range(channel.panning.final_panning as u32, 0, 255, 8),
-                         channel.du,
                 );
             } else {
                 println!("{:3}| {:7} | {:26} | {:<11} | {:7} | {:14}| {:5}| {:7}| {:7}| {:10}| {:8}| {:8}|      ", "off", idx, "", "", "",
@@ -375,7 +376,7 @@ impl<'a> Song<'a> {
                     let instrument = &instruments[pattern.instrument as usize];
                     channel.instrument = instrument;
                     if is_note_valid(pattern.note) {
-                        channel.sample = &instrument.samples[instrument.sample_indexes[pattern.note as usize] as usize];
+                        channel.sample = &instrument.samples[instrument.sample_indexes[(pattern.note - 1)  as usize] as usize];
                     }
                     channel.volume.retrig(channel.sample.volume as i32);
                     channel.panning.panning = channel.sample.panning;
@@ -502,9 +503,11 @@ impl<'a> Song<'a> {
             }
 
             if pattern.effect == 0xe {
-                match pattern.get_x() { // retrig note
+                match pattern.get_x() {
+                    0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate); } // Porta up
+                    0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate); } // Porta down
                     0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
-                    0x9 => {
+                    0x9 => { // retrig note
                         if !first_tick && (self.tick % pattern.get_y() as u32 == 0) {
                             channel.trigger_note(pattern, self.rate);
                         }

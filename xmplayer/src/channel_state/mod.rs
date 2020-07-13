@@ -26,6 +26,8 @@ pub(crate) struct ChannelState<'a> {
     pub(crate) on:                             bool,
     pub(crate) last_porta_up:                  u16,
     pub(crate) last_porta_down:                u16,
+    pub(crate) last_fine_porta_up:             u16,
+    pub(crate) last_fine_porta_down:           u16,
     pub(crate) last_volume_slide:              u8,
     pub(crate) last_fine_volume_slide_up:      u8,
     pub(crate) last_fine_volume_slide_down:    u8,
@@ -298,6 +300,32 @@ impl ChannelState<'_> {
             }
         } else {
             self.note.period += self.last_porta_down;
+            if self.note.period > 31999 {
+                self.note.period = 31999;
+            }
+            self.update_frequency(rate);
+        }
+    }
+
+    pub(crate) fn fine_porta_up(&mut self, first_tick: bool, amount: u8, rate: f32) {
+        if first_tick {
+            if amount != 0 {
+                self.last_fine_porta_up = (amount * 4) as u16;
+            }
+            self.note.period -= self.last_fine_porta_up;
+            if self.note.period < 1 {
+                self.note.period = 1;
+            }
+            self.update_frequency(rate);
+        }
+    }
+
+    pub(crate) fn fine_porta_down(&mut self, first_tick: bool, amount: u8, rate: f32) {
+        if first_tick {
+            if amount != 0 {
+                self.last_fine_porta_down = (amount * 4) as u16;
+            }
+            self.note.period += self.last_fine_porta_down;
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }
