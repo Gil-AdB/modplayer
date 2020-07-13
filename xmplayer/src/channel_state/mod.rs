@@ -33,6 +33,7 @@ pub(crate) struct ChannelState<'a> {
     pub(crate) last_sample_offset:             u32,
     pub(crate) last_panning_speed:             u8,
     pub(crate) panning:                        Panning,
+    pub(crate) force_off:                      bool,
 }
 
 impl ChannelState<'_> {

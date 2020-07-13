@@ -15,7 +15,7 @@ use crate::xm_reader::{SongData, is_note_valid};
 use crate::tables::PANNING_TAB;
 
 struct BPM {
-    bpm:                        u32,
+    pub bpm:                        u32,
     tick_duration_in_ms:        f32,
     tick_duration_in_frames:    usize,
 
@@ -35,8 +35,8 @@ impl BPM {
         if bpm > 999 || bpm < 1 {return};
         self.bpm = bpm;
         self.tick_duration_in_ms = 2500.0 / self.bpm as f32;
-        self.tick_duration_in_frames = (self.tick_duration_in_ms / 1000.0 * rate) as usize;
-
+        // self.tick_duration_in_frames = (self.tick_duration_in_ms / 1000.0 * rate) as usize;
+        self.tick_duration_in_frames = (rate / (self.bpm as f32 / 2.5) + 0.5) as usize;
     }
 }
 
@@ -97,7 +97,8 @@ pub enum PlaybackCmd {
     Prev,
     LoopPattern,
     Restart,
-    Quit
+    Quit,
+    ChannelToggle(u8),
 }
 
 // const BUFFER_SIZE: usize = 4096;
@@ -110,8 +111,8 @@ pub struct Song<'a> {
     global_volume:              GlobalVolume,
     song_data:                  &'a SongData,
     channels:                   [ChannelState<'a>;32],
-    // internal_buffer:            Vec<f32>,
     bpm:                        BPM,
+    loop_pattern:                   bool,
 }
 
 impl<'a> Song<'a> {
@@ -169,7 +170,9 @@ impl<'a> Song<'a> {
                 last_sample_offset: 0,
                 last_panning_speed: 0,
                 panning: Panning::new(),
+                force_off: false
             }; 32],
+            loop_pattern: false,
         }
     }
 
@@ -179,6 +182,57 @@ impl<'a> Song<'a> {
     //     let frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - period) / (12.0 * 16.0 * 4.0));
     //     frequency as f32
     // }
+
+    fn range(pos: u32, start: u32, end: u32, width:u32) -> String {
+        let mut result : String = String::from("");
+        let mut indicator_pos = ((pos - start) as f32 / (end - start) as f32 * (width) as f32) as usize;
+        if indicator_pos > (width) as usize {
+            indicator_pos = (width) as usize;
+        }
+        for i in 0..indicator_pos {
+            result += "-";
+        }
+        result += "=";
+        for i in indicator_pos+1..(width+1) as usize {
+            result += "-";
+        }
+        result
+    }
+
+    fn display(&self, cur_tick: usize) {
+        let first_tick = self.tick == 0;
+        if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,0)) {}
+        println!("duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}  row: {:3} bpm: {:3} speed: {:3}, buf: {}",
+                 self.bpm.tick_duration_in_frames, self.bpm.tick_duration_in_ms, self.tick, self.song_position, self.row, self.bpm.bpm, self.speed,
+                 Song::range(cur_tick as u32, 0, self.bpm.tick_duration_in_frames as u32, 15),
+
+        );
+        if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
+
+        println!("on | channel |         instrument         |  frequency  | volume  |sample_position| note | period | envvol | globalvol | fadeout | panning |");
+
+        let mut idx = 0u32;
+        for channel in &self.channels {
+            idx = idx + 1;
+//            if idx != 1  {continue;}
+            if channel.on {
+                println!("{:3}| {:7} | {:26} | {:<11} |{:7}|{:14}|  {:4}| {:7}|{:7}|{:10}|{:8}|{:8}|      ",
+                         if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
+                         if channel.on { channel.frequency + channel.frequency_shift } else { 0.0 },
+                         Song::range(channel.volume.get_volume() as u32, 0, 64, 8),
+                         Song::range((channel.sample_position + channel.du * self.bpm.tick_duration_in_frames as f32) as u32, 0, channel.sample.length - 1, 14),
+                         channel.note.to_string(), channel.note.period,
+                         Song::range(channel.volume.envelope_vol as u32, 0, 16384, 7),
+                         Song::range(channel.volume.global_vol as u32, 0, 64, 10),
+                         Song::range(channel.volume.fadeout_vol as u32, 0, 65536, 8),
+                         Song::range(channel.panning.final_panning as u32, 0, 255, 8),
+                );
+            } else {
+                println!("{:3}| {:7} | {:26} | {:<11} | {:7} | {:14}| {:5}| {:7}| {:7}| {:10}| {:8}| {:8}|      ", "off", idx, "", "", "",
+                         "", "", "", "", "", "", "");
+            }
+        }
+    }
 
     pub fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>, rx: Receiver<PlaybackCmd>) -> impl Generator<Yield=(), Return=()> + 'a {
         move || {
@@ -198,7 +252,8 @@ impl<'a> Song<'a> {
                 while current_tick_position < self.bpm.tick_duration_in_frames {
                     let ticks_to_generate = min(self.bpm.tick_duration_in_frames, AUDIO_BUF_FRAMES - current_buf_position);
 
-                    if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
+                    // if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
+                    self.display(current_tick_position);
                     self.output_channels(current_buf_position, buf, ticks_to_generate);
                     current_tick_position += ticks_to_generate;
                     current_buf_position += ticks_to_generate;
@@ -249,9 +304,10 @@ impl<'a> Song<'a> {
                     }
                     PlaybackCmd::IncBPM => {self.bpm.update(self.bpm.bpm + 1, self.rate);}
                     PlaybackCmd::DecBPM => {self.bpm.update(self.bpm.bpm - 1, self.rate);}
-                    PlaybackCmd::IncSpeed => {}
-                    PlaybackCmd::DecSpeed => {}
-                    PlaybackCmd::LoopPattern => {}
+                    PlaybackCmd::IncSpeed => {self.speed += 1;}
+                    PlaybackCmd::DecSpeed => {self.speed -= 1;}
+                    PlaybackCmd::LoopPattern => {self.loop_pattern = !self.loop_pattern}
+                    PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
                 }
             }
             else
@@ -269,7 +325,9 @@ impl<'a> Song<'a> {
             self.row = self.row + 1;
             if self.row >= self.song_data.patterns[self.song_data.pattern_order[self.song_position as usize] as usize].rows.len() {
                 self.row = 0;
-                self.song_position = self.song_position + 1;
+                if !self.loop_pattern {
+                    self.song_position = self.song_position + 1;
+                }
                 if self.song_position >= self.song_data.song_length as usize {return false;}
             }
             self.tick = 0;
@@ -283,11 +341,6 @@ impl<'a> Song<'a> {
         let patterns = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
         let row = &patterns.rows[self.row];
         let first_tick = self.tick == 0;
-
-        if first_tick {
-            if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,0)) {}
-            println!("pos: {:X}  row: {} bpm: {} speed: {}", self.song_position, self.row, self.bpm.bpm, self.speed);
-        }
 
         let mut missing = String::new();
         for (i, pattern) in row.channels.iter().enumerate() {
@@ -521,31 +574,21 @@ impl<'a> Song<'a> {
 
 
     fn output_channels(&mut self, current_buf_position: usize, buf: &mut [f32; AUDIO_BUF_SIZE], ticks_to_generate: usize) {
-        let mut  idx: u32 = 0;
+        // let mut  idx: u32 = 0;
 
         // let onecc = 1.0f32;// / cc as f32;
         // FT2 quirk: global volume is used at channel volume calculation time, not at mixing time
         //let global_volume = self.volume as f32 / 64.0 ;
         // println!("position: {:3}, row: {:3}", self.song_position, self.row);
 
-        println!("on | channel |         instrument         |  frequency  | volume  |sample_position| note | period | envvol | globalvol | fadeout | panning |");
 
         for channel in &mut self.channels {
 
-            idx = idx + 1;
+            // idx = idx + 1;
 //            if idx != 1  {continue;}
-            if channel.on {
-                println!("{:3}| {:7} | {:26} | {:<11} | {:7} | {:14}| {:5}| {:7}| {:7}| {:10}| {:8}| {:8}|      ",
-                         if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
-                         if channel.on { channel.frequency + channel.frequency_shift } else { 0.0 }, channel.volume.get_volume(),
-                         if channel.on { channel.sample_position as u32 } else { 0 }, channel.note.to_string(), channel.note.period, channel.volume.envelope_vol,
-                         channel.volume.global_vol, channel.volume.fadeout_vol, channel.panning.final_panning);
-            } else {
-                println!("{:3}| {:7} | {:26} | {:<11} | {:7} | {:14}| {:5}| {:7}| {:7}| {:10}| {:8}| {:8}|      ", "off", "" ,"" ,"", "",
-                "", "", "", "", "", "", "");
+            if !channel.on || channel.force_off {
                 continue;
             }
-
 
             // print!("channel_state: {}, instrument: {}, frequency: {}, volume: {}\n", idx, channel_state.instrument.name, channel_state.frequency, channel_state.volume);
 
@@ -558,8 +601,8 @@ impl<'a> Song<'a> {
                     break;
                 }
 
-                buf[(current_buf_position + i) * 2 + 0] +=  vol_left * channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.volume.output_volume;// * global_volume;
-                buf[(current_buf_position + i) * 2 + 1] += vol_right * channel.sample.data[channel.sample_position as usize] as f32 / 32768.0 * channel.volume.output_volume;// * global_volume;
+                buf[(current_buf_position + i) * 2 + 0] +=  vol_left * channel.sample.data[channel.sample_position as usize] as f32 / 32768.0  / 4.0 * channel.volume.output_volume;// * global_volume;
+                buf[(current_buf_position + i) * 2 + 1] += vol_right * channel.sample.data[channel.sample_position as usize] as f32 / 32768.0  / 4.0 * channel.volume.output_volume;// * global_volume;
 
                 // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
                 if channel.sample.loop_type == LoopType::PingPongLoop && !channel.ping {
@@ -600,6 +643,5 @@ impl<'a> Song<'a> {
                 }
             }
         }
-        print!("===================================================================\n");
     }
 }

@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering::{Acquire, Relaxed};
 use array_const_fn_init::array_const_fn_init;
 use std::sync::Arc;
 use crate::channel_state::channel_state::TableType::AmigaFrequency;
+use std::num::Wrapping;
 
 pub static mut USE_AMIGA : std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -65,10 +66,10 @@ impl AudioTables {
         result.Periods = LINEAR_PERIODS;
         // linear periods
         for i in 1..65536 {
-            let invPeriod = (12 * 192 * 4) - i as u16; // this intentionally overflows uint16_t to be accurate to FT2
+            let invPeriod = (12 * 192 * 4 as u16).wrapping_sub(i as u16); // this intentionally overflows uint16_t to be accurate to FT2
             let octave = invPeriod as u32 / 768;
             let period = invPeriod as u32 % 768;
-            let bitshift = (14 - octave) & 0x1F; // 100% accurate to FT2
+            let bitshift = (14u32.wrapping_sub(octave)) & 0x1F; // 100% accurate to FT2
 
             result.dPeriod2HzTab[i] = D_LOG_TAB[period as usize] / (1 << bitshift) as f64;
         }
@@ -407,11 +408,12 @@ impl Note {
 
 
     pub(crate) fn frequency(&self, period_shift: i16, semitone: bool) -> f32 {
-        //let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
+        // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
             let period = self.period as i16 - (period_shift * 16 * 4) as i16;
         // }
 
+        // LinearTables.dPeriod2HzTab[period as usize] as f32
         let two = 2.0f32;
         let freq = 8363.0 * two.powf((6 * 12 * 16 * 4 - period) as f32 / (12 * 16 * 4) as f32);
         return freq

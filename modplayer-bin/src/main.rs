@@ -18,7 +18,7 @@ use xmplayer::song::{Song, PlaybackCmd};
 use xmplayer::xm_reader::{read_xm, SongData, print_xm};
 use std::env;
 use std::sync::atomic::Ordering::Release;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::io::{Read, ErrorKind, Error};
 
 
@@ -118,22 +118,59 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
     Ok(())
 }
 
+fn is_num (ch: u8) -> bool {
+    ch >= '0' as u8 && ch <= '9' as u8
+}
+
 fn mainloop(tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
 
     let getter = Getch::new();
+    let mut last_time = SystemTime::now();
+    let mut last_char = 0;
 
     loop {
         if stopped.load(Ordering::Acquire) {break;}
 
         // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
         let input = getter.getch();
+        if SystemTime::now() > last_time + Duration::from_secs(1) {
+            last_char = 0;
+        }
+
         if let Ok(ch) = input {
             if ch == 'q' as u8 {
                 let _ = tx.send(PlaybackCmd::Quit);
                 break;
             }
+            if is_num(ch) {
+                if is_num(last_char) {
+                    let channel_number = (last_char - '0' as u8)  * 10 + (ch - '0' as u8);
+                    if channel_number > 0  && channel_number <= 32 {
+                        let _ = tx.send(PlaybackCmd::ChannelToggle(channel_number - 1));
+                    }
+                    last_char = 0;
+                } else {
+                    last_char = ch;
+                }
+            }
+            if ch == '+' as u8 {
+                let _ = tx.send(PlaybackCmd::IncSpeed);
+            }
+            if ch == '-' as u8 {
+                let _ = tx.send(PlaybackCmd::DecSpeed);
+            }
+            if ch == '.' as u8 {
+                let _ = tx.send(PlaybackCmd::IncBPM);
+            }
+            if ch == ',' as u8 {
+                let _ = tx.send(PlaybackCmd::DecBPM);
+            }
+
             if ch == 'n' as u8 {
                 let _ = tx.send(PlaybackCmd::Next);
+            }
+            if ch == '/' as u8 {
+                let _ = tx.send(PlaybackCmd::LoopPattern);
             }
             if ch == 'p' as u8 {
                 let _ = tx.send(PlaybackCmd::Prev);
@@ -143,5 +180,6 @@ fn mainloop(tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
             }
         }
         //pa.sleep(1_000);
+        last_time = SystemTime::now();
     }
 }
