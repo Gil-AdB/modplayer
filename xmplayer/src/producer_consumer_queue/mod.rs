@@ -2,7 +2,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::{AtomicPtr, Ordering, AtomicBool};
 use std::sync::atomic::Ordering::{Acquire, Release};
 
-pub const AUDIO_BUF_FRAMES: usize = 64;
+pub const AUDIO_BUF_FRAMES: usize = 1024;
 pub const AUDIO_BUF_SIZE: usize = AUDIO_BUF_FRAMES * 2;
 pub const AUDIO_NUM_BUFFERS: usize = 3;
 

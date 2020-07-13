@@ -209,23 +209,24 @@ impl<'a> Song<'a> {
         );
         if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
 
-        println!("on | channel |         instrument         |  frequency  | volume  |sample_position| note | period | envvol | globalvol | fadeout | panning |");
+        println!("on | channel |         instrument         |  frequency  | volume  |sample_position| note | period | envvol | globalvol | fadeout | panning | du");
 
         let mut idx = 0u32;
         for channel in &self.channels {
             idx = idx + 1;
 //            if idx != 1  {continue;}
             if channel.on {
-                println!("{:3}| {:7} | {:26} | {:<11} |{:7}|{:14}|  {:4}| {:7}|{:7}|{:10}|{:8}|{:8}|      ",
+                println!("{:3}| {:7} | {:26} | {:<11} |{:7}|{:14}|  {:4}| {:7}|{:7}|{:10}|{:8}|{:8}|{:8}      ",
                          if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
                          if channel.on { channel.frequency + channel.frequency_shift } else { 0.0 },
                          Song::range(channel.volume.get_volume() as u32, 0, 64, 8),
-                         Song::range((channel.sample_position + channel.du * self.bpm.tick_duration_in_frames as f32) as u32, 0, channel.sample.length - 1, 14),
+                         Song::range((channel.sample_position + channel.du * (self.bpm.tick_duration_in_frames as f32 / 2.0)) as u32, 0, channel.sample.length - 1, 14),
                          channel.note.to_string(), channel.note.period,
                          Song::range(channel.volume.envelope_vol as u32, 0, 16384, 7),
                          Song::range(channel.volume.global_vol as u32, 0, 64, 10),
                          Song::range(channel.volume.fadeout_vol as u32, 0, 65536, 8),
                          Song::range(channel.panning.final_panning as u32, 0, 255, 8),
+                         channel.du,
                 );
             } else {
                 println!("{:3}| {:7} | {:26} | {:<11} | {:7} | {:14}| {:5}| {:7}| {:7}| {:10}| {:8}| {:8}|      ", "off", idx, "", "", "",
@@ -236,24 +237,23 @@ impl<'a> Song<'a> {
 
     pub fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>, rx: Receiver<PlaybackCmd>) -> impl Generator<Yield=(), Return=()> + 'a {
         move || {
-            self.bpm.update(self.bpm.bpm, self.rate);
-
             let mut current_buf_position = 0;
             let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
             loop {
                 if !self.handle_commands(&rx) {return;}
 
                 self.process_tick();
+                self.bpm.update(self.bpm.bpm, self.rate);
+                self.display(0);
 
 //            self.internal_buffer.resize((tick_duration_in_frames * 2) as usize, 0.0);
 
                 let mut current_tick_position = 0usize;
 
                 while current_tick_position < self.bpm.tick_duration_in_frames {
-                    let ticks_to_generate = min(self.bpm.tick_duration_in_frames, AUDIO_BUF_FRAMES - current_buf_position);
+                    let ticks_to_generate = min(self.bpm.tick_duration_in_frames - current_tick_position, AUDIO_BUF_FRAMES - current_buf_position);
 
                     // if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
-                    self.display(current_tick_position);
                     self.output_channels(current_buf_position, buf, ticks_to_generate);
                     current_tick_position += ticks_to_generate;
                     current_buf_position += ticks_to_generate;
@@ -267,7 +267,7 @@ impl<'a> Song<'a> {
 
                         current_buf_position = 0;
                     } else {
-                        // println!("current_buf_position: {}", current_buf_position)
+                        // We finished current with the current tick, but buffer is still not full...
                     }
 
                 }
