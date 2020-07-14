@@ -35,10 +35,45 @@ impl BPM {
         if bpm > 999 || bpm < 1 {return};
         self.bpm = bpm;
         self.tick_duration_in_ms = 2500.0 / self.bpm as f32;
-        // self.tick_duration_in_frames = (self.tick_duration_in_ms / 1000.0 * rate) as usize;
-        self.tick_duration_in_frames = (rate / (self.bpm as f32 / 2.5) + 0.5) as usize;
+        self.tick_duration_in_frames = ((self.tick_duration_in_ms / 1000.0 * rate) + 0.5) as usize;
     }
 }
+
+struct PatternChange {
+    pattern_break:  bool,
+    pattern_jump:   bool,
+    row:            u8,
+    pattern:        u8,
+}
+
+impl PatternChange {
+    pub fn new() -> Self {
+        Self{
+            pattern_break: false,
+            pattern_jump: false,
+            row: 0,
+            pattern: 0
+        }
+    }
+    fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    fn set_break(&mut self, first_tick: bool, param:u8) {
+        if !first_tick {return;}
+        self.pattern_break = true;
+        self.row = param;
+        if self.row > 63 {self.row = 0;}
+    }
+
+    fn set_jump(&mut self, first_tick: bool, param:u8) {
+        if !first_tick {return;}
+        self.pattern_jump = true;
+        self.pattern = param;
+        self.row = 0;
+    }
+}
+
 
 struct GlobalVolume {
     volume:                     u32,
@@ -111,8 +146,9 @@ pub struct Song<'a> {
     global_volume:              GlobalVolume,
     song_data:                  &'a SongData,
     channels:                   [ChannelState<'a>;32],
+    pattern_change:             PatternChange,
     bpm:                        BPM,
-    loop_pattern:                   bool,
+    loop_pattern:               bool,
 }
 
 impl<'a> Song<'a> {
@@ -175,6 +211,7 @@ impl<'a> Song<'a> {
                 force_off: false
             }; 32],
             loop_pattern: false,
+            pattern_change: PatternChange::new(),
         }
     }
 
@@ -218,7 +255,7 @@ impl<'a> Song<'a> {
             idx = idx + 1;
 //            if idx != 1  {continue;}
             if channel.on {
-                println!("{:3}| {:7} | {:26} | {:<11} |{:7}|{:14}|  {:4}| {:7}|{:7}|{:10}|{:8}|{:8}      ",
+                println!("{:3}| {:7} | {:26} | {:<11} |{:7}|{:14}|  {:4}| {:7}|{:7}|{:10}|{:8}|{:8}|      ",
                          if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
                          if channel.on { channel.frequency + channel.frequency_shift } else { 0.0 },
                          Song::range(channel.volume.get_volume() as u32, 0, 64, 8),
@@ -239,12 +276,13 @@ impl<'a> Song<'a> {
     pub fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>, rx: Receiver<PlaybackCmd>) -> impl Generator<Yield=(), Return=()> + 'a {
         move || {
             let mut current_buf_position = 0;
+            self.bpm.update(self.bpm.bpm, self.rate);
             let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
             loop {
                 if !self.handle_commands(&rx) {return;}
 
                 self.process_tick();
-                self.bpm.update(self.bpm.bpm, self.rate);
+
                 self.display(0);
 
 //            self.internal_buffer.resize((tick_duration_in_frames * 2) as usize, 0.0);
@@ -323,22 +361,40 @@ impl<'a> Song<'a> {
     fn next_tick(&mut self) -> bool {
         self.tick += 1;
         if self.tick >= self.speed {
-            self.row = self.row + 1;
-            if self.row >= self.song_data.patterns[self.song_data.pattern_order[self.song_position as usize] as usize].rows.len() {
-                self.row = 0;
-                if !self.loop_pattern {
-                    self.song_position = self.song_position + 1;
+            if self.pattern_change.pattern_break || self.pattern_change.pattern_jump {
+                if !self.pattern_change.pattern_jump {
+                    self.next_pattern();
+                } else {
+                    self.song_position = self.pattern_change.pattern as usize;
                 }
-                if self.song_position >= self.song_data.song_length as usize {return false;}
+                self.row = self.pattern_change.row as usize;
+            } else {
+                self.row = self.row + 1;
+                if self.row >= self.song_data.patterns[self.song_data.pattern_order[self.song_position as usize] as usize].rows.len() {
+                    self.row = 0;
+                    self.next_pattern();
+                }
             }
+            if self.song_position >= self.song_data.song_length as usize { self.song_position = self.song_data.restart_position as usize; }
+            if self.song_position >= self.song_data.song_length as usize { return false; }
             self.tick = 0;
+            self.pattern_change.reset();
         }
         true
+    }
+
+    fn next_pattern(&mut self) {
+        if !self.loop_pattern {
+            self.song_position = self.song_position + 1;
+        }
     }
 
     fn process_tick(&mut self) {
         let instruments = &self.song_data.instruments;
 
+        if self.song_position as usize >= self.song_data.pattern_order.len() {
+            panic!("{} {}", self.song_position, self.song_data.song_length);
+        }
         let patterns = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
         let row = &patterns.rows[self.row];
         let first_tick = self.tick == 0;
@@ -473,7 +529,13 @@ impl<'a> Song<'a> {
                 0xA => {
                     channel.volume_slide_main(first_tick, pattern.effect_param);
                 }
+                0xB => { // Pattern Jump
+                    self.pattern_change.set_jump(first_tick, pattern.effect_param);
+                }
                 0xC => { channel.set_volume(first_tick, pattern.effect_param); } // set volume
+                0xD => { // Pattern Break
+                    self.pattern_change.set_break(first_tick, pattern.get_x() * 10 + pattern.get_y());
+                }
                 0xE => {} // handled separately
                 0xF => { // set speed
                     if first_tick && pattern.effect_param > 0 {
@@ -527,15 +589,15 @@ impl<'a> Song<'a> {
 
             let envelope_volume = channel.volume_envelope_state.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
 
-            if i == 7 && self.song_position == 8 && channel.volume_envelope_state.sustained == false {
-                let _test = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
-                let _banana = 1;
-            }
-
-            if self.song_position == 8 && i == 7 && envelope_volume == 0 {
-                let _test = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
-                let _banana = 1;
-            }
+            // if i == 7 && self.song_position == 8 && channel.volume_envelope_state.sustained == false {
+            //     let _test = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
+            //     let _banana = 1;
+            // }
+            //
+            // if self.song_position == 8 && i == 7 && envelope_volume == 0 {
+            //     let _test = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
+            //     let _banana = 1;
+            // }
 
             // let envelope_volume1 = ves.handle1(&channel.instrument.volume_envelope, channel.sustained, 64);
             // if envelope_volume != envelope_volume1 {

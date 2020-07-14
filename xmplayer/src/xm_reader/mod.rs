@@ -311,7 +311,7 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
     let header_size = fio::read_u32(file);
     dbg!(header_size);
 
-    let song_length = fio::read_u16(file);
+    let mut song_length = fio::read_u16(file);
     dbg!(song_length);
 
     let restart_position = fio::read_u16(file);
@@ -338,7 +338,6 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
     if let Ok(pos) = file.stream_position() {stream_position = pos;} else {stream_position = 20}
 
     let mut pattern_order = fio::read_bytes(file, (60 + header_size - stream_position as u32) as usize);
-    dbg!(&pattern_order);
 
 
 
@@ -350,7 +349,12 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
             pattern_order[idx] = patterns.len() as u8;
         }
     }
-    
+    if song_length > pattern_order.len() as u16 {
+        song_length = pattern_order.len() as u16;
+        dbg!("Trimming song lonegth to {}", song_length);
+    }
+    dbg!(&pattern_order);
+
     patterns.push(Patterns{ rows: vec![Row{ channels: vec![Pattern{
         note: 0,
         instrument: 0,
@@ -374,7 +378,7 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
         frequency_type: if (flags & 1) == 1 { FrequencyType::LINEAR } else { FrequencyType::AMIGA },
         tempo,
         bpm,
-        pattern_order: Vec::from_iter(pattern_order[0..pattern_count as usize].iter().cloned()),
+        pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
         instruments
     }
 }
@@ -386,7 +390,7 @@ pub struct SongData {
     song_type: SongType,
     tracker_name: String,
     pub(crate) song_length: u16,
-    restart_position: u16,
+    pub(crate) restart_position: u16,
     channel_count: u16,
     pub(crate) patterns: Vec<Patterns>,
     instrument_count: u16,
