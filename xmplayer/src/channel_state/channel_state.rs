@@ -249,13 +249,14 @@ impl EnvelopeState {
         }
 
         // set sustained if channel_state is sustained, we have a sustain point and we reached the sustain point
-        if !self.looped && !self.sustained && env.sustain && channel_sustained && self.frame == env.points[env.sustain_point as usize].frame {
+        if !self.sustained && env.sustain && channel_sustained && self.frame == env.points[env.sustain_point as usize].frame {
             self.sustained = true;
         }
 
+
         // if sustain was triggered, it's sticky
-        if self.sustained {
-            return env.points[self.idx].value * 256
+        if self.sustained && channel_sustained {
+            return env.points[env.sustain_point as usize].value * 256
         }
 
         // loop
@@ -286,7 +287,7 @@ impl EnvelopeState {
 //    default: panning envelope: middle (0x80?), volume envelope - max (0x40)
     pub fn handle1(&mut self, e: &Envelope, sustained: bool, default: u16) -> u16 {
         // fn handle(&mut self, e: &Envelope, channel_sustained: bool) -> u16 {
-        if !e.on || e.size < 1 { return default;} // bail out
+        if !e.on || e.size < 1 { return default * 256;} // bail out
         if e.size == 1 {
             // if !e.sustain {return default;}
             return e.points[0].value * 256;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::Receiver;
 
-use crossterm::cursor::MoveTo;
+use crossterm::cursor::{MoveTo, Show, Hide};
 
 use crate::channel_state::ChannelState;
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl, Panning, clamp};
@@ -133,7 +133,16 @@ pub enum PlaybackCmd {
     LoopPattern,
     Restart,
     Quit,
+    PauseToggle,
     ChannelToggle(u8),
+}
+
+
+#[derive(Copy, Clone)]
+struct RGB {
+    R: u8,
+    G: u8,
+    B: u8,
 }
 
 // const BUFFER_SIZE: usize = 4096;
@@ -149,6 +158,7 @@ pub struct Song<'a> {
     pattern_change:             PatternChange,
     bpm:                        BPM,
     loop_pattern:               bool,
+    pause:                      bool,
 }
 
 impl<'a> Song<'a> {
@@ -212,6 +222,7 @@ impl<'a> Song<'a> {
             }; 32],
             loop_pattern: false,
             pattern_change: PatternChange::new(),
+            pause: false
         }
     }
 
@@ -222,11 +233,15 @@ impl<'a> Song<'a> {
     //     frequency as f32
     // }
 
-    fn range(pos: u32, start: u32, end: u32, width:u32) -> String {
+    fn color(color: RGB, str: &str) -> String {
+        format!("\x1b[38;2;{};{};{}m{}", color.R, color.G, color.B, str)
+    }
+
+    fn range(pos: u32, start: u32, end: u32, width: usize) -> String {
         let mut result : String = String::from("");
         let mut indicator_pos = ((pos - start) as f32 / (end - start) as f32 * (width) as f32) as usize;
-        if indicator_pos > (width) as usize {
-            indicator_pos = (width) as usize;
+        if indicator_pos > width {
+            indicator_pos = width;
         }
         for i in 0..indicator_pos {
             result += "-";
@@ -238,39 +253,91 @@ impl<'a> Song<'a> {
         result
     }
 
+    fn range_with_color(pos: u32, start: u32, end: u32, width: usize, colors: &[RGB]) -> String {
+        let mut result : String = String::from("");
+        if pos == 0 {
+            for i in 0..width+1 {
+                result += " ";
+            }
+            return result;
+        }
+
+        let mut indicator_pos = ((pos - start) as f32 / (end - start) as f32 * (width) as f32) as usize;
+        if indicator_pos > width {
+            indicator_pos = width;
+        }
+        for i in 0..indicator_pos {
+            result += &*Self::color(colors[i], "=");
+        }
+        result += &*Self::color(colors[indicator_pos], "=");
+        for i in indicator_pos+1..(width+1) as usize {
+            result += " "; //&*Self::color(colors[i], "-");
+        }
+        result += "\x1b[0m";
+        result
+    }
+
+
     fn display(&self, cur_tick: usize) {
+        let colors: [RGB; 12] = [
+            RGB {R:   0, G: 120, B:   0},
+            RGB {R:   0, G: 140, B:   0},
+            RGB {R:   0, G: 160, B:   0},
+            RGB {R:   0, G: 180, B:   0},
+            RGB {R: 180, G: 180, B:   0},
+            RGB {R: 195, G: 195, B:   0},
+            RGB {R: 210, G: 210, B:   0},
+            RGB {R: 225, G: 225, B:   0},
+            RGB {R: 225, G:  64, B:   0},
+            RGB {R: 225, G:  64, B:   0},
+            RGB {R: 225, G:  64, B:   0},
+            RGB {R: 225, G:  64 , B:   0},
+        ];
         let first_tick = self.tick == 0;
-        if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,0)) {}
-        println!("duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}  row: {:3} bpm: {:3} speed: {:3}, buf: {}",
-                 self.bpm.tick_duration_in_frames, self.bpm.tick_duration_in_ms, self.tick, self.song_position, self.row, self.bpm.bpm, self.speed,
+        if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0,0)) {}
+        println!("duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3}/{:<3} bpm: {:3} speed: {:3}, buf: {}",
+                 self.bpm.tick_duration_in_frames, self.bpm.tick_duration_in_ms, self.tick, self.song_position, self.song_data.song_length, self.row,
+                 self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize].rows.len() - 1,
+                 self.bpm.bpm, self.speed,
                  Song::range(cur_tick as u32, 0, self.bpm.tick_duration_in_frames as u32, 15),
 
         );
         if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
 
-        println!("on | channel |         instrument         |  frequency  | volume  |sample_position| note | period | envvol | globalvol | fadeout | panning");
+        println!("on | channel |         instrument         |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |");
 
         let mut idx = 0u32;
         for channel in &self.channels {
             idx = idx + 1;
 //            if idx != 1  {continue;}
+
+
             if channel.on {
-                println!("{:3}| {:7} | {:26} | {:<11} |{:7}|{:14}|  {:4}| {:7}|{:7}|{:10}|{:8}|{:8}|      ",
+                let final_vol =
+                    (channel.volume.get_volume() as f32 / 64.0) *
+                    (channel.volume.envelope_vol as f32 / 16384.0) *
+                    (channel.volume.global_vol as f32 / 64.0) *
+                    (channel.volume.fadeout_vol as f32 / 65536.0);
+
+                println!("{:3}| {:7} | {:26} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
                          if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
-                         if channel.on { channel.frequency + channel.frequency_shift } else { 0.0 },
-                         Song::range(channel.volume.get_volume() as u32, 0, 64, 8),
+                         if channel.on { (channel.frequency + channel.frequency_shift) as u32 } else { 0 },
+                         Song::range_with_color((final_vol * 12.0) as u32, 0, 12, 11, &colors),
                          Song::range((channel.sample_position + channel.du * self.bpm.tick_duration_in_frames as f32) as u32, 0, channel.sample.length - 1, 14),
                          channel.note.to_string(), channel.note.period,
-                         Song::range(channel.volume.envelope_vol as u32, 0, 16384, 7),
-                         Song::range(channel.volume.global_vol as u32, 0, 64, 10),
-                         Song::range(channel.volume.fadeout_vol as u32, 0, 65536, 8),
+                         Song::range_with_color(channel.volume.get_volume() as u32, 0, 64, 11, &colors),
+                         Song::range_with_color(channel.volume.envelope_vol as u32, 0, 16384, 11, &colors),
+                         Song::range_with_color(channel.volume.global_vol as u32, 0, 64, 11, &colors),
+                         Song::range_with_color(channel.volume.fadeout_vol as u32, 0, 65536, 11, &colors),
                          Song::range(channel.panning.final_panning as u32, 0, 255, 8),
                 );
             } else {
-                println!("{:3}| {:7} | {:26} | {:<11} | {:7} | {:14}| {:5}| {:7}| {:7}| {:10}| {:8}| {:8}|      ", "off", idx, "", "", "",
-                         "", "", "", "", "", "", "");
+                println!("{:3}| {:7} | {:26} |  {:<6} |{:12}| {:14}| {:5}| {:7}|{:12}|{:12}|{:12}|{:12}| {:8}|      ", "off", idx, "", "", "",
+                         "", "", "", "", "", "", "", "");
             }
         }
+        if let Err(_e) = crossterm::execute!(stdout(), Show) {}
+
     }
 
     pub fn get_next_tick_callback(&'a mut self, buffer: Arc<AtomicPtr<[f32; AUDIO_BUF_SIZE]>>, rx: Receiver<PlaybackCmd>) -> impl Generator<Yield=(), Return=()> + 'a {
@@ -280,6 +347,16 @@ impl<'a> Song<'a> {
             let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
             loop {
                 if !self.handle_commands(&rx) {return;}
+
+                if self.pause {
+                    //let temp_buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
+                    unsafe { buf = &mut *buffer.load(Ordering::Acquire); }
+                    buf.fill(0.0);
+
+                    current_buf_position = 0;
+                    yield;
+                    continue
+                }
 
                 self.process_tick();
 
@@ -346,6 +423,7 @@ impl<'a> Song<'a> {
                     PlaybackCmd::IncSpeed => {self.speed += 1;}
                     PlaybackCmd::DecSpeed => {self.speed -= 1;}
                     PlaybackCmd::LoopPattern => {self.loop_pattern = !self.loop_pattern}
+                    PlaybackCmd::PauseToggle => {self.pause = !self.pause}
                     PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
                 }
             }

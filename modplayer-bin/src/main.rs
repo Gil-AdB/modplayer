@@ -165,7 +165,9 @@ fn mainloop(tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
             if ch == ',' as u8 {
                 let _ = tx.send(PlaybackCmd::DecBPM);
             }
-
+            if ch == ' ' as u8 {
+                let _ = tx.send(PlaybackCmd::PauseToggle);
+            }
             if ch == 'n' as u8 {
                 let _ = tx.send(PlaybackCmd::Next);
             }
