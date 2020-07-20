@@ -7,7 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-portaudio = "0.7"
+#portaudio = "0.7"
 crossbeam = "0.7"
 getch = "0.2.1"
 xmplayer = {path="../xmplayer"}
@@ -15,3 +15,12 @@ xmplayer = {path="../xmplayer"}
 #memmap = { git = "https://github.com/danburkert/memmap-rs" }
 async-scoped = "0.4.1"
 crossterm = "0.17.5"
+
+[dependencies.sdl2]
+version = "0.34.2"
+features = ["bundled","static-link","use-vcpkg"]
+
+[package.metadata.vcpkg]
+dependencies = ["sdl2", "sdl2-image[libjpeg-turbo,tiff,libwebp]", "sdl2-ttf", "sdl2-gfx", "sdl2-mixer"]
+git = "https://github.com/microsoft/vcpkg"
+rev = "a0518036077baa4"

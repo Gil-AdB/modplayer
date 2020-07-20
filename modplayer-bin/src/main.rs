@@ -1,8 +1,6 @@
 #![feature(generators, generator_trait)]
 #![feature(async_closure)]
 
-extern crate portaudio;
-
 use std::ops::{Generator, GeneratorState};
 use std::pin::Pin;
 use std::sync::{Arc, mpsc};
@@ -11,9 +9,8 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use crossbeam::thread;
 use getch::Getch;
-use portaudio as pa;
 
-use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
+use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES, PCQHolder};
 use xmplayer::song::{Song, PlaybackCmd, PlayData};
 use xmplayer::xm_reader::{read_xm, SongData, print_xm};
 use std::env;
@@ -24,6 +21,7 @@ use std::thread::sleep;
 use crossterm::cursor::{MoveTo, Show, Hide};
 use std::io::{stdout, Write};
 use xmplayer::TripleBuffer::TripleBuffer;
+use sdl2::audio::{AudioSpecDesired, AudioCallback};
 
 
 #[derive(Copy, Clone)]
@@ -156,7 +154,24 @@ fn main() {
     }
 }
 
-fn run(song_data : SongData) -> Result<(), pa::Error> {
+struct AudioCB {
+    q: PCQHolder
+}
+
+impl AudioCallback for AudioCB {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        if out.len() != AUDIO_BUF_SIZE {panic!("unexpected frame size: {}", out.len());}
+        if !self.q.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { out.clone_from_slice(buf); }) {
+            // pa::Complete
+        } else {
+            // pa::Continue
+        }
+    }
+}
+
+fn run(song_data : SongData) -> Result<(), Error> {
     const CHANNELS: i32 = 2;
     const NUM_SECONDS: i32 = 500;
     const SAMPLE_RATE: f32 = 48_000.0;
@@ -179,27 +194,38 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
     //     Err(e) => return Err(e),
     // };
 
-    let pa = pa::PortAudio::new()?;
+    let desired_spec = AudioSpecDesired {
+        freq: Some(SAMPLE_RATE as i32),
+        channels: Some(2),
+        samples: Some((AUDIO_BUF_SIZE / 2) as u16)
+    };
 
-    let settings =
-        pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE as f64, (AUDIO_BUF_SIZE / 2) as u32)?;
+    let sdl_context = sdl2::init().unwrap();
+    let audio = sdl_context.audio().unwrap();
+    // let pa = pa::PortAudio::new()?;
+    //
+    // let settings =
+    //     pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE as f64, (AUDIO_BUF_SIZE / 2) as u32)?;
 
     let mut qclone = q.clone();
 
-    // This routine will be called by the PortAudio engine when audio is needed. It may called at
-    // interrupt level on some machines so don't do anything that could mess up the system like
-    // dynamic resource allocation or IO.
-    let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
-        if frames != AUDIO_BUF_FRAMES {panic!("unexpected frame size: {}", frames);}
-        if !qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); }) {
-            pa::Complete
-        } else {
-            pa::Continue
-        }
-    };
+    // // This routine will be called by the PortAudio engine when audio is needed. It may called at
+    // // interrupt level on some machines so don't do anything that could mess up the system like
+    // // dynamic resource allocation or IO.
+    // let callback: fn(&mut [f32]) = |buf: &mut [f32] | {
+    //     if buf.len() != AUDIO_BUF_FRAMES {panic!("unexpected frame size: {}", buf.len());}
+    //     if !qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buf.clone_from_slice(buf); }) {
+    //         // pa::Complete
+    //     } else {
+    //         // pa::Continue
+    //     }
+    // };
 
+    let audio_output = audio.open_playback(None, &desired_spec, |spec| {
+        AudioCB{ q: qclone }
+    }).unwrap();
 
-    let mut stream = pa.open_non_blocking_stream(settings, callback)?;
+    // let mut stream = pa.open_non_blocking_stream(settings, callback)?;
     let stopped = Arc::new(AtomicBool::from(false));
     let thread_stopped = stopped.clone();
     let thread_stopped_reader = stopped.clone();
@@ -221,12 +247,18 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
             scope.spawn( move |_| {
 
                 loop {
+                    let mut song_row = 0;
+                    let mut song_tick = 2000;
                     if thread_stopped_reader.load(Ordering::Acquire) == true {
                         break;
                     }
                     sleep(Duration::from_millis(30));
                     let play_data = triple_buffer_reader.read();
-                    Display::display(play_data, 0);
+                    if play_data.tick != song_tick || play_data.row != song_row {
+                        Display::display(play_data, 0);
+                        song_row = play_data.row;
+                        song_tick = play_data.tick;
+                    }
                 }
             }
             );
@@ -237,15 +269,17 @@ fn run(song_data : SongData) -> Result<(), pa::Error> {
 
 //    settings.flags = pa::stream_flags::CLIP_OFF;
 //
-        stream.start().unwrap();
+//         stream.start().unwrap();
 //
+        audio_output.resume();
         println!("Play for {} seconds.", NUM_SECONDS);
         mainloop(tx, stopped);
     }).ok();
 
-    stream.stop().unwrap();
-    stream.close().unwrap();
+    // stream.stop().unwrap();
+    // stream.close().unwrap();
 
+    audio_output.close_and_get_callback();
     println!("Test finished.");
 
 
