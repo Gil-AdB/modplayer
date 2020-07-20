@@ -11,6 +11,7 @@ portaudio = "0.7"
 crossbeam = "0.7"
 getch = "0.2.1"
 xmplayer = {path="../xmplayer"}
-tokio = { version = "0.2", features = ["full"] }
+#tokio = { version = "0.2", features = ["full"] }
 #memmap = { git = "https://github.com/danburkert/memmap-rs" }
 async-scoped = "0.4.1"
+crossterm = "0.17.5"

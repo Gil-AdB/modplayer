@@ -15,6 +15,7 @@ pub mod pattern;
 pub mod producer_consumer_queue;
 pub mod song;
 pub mod tables;
+pub mod TripleBuffer;
 
 
 #[cfg(test)]

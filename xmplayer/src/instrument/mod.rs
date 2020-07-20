@@ -5,7 +5,7 @@ use crate::envelope::Envelope;
 use crate::io_helpers::{read_i16_vec, read_i8_vec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LoopType {
+pub enum LoopType {
     NoLoop = 0,
     ForwardLoop = 1,
     PingPongLoop = 2,
@@ -23,19 +23,19 @@ impl LoopType {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Sample {
-    pub(crate) length: u32,
-    pub(crate) loop_start: u32,
-    pub(crate) loop_end: u32,
-    pub(crate) loop_len: u32,
-    pub(crate) volume: u8,
-    pub(crate) finetune: i8,
-    pub(crate) loop_type: LoopType,
-    pub(crate) bitness: u8,
-    pub(crate) panning: u8,
-    pub(crate) relative_note: i8,
-    pub(crate) name: String,
-    pub(crate) data: Vec<i16>
+pub struct Sample {
+    pub length: u32,
+    pub loop_start: u32,
+    pub loop_end: u32,
+    pub loop_len: u32,
+    pub volume: u8,
+    pub finetune: i8,
+    pub loop_type: LoopType,
+    pub bitness: u8,
+    pub panning: u8,
+    pub relative_note: i8,
+    pub name: String,
+    pub data: Vec<i16>
 }
 
 impl Sample {
@@ -91,17 +91,17 @@ impl Sample {
 }
 
 #[derive(Debug)]
-pub(crate) struct Instrument {
-    pub(crate) name: String,
-    pub(crate) idx: u8,
-    pub(crate) sample_indexes: Vec<u8>,
-    pub(crate) volume_envelope: Envelope,
-    pub(crate) panning_envelope: Envelope,
-    pub(crate) vibrato_type: u8,
-    pub(crate) vibrato_sweep: u8,
-    pub(crate) vibrato_depth: u8,
-    pub(crate) vibrato_rate: u8,
-    pub(crate) volume_fadeout: u16,
+pub struct Instrument {
+    pub name: String,
+    pub idx: u8,
+    pub sample_indexes: Vec<u8>,
+    pub volume_envelope: Envelope,
+    pub panning_envelope: Envelope,
+    pub vibrato_type: u8,
+    pub vibrato_sweep: u8,
+    pub vibrato_depth: u8,
+    pub vibrato_rate: u8,
+    pub volume_fadeout: u16,
 
     pub(crate) samples: Vec<Sample>,
 }
