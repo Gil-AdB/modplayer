@@ -2,8 +2,6 @@ use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
 use crate::tables::{LINEAR_PERIODS, AMIGA_PERIODS};
 use std::sync::atomic::Ordering::{Acquire, Relaxed};
-use array_const_fn_init::array_const_fn_init;
-use std::sync::Arc;
 use crate::channel_state::channel_state::TableType::AmigaFrequency;
 use std::num::Wrapping;
 

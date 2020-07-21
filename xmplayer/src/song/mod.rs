@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::Receiver;
 
-use crossterm::cursor::{MoveTo, Show, Hide};
-
 use crate::channel_state::ChannelState;
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl, Panning, clamp};
 use crate::instrument::{LoopType, Sample, Instrument};
@@ -282,39 +280,38 @@ impl<'a> Song<'a> {
     // }
 
     fn queue_display(&mut self) {
-        let mut play_data = PlayData {
-            tick_duration_in_frames: self.bpm.tick_duration_in_frames,
-            tick_duration_in_ms: self.bpm.tick_duration_in_ms,
-            tick: self.tick,
-            song_position: self.song_position,
-            song_length: self.song_data.song_length,
-            row: self.row,
-            pattern_len: self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize].rows.len() - 1,
-            bpm: self.bpm.bpm,
-            speed: self.speed,
-            channel_status: vec![]
-        };
-        
+        let play_data = self.triple_buffer_writer.write();
+
+        play_data.tick_duration_in_frames   = self.bpm.tick_duration_in_frames;
+        play_data.tick_duration_in_ms       = self.bpm.tick_duration_in_ms;
+        play_data.tick                      = self.tick;
+        play_data.song_position             = self.song_position;
+        play_data.song_length               = self.song_data.song_length;
+        play_data.row                       = self.row;
+        play_data.pattern_len               = self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize].rows.len() - 1;
+        play_data.bpm                       = self.bpm.bpm;
+        play_data.speed                     = self.speed;
+        play_data.channel_status.clear();
+
         let mut idx = 0;
         for channel in &self.channels {
             play_data.channel_status.push(ChannelStatus {
-                volume: channel.volume.volume as f32,
-                envelope_volume: channel.volume.envelope_vol as f32,
-                global_volume: channel.volume.global_vol as f32,
-                fadeout_volume: channel.volume.fadeout_vol as f32,
-                on: channel.on,
-                force_off: channel.force_off,
-                frequency: channel.frequency + channel.frequency_shift,
-                instrument: channel.instrument,
-                sample: channel.sample,
-                sample_position: channel.sample_position,
-                note: channel.note.to_string(),
-                period: channel.note.period,
-                final_panning: channel.panning.final_panning,
+                volume:             channel.volume.volume as f32,
+                envelope_volume:    channel.volume.envelope_vol as f32,
+                global_volume:      channel.volume.global_vol as f32,
+                fadeout_volume:     channel.volume.fadeout_vol as f32,
+                on:                 channel.on,
+                force_off:          channel.force_off,
+                frequency:          channel.frequency + channel.frequency_shift,
+                instrument:         channel.instrument,
+                sample:             channel.sample,
+                sample_position:    channel.sample_position,
+                note:               channel.note.to_string(),
+                period:             channel.note.period,
+                final_panning:      channel.panning.final_panning,
             });
             idx += 1;
         }
-        self.triple_buffer_writer.write(&play_data);
         // Song::display(&play_data, 0);
     }
 
@@ -674,11 +671,6 @@ impl<'a> Song<'a> {
             channel.volume.output_volume = (channel.volume.fadeout_vol as f32 / 65536.0) * (envelope_volume as f32 / 16384.0) * (channel.volume.get_volume() as f32 / 64.0) * global_volume;
             
         }
-        if !missing.is_empty() {
-            if let Err(_) = crossterm::execute!(stdout(), MoveTo(0,40)) {}
-            println!("{:80}", missing);
-        }
-
 //            row
     }
 
