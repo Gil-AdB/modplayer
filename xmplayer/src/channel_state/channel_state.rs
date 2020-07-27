@@ -51,14 +51,14 @@ enum TableType {
 }
 
 struct AudioTables {
-    Periods:        [u16; 1936],
+    Periods:        [i32; 1936],
     dPeriod2HzTab:  [f64; 65536],
 }
 
 impl AudioTables {
     fn calcTablesLinear() -> Self // taken directly from ft2clone
     {
-        let mut result = Self { Periods: [0u16; 1936], dPeriod2HzTab: [0.0f64; 65536] };
+        let mut result = Self { Periods: [0i32; 1936], dPeriod2HzTab: [0.0f64; 65536] };
         result.dPeriod2HzTab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
 
         result.Periods = LINEAR_PERIODS;
@@ -76,7 +76,7 @@ impl AudioTables {
 
     fn calcTablesAmiga() -> AudioTables // taken directly from ft2clone
     {
-        let mut result = Self { Periods: [0u16; 1936], dPeriod2HzTab: [0.0f64; 65536] };
+        let mut result = Self { Periods: [0i32; 1936], dPeriod2HzTab: [0.0f64; 65536] };
         result.dPeriod2HzTab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
         result.Periods = AMIGA_PERIODS;
         // Amiga periods
@@ -281,42 +281,54 @@ impl EnvelopeState {
         retval
     }
 
-    // pre: e.on && e.size > 0
-//    default: panning envelope: middle (0x80?), volume envelope - max (0x40)
-    pub fn handle1(&mut self, e: &Envelope, sustained: bool, default: u16) -> u16 {
-        // fn handle(&mut self, e: &Envelope, channel_sustained: bool) -> u16 {
-        if !e.on || e.size < 1 { return default * 256;} // bail out
-        if e.size == 1 {
-            // if !e.sustain {return default;}
-            return e.points[0].value * 256;
-        }
-
-        if e.has_loop && self.frame >= e.points[e.loop_end_point as usize].frame as u32 as u16 {
-            self.frame = e.points[e.loop_start_point as usize].frame as u32 as u16
-        }
-
-        let mut idx:usize = 0;
-        loop {
-            if idx >= e.size as usize - 2 { break; }
-            if e.points[idx].frame as u32 <= self.frame as u32 && e.points[idx+1].frame as u32 >= self.frame as u32 {
-                break;
-            }
-            idx += 1;
-        }
-
-        // if sustained && (e.sustain && self.idx == e.sustain_point as u32) && self.idx == e.size as u32 {
-        //     return e.points[self.idx as usize].value;
+    pub(crate) fn set_position(&mut self, env: &Envelope, pos: u8) {
+        // // pre: envelope exists and should be set
+        //
+        // if env.size < 2 {
+        //     return;
         // }
+        //
+        // let mut idx = 0;
+        // while idx <
 
-        let retval = EnvelopeState::lerp(self.frame as u16, &e.points[idx as usize], &e.points[(idx + 1) as usize]);
-
-
-        if !sustained || !e.sustain || self.frame != e.points[e.sustain_point as usize].frame as u32 as u16 {
-            self.frame += 1;
-        }
-
-        retval
     }
+
+        // pre: e.on && e.size > 0
+//    default: panning envelope: middle (0x80?), volume envelope - max (0x40)
+//     pub fn handle1(&mut self, e: &Envelope, sustained: bool, default: u16) -> u16 {
+//         // fn handle(&mut self, e: &Envelope, channel_sustained: bool) -> u16 {
+//         if !e.on || e.size < 1 { return default * 256;} // bail out
+//         if e.size == 1 {
+//             // if !e.sustain {return default;}
+//             return e.points[0].value * 256;
+//         }
+//
+//         if e.has_loop && self.frame >= e.points[e.loop_end_point as usize].frame as u32 as u16 {
+//             self.frame = e.points[e.loop_start_point as usize].frame as u32 as u16
+//         }
+//
+//         let mut idx:usize = 0;
+//         loop {
+//             if idx >= e.size as usize - 2 { break; }
+//             if e.points[idx].frame as u32 <= self.frame as u32 && e.points[idx+1].frame as u32 >= self.frame as u32 {
+//                 break;
+//             }
+//             idx += 1;
+//         }
+//
+//         // if sustained && (e.sustain && self.idx == e.sustain_point as u32) && self.idx == e.size as u32 {
+//         //     return e.points[self.idx as usize].value;
+//         // }
+//
+//         let retval = EnvelopeState::lerp(self.frame as u16, &e.points[idx as usize], &e.points[(idx + 1) as usize]);
+//
+//
+//         if !sustained || !e.sustain || self.frame != e.points[e.sustain_point as usize].frame as u32 as u16 {
+//             self.frame += 1;
+//         }
+//
+//         retval
+//     }
 
     fn lerp(frame: u16, e1: &EnvelopePoint, e2: &EnvelopePoint) -> u16 {
         if frame == e1.frame {
@@ -372,7 +384,7 @@ impl EnvelopeState {
 pub(crate) struct Note {
     note:       u8,
     finetune:   i8,
-    pub(crate) period:     u16
+    pub(crate) period:     i32
 }
 
 impl Note {
@@ -409,13 +421,23 @@ impl Note {
     pub(crate) fn frequency(&self, period_shift: i16, semitone: bool) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
-            let period = self.period as i16 - (period_shift * 16 * 4) as i16;
+            let mut period = self.period as i16 - (period_shift * 16 * 4) as i16;
+        if period < 0 {
+            println!("{}, {}", self.period, period_shift);
+        }
         // }
 
-        // LinearTables.dPeriod2HzTab[period as usize] as f32
-        let two = 2.0f32;
-        let freq = 8363.0 * two.powf((6 * 12 * 16 * 4 - period) as f32 / (12 * 16 * 4) as f32);
-        return freq
+        period = clamp(period, 0, 31999);
+        let mut use_amiga : bool;
+        unsafe { use_amiga = USE_AMIGA.load(Acquire); }
+        return if use_amiga {
+            AmigaTables.dPeriod2HzTab[period as usize] as f32
+        } else {
+            LinearTables.dPeriod2HzTab[period as usize] as f32
+        }
+        // let two = 2.0f32;
+        // let freq = 8363.0 * two.powf((6 * 12 * 16 * 4 - period) as f32 / (12 * 16 * 4) as f32);
+        // return freq
     }
 
     const NOTES: [&'static str;12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];

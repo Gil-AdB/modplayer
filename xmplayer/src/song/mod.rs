@@ -152,7 +152,7 @@ pub struct ChannelStatus<'a> {
     pub sample:                             &'a Sample,
     pub sample_position:                    f32,
     pub note:                               String,
-    pub period:                             u16,
+    pub period:                             i32,
     pub final_panning:                      u8,
 }
 
@@ -599,17 +599,19 @@ impl<'a> Song<'a> {
                         }
                     }
                 }
-
                 0x10 => { // set global volume
                     self.global_volume.set_volume(first_tick, pattern.effect_param);
                 }
                 0x11 => { // global volume slide
                     self.global_volume.volume_slide(first_tick, pattern.effect_param);
                 }
-                0x14 => {
+                0x14 => { // key off
                     if self.tick == pattern.effect_param as u32 {
                         channel.key_off();
                     }
+                }
+                0x15 => { // set envelope position
+                    // if channel.volume_envelope_state.set_position(channel.)
                 }
                 0x19 => {
                     channel.panning_slide(first_tick, pattern.effect_param);

@@ -7,6 +7,8 @@ use crate::envelope::{Envelope, EnvelopePoint, EnvelopePoints};
 use crate::instrument::{Instrument, LoopType, Sample};
 use crate::io_helpers as fio;
 use crate::pattern::Pattern;
+use crate::channel_state::channel_state::USE_AMIGA;
+use std::sync::atomic::Ordering::Release;
 
 #[derive(Debug)]
 enum SongType {
@@ -21,7 +23,6 @@ enum FrequencyType {
 pub(crate) fn is_note_valid(note: u8) -> bool {
     note > 0 && note < 97
 }
-
 
 #[derive(Clone)]
 pub(crate) struct Row {
@@ -304,7 +305,7 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
     dbg!(&tracker_name);
 
     let ver = fio::read_u16(file);
-    dbg!(format!("{:x?}", ver));
+    dbg!(format!("{:x}", ver));
 
 //    dbg!(file.seek(SeekFrom::Current(0)));
 
@@ -353,7 +354,7 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
         song_length = pattern_order.len() as u16;
         dbg!("Trimming song lonegth to {}", song_length);
     }
-    dbg!(&pattern_order);
+    // dbg!(&pattern_order);
 
     patterns.push(Patterns{ rows: vec![Row{ channels: vec![Pattern{
         note: 0,
@@ -365,6 +366,7 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
 
     let instruments = read_instruments(file, instrument_count as usize);
 
+    unsafe { USE_AMIGA.store(if (flags & 1) == 1 { false } else { true }, Release) }
     SongData {
         id: id.trim().to_string(),
         name: name.trim().to_string(),
@@ -408,7 +410,7 @@ pub fn read_xm(path: &str) -> SongData {
     let mut file = BufReader::new(f);
 
 
-    println!("file length: {}", file_len);
+    // println!("file length: {}", file_len);
     if file_len < 60 {
         panic!("File is too small!")
     }
@@ -423,6 +425,6 @@ pub fn read_xm(path: &str) -> SongData {
 
 pub fn print_xm(data: &SongData) {
     dbg!(&data.patterns[data.pattern_order[22] as usize]);
-    println!("=====================================================================");
+    // println!("=====================================================================");
     dbg!(&data.patterns[data.pattern_order[23] as usize]);
 }

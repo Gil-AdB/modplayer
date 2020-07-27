@@ -247,33 +247,29 @@ impl ChannelState<'_> {
             }
 
             if is_note_valid(note) {
-
-                self.porta_to_note.target_note.set_note(clamp(note as i8 + self.sample.relative_note, 0, 119) as u8, self.sample.finetune);
+                self.porta_to_note.target_note.set_note(clamp(note as i16 + self.sample.relative_note as i16, 0, 119) as u8, self.sample.finetune);
             }
-
         } else {
             let mut up = true;
             if self.note.period < self.porta_to_note.target_note.period {
-                self.note.period += (self.porta_to_note.speed as u16 * 4) as u16;
+                self.note.period += self.porta_to_note.speed as i32 * 4;
                 up = true;
-
             } else if self.note.period > self.porta_to_note.target_note.period {
-                self.note.period -= (self.porta_to_note.speed as u16 * 4) as u16;
+                self.note.period -= self.porta_to_note.speed as i32 * 4;
                 up = false;
             }
 
             if up {
                 if self.note.period > self.porta_to_note.target_note.period {
                     self.note = self.porta_to_note.target_note;
-                    self.period_shift = 0;
-                    self.frequency_shift = 0.0;
+                    // self.period_shift = 0;
+                    // self.frequency_shift = 0.0;
                 }
             } else if self.note.period < self.porta_to_note.target_note.period {
                 self.note = self.porta_to_note.target_note;
-                self.period_shift = 0;
-                self.frequency_shift = 0.0;
+                // self.period_shift = 0;
+                // self.frequency_shift = 0.0;
             }
-
 
             self.update_frequency(rate);
         }
@@ -285,7 +281,7 @@ impl ChannelState<'_> {
                 self.last_porta_up = (amount * 4) as u16;
             }
         } else {
-            self.note.period -= self.last_porta_up;
+            self.note.period -= self.last_porta_up as i32;
             if self.note.period < 1 {
                 self.note.period = 1;
             }
@@ -299,7 +295,7 @@ impl ChannelState<'_> {
                 self.last_porta_down = (amount * 4) as u16;
             }
         } else {
-            self.note.period += self.last_porta_down;
+            self.note.period += self.last_porta_down as i32;
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }
@@ -312,7 +308,7 @@ impl ChannelState<'_> {
             if amount != 0 {
                 self.last_fine_porta_up = (amount * 4) as u16;
             }
-            self.note.period -= self.last_fine_porta_up;
+            self.note.period -= self.last_fine_porta_up as i32;
             if self.note.period < 1 {
                 self.note.period = 1;
             }
@@ -325,7 +321,7 @@ impl ChannelState<'_> {
             if amount != 0 {
                 self.last_fine_porta_down = (amount * 4) as u16;
             }
-            self.note.period += self.last_fine_porta_down;
+            self.note.period += self.last_fine_porta_down as i32;
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }
