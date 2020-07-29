@@ -21,12 +21,10 @@ xmplayer = {path="../xmplayer"}
 #async-scoped = "0.4.1"
 crossterm = "0.17.5"
 
+
+# uncomment for termux
 #[target.'cfg(os = "android")'.patch.crates-io]
-#termios = { path = "../termios-0.2.2" }
-[target.aarch64-unix-android.termios]
-rustc-cfg = ['target-os="linux"']
-#[dependencies.termios]
-#path = "../termios-0.2.2"
+#termios = { path = "../vendor/termios-0.2.2" }
 
 [dependencies.sdl2]
 version = "0.34.2"
@@ -38,3 +36,4 @@ dependencies = ["sdl2", "sdl2-image[libjpeg-turbo,tiff,libwebp]", "sdl2-ttf", "s
 git = "https://github.com/microsoft/vcpkg"
 rev = "a0518036077baa4"
 optional = true
+

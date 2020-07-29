@@ -1,4 +1,6 @@
 [workspace]
 members = ["xmplayer", "modplayer-bin"]
 
-
+# uncomment for termux
+#[patch.crates-io]
+#termios = { path = "vendor/termios-0.2.2" }
