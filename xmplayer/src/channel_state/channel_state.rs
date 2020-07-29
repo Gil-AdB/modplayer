@@ -51,14 +51,14 @@ enum TableType {
 }
 
 struct AudioTables {
-    Periods:        [i32; 1936],
+    Periods:        [i16; 1936],
     dPeriod2HzTab:  [f64; 65536],
 }
 
 impl AudioTables {
     fn calcTablesLinear() -> Self // taken directly from ft2clone
     {
-        let mut result = Self { Periods: [0i32; 1936], dPeriod2HzTab: [0.0f64; 65536] };
+        let mut result = Self { Periods: [0i16; 1936], dPeriod2HzTab: [0.0f64; 65536] };
         result.dPeriod2HzTab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
 
         result.Periods = LINEAR_PERIODS;
@@ -76,7 +76,7 @@ impl AudioTables {
 
     fn calcTablesAmiga() -> AudioTables // taken directly from ft2clone
     {
-        let mut result = Self { Periods: [0i32; 1936], dPeriod2HzTab: [0.0f64; 65536] };
+        let mut result = Self { Periods: [0i16; 1936], dPeriod2HzTab: [0.0f64; 65536] };
         result.dPeriod2HzTab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
         result.Periods = AMIGA_PERIODS;
         // Amiga periods
@@ -384,7 +384,7 @@ impl EnvelopeState {
 pub(crate) struct Note {
     note:       u8,
     finetune:   i8,
-    pub(crate) period:     i32
+    pub(crate) period:     i16
 }
 
 impl Note {
@@ -416,12 +416,59 @@ impl Note {
         Ok(tone as u8)
     }
 
+    // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
+    fn relocateTon(&self, period: u16, arpNote: u8) -> i16 {
+        // int32_t fineTune, loPeriod, hiPeriod, tmpPeriod, tableIndex;
+        let fineTune : u32 = (((self.finetune >> 3) + 16) << 1) as u32;
+        let mut hiPeriod : u32 = (8 * 12 * 16) * 2;
+        let mut loPeriod : u32 = 0;
+
+        let use_amiga: bool = unsafe { USE_AMIGA.load(Acquire) };
+        let mut note2Period: &[i16; 1936];
+        if use_amiga {
+            note2Period = &AMIGA_PERIODS;
+        } else {
+            note2Period = &LINEAR_PERIODS;
+        }
+
+        for i in 0..8 {
+            let tmpPeriod = (((loPeriod + hiPeriod) >> 1) & 0xFFFFFFE0) + fineTune;
+
+            let mut tableIndex = (tmpPeriod - 16) as u32 >> 1;
+            tableIndex = clamp(tableIndex, 0, 1935); // 8bitbubsy: added security check
+
+            if period >= note2Period[tableIndex as usize] as u16 {
+                hiPeriod = (tmpPeriod - fineTune) & 0xFFFFFFE0;
+            } else {
+                loPeriod = (tmpPeriod - fineTune) & 0xFFFFFFE0;
+            }
+        }
+
+        // arpNote is between 0..16
+        let mut tmpPeriod = loPeriod + fineTune + (arpNote << 5) as u32;
+
+        if tmpPeriod < 0 {// 8bitbubsy: added security check
+            tmpPeriod = 0;
+        }
+
+        if tmpPeriod >= (8*12*16+15)*2-1 { // FT2 bug: off-by-one edge case
+            tmpPeriod = (8 * 12 * 16 + 15) * 2;
+        }
+
+        return note2Period[(tmpPeriod>>1) as usize];
+    }
+
 
 
     pub(crate) fn frequency(&self, period_shift: i16, semitone: bool) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
-            let mut period = self.period as i16 - (period_shift * 16 * 4) as i16;
+        let mut period:i16 = 0;
+        if semitone {
+            period = self.relocateTon(self.period as u16, period_shift as u8);
+        } else {
+            period = (self.period as i16 - (period_shift * 16 * 4) as i16) ;
+        }
         if period < 0 {
             println!("{}, {}", self.period, period_shift);
         }

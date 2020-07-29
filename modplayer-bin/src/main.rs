@@ -21,9 +21,12 @@ use std::thread::sleep;
 use crossterm::cursor::{MoveTo, Show, Hide};
 use std::io::{stdout, Write};
 use xmplayer::TripleBuffer::{TripleBuffer, State};
-use sdl2::audio::{AudioSpecDesired, AudioCallback};
+#[cfg(feature="sdl2-feature")] use sdl2::audio::{AudioSpecDesired, AudioCallback};
+
 use xmplayer::TripleBuffer::State::STATE_NO_CHANGE;
 
+#[cfg(feature="portaudio-feature")] extern crate portaudio;
+#[cfg(feature="portaudio-feature")] use portaudio as pa;
 
 #[derive(Copy, Clone)]
 struct RGB {
@@ -97,10 +100,11 @@ impl Display {
         ];
         let first_tick = play_data.tick == 0;
         if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0,0)) {}
-        println!("duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3}/{:<3} bpm: {:3} speed: {:3}",
+        println!("duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3}/{:<3} bpm: {:3} speed: {:3} filter: {:5}",
                  play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
                  play_data.pattern_len - 1,
                  play_data.bpm, play_data.speed,
+                 play_data.filter
         );
         if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
 
@@ -155,24 +159,29 @@ fn main() {
     }
 }
 
+#[cfg(feature="sdl2-feature")]
 struct AudioCB {
-    q: PCQHolder
+   q: PCQHolder
 }
 
+#[cfg(feature="sdl2-feature")]
 impl AudioCallback for AudioCB {
-    type Channel = f32;
+   type Channel = f32;
 
-    fn callback(&mut self, out: &mut [f32]) {
-        if out.len() != AUDIO_BUF_SIZE {panic!("unexpected frame size: {}", out.len());}
-        if !self.q.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { out.clone_from_slice(buf); }) {
-            // pa::Complete
-        } else {
-            // pa::Continue
-        }
-    }
+   fn callback(&mut self, out: &mut [f32]) {
+       if out.len() != AUDIO_BUF_SIZE {panic!("unexpected frame size: {}", out.len());}
+       if !self.q.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { out.clone_from_slice(buf); }) {
+           // pa::Complete
+       } else {
+           // pa::Continue
+       }
+   }
 }
 
-fn run(song_data : SongData) -> Result<(), Error> {
+#[cfg(feature="portaudio-feature")] type ErrorType = pa::Error;
+#[cfg(feature="sdl2-feature")] type ErrorType = Error;
+
+fn run(song_data : SongData) -> Result<(), ErrorType> {
     const CHANNELS: i32 = 2;
     const NUM_SECONDS: i32 = 500;
     const SAMPLE_RATE: f32 = 48_000.0;
@@ -189,44 +198,52 @@ fn run(song_data : SongData) -> Result<(), Error> {
 
     let q = ProducerConsumerQueue::new();
 
-    // let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
-    // let pa = match pa_result {
-    //     Ok(p) => p,
-    //     Err(e) => return Err(e),
-    // };
-
-    let desired_spec = AudioSpecDesired {
-        freq: Some(SAMPLE_RATE as i32),
-        channels: Some(2),
-        samples: Some((AUDIO_BUF_SIZE / 2) as u16)
+    #[cfg(feature="portaudio-feature")]
+    let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
+    #[cfg(feature="portaudio-feature")]
+    let pa = match pa_result {
+        Ok(p) => p,
+        Err(e) => return Err(e),
     };
 
-    let sdl_context = sdl2::init().unwrap();
-    let audio = sdl_context.audio().unwrap();
-    // let pa = pa::PortAudio::new()?;
-    //
-    // let settings =
-    //     pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE as f64, (AUDIO_BUF_SIZE / 2) as u32)?;
+    #[cfg(feature="sdl2-feature")]
+    let desired_spec = AudioSpecDesired {
+       freq: Some(SAMPLE_RATE as i32),
+       channels: Some(2),
+       samples: Some((AUDIO_BUF_SIZE / 2) as u16)
+    };
+
+    #[cfg(feature="sdl2-feature")] let sdl_context = sdl2::init().unwrap();
+    #[cfg(feature="sdl2-feature")] let audio = sdl_context.audio().unwrap();
+    #[cfg(feature="portaudio-feature")]
+    let pa = pa::PortAudio::new()?;
+    #[cfg(feature="portaudio-feature")]
+    let settings =
+        pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE as f64, (AUDIO_BUF_SIZE / 2) as u32)?;
 
     let mut qclone = q.clone();
 
-    // // This routine will be called by the PortAudio engine when audio is needed. It may called at
-    // // interrupt level on some machines so don't do anything that could mess up the system like
-    // // dynamic resource allocation or IO.
-    // let callback: fn(&mut [f32]) = |buf: &mut [f32] | {
-    //     if buf.len() != AUDIO_BUF_FRAMES {panic!("unexpected frame size: {}", buf.len());}
-    //     if !qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buf.clone_from_slice(buf); }) {
-    //         // pa::Complete
-    //     } else {
-    //         // pa::Continue
-    //     }
-    // };
+    // This routine will be called by the PortAudio engine when audio is needed. It may called at
+    // interrupt level on some machines so don't do anything that could mess up the system like
+    // dynamic resource allocation or IO.
+    #[cfg(feature="portaudio-feature")]
+    let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
+        if frames != AUDIO_BUF_FRAMES {panic!("unexpected frame size: {}", frames);}
+        if !qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); }) {
+            pa::Complete
+        } else {
+            pa::Continue
+        }
+    };
 
+    #[cfg(feature="sdl2-feature")]
     let audio_output = audio.open_playback(None, &desired_spec, |spec| {
-        AudioCB{ q: qclone }
+       AudioCB{ q: qclone }
     }).unwrap();
 
-    // let mut stream = pa.open_non_blocking_stream(settings, callback)?;
+    #[cfg(feature="portaudio-feature")]
+    let mut stream = pa.open_non_blocking_stream(settings, callback)?;
+
     let stopped = Arc::new(AtomicBool::from(false));
     let thread_stopped = stopped.clone();
     let thread_stopped_reader = stopped.clone();
@@ -271,16 +288,22 @@ fn run(song_data : SongData) -> Result<(), Error> {
 
 //    settings.flags = pa::stream_flags::CLIP_OFF;
 //
-//         stream.start().unwrap();
+        #[cfg(feature="portaudio-feature")]
+         stream.start().unwrap();
 //
+        #[cfg(feature="sdl2-feature")]
         audio_output.resume();
+
         println!("Play for {} seconds.", NUM_SECONDS);
         mainloop(tx, stopped);
     }).ok();
 
-    // stream.stop().unwrap();
-    // stream.close().unwrap();
+    #[cfg(feature="portaudio-feature")]
+    stream.stop().unwrap();
+    #[cfg(feature="portaudio-feature")]
+    stream.close().unwrap();
 
+    #[cfg(feature="sdl2-feature")]
     audio_output.close_and_get_callback();
     println!("Test finished.");
 
@@ -351,6 +374,15 @@ fn mainloop(tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
             }
             if ch == 'r' as u8 {
                 let _ = tx.send(PlaybackCmd::Restart);
+            }
+            if ch == 'a' as u8 {
+                let _ = tx.send(PlaybackCmd::AmigaTable);
+            }
+            if ch == 'l' as u8 {
+                let _ = tx.send(PlaybackCmd::LinearTable);
+            }
+            if ch == 'f' as u8 {
+                let _ = tx.send(PlaybackCmd::FilterToggle);
             }
         }
         //pa.sleep(1_000);

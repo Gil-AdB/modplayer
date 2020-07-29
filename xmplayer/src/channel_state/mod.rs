@@ -1,7 +1,10 @@
-use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, clamp, Panning};
+use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, clamp, Panning, USE_AMIGA};
 use crate::instrument::{Instrument, Sample};
 use crate::pattern::Pattern;
 use crate::xm_reader::is_note_valid;
+use std::sync::atomic::Ordering::Acquire;
+use crate::song::PlaybackCmd::AmigaTable;
+use crate::tables::{AMIGA_PERIODS, LINEAR_PERIODS};
 
 pub(crate) mod channel_state;
 
@@ -36,6 +39,9 @@ pub(crate) struct ChannelState<'a> {
     pub(crate) last_panning_speed:             u8,
     pub(crate) panning:                        Panning,
     pub(crate) force_off:                      bool,
+    pub(crate) glissando:                      bool,
+    pub(crate) last_sample:                    i16,
+    pub(crate) last_sample_pos:                f32,
 }
 
 impl ChannelState<'_> {
@@ -57,48 +63,9 @@ impl ChannelState<'_> {
         return true;
     }
 
-    // // for arpeggio and portamento (semitone-slide mode)
-    // fn relocateTon(&self, period: u16, arpNote: u8) -> u16 {
-    //     // int32_t fineTune, loPeriod, hiPeriod, tmpPeriod, tableIndex;
-    //
-    //     let fineTune : i32 = (((self.sample.finetune >> 3) + 16) << 1) as i32;
-    //     let mut hiPeriod = (8 * 12 * 16) * 2;
-    //     let mut loPeriod = 0;
-    //
-    //     let note2Period = Ok(Tables.load());
-    //
-    //     for i in 0..8 {
-    //         let tmpPeriod = (((loPeriod + hiPeriod) >> 1) & 0xFFFFFFE0) + fineTune;
-    //
-    //         let mut tableIndex = (tmpPeriod - 16) as u32 >> 1;
-    //         tableIndex = clamp(tableIndex, 0, 1935); // 8bitbubsy: added security check
-    //
-    //         if period >= note2Period[tableIndex] {
-    //             hiPeriod = (tmpPeriod - fineTune) & 0xFFFFFFE0;
-    //         } else {
-    //             loPeriod = (tmpPeriod - fineTune) & 0xFFFFFFE0;
-    //         }
-    //     }
-    //
-    //     // arpNote is between 0..16
-    //     let mut tmpPeriod = loPeriod + fineTune + (arpNote << 5) as i32;
-    //
-    //     if tmpPeriod < 0 {// 8bitbubsy: added security check
-    //         tmpPeriod = 0;
-    //     }
-    //
-    //     if tmpPeriod >= (8*12*16+15)*2-1 { // FT2 bug: off-by-one edge case
-    //         tmpPeriod = (8 * 12 * 16 + 15) * 2;
-    //     }
-    //
-    //     return note2Period[tmpPeriod>>1];
-    // }
-
-
-
-    pub(crate) fn update_frequency(&mut self, rate: f32) {
+    pub(crate) fn update_frequency(&mut self, rate: f32, semitone: bool) {
         // self.frequency = self.note.frequency(self.period_shift) + self.frequency_shift;
-        self.frequency = self.note.frequency(self.period_shift, false) + self.frequency_shift;
+        self.frequency = self.note.frequency(self.period_shift, semitone) + self.frequency_shift;
         self.du = self.frequency / rate;
     }
 
@@ -122,11 +89,13 @@ impl ChannelState<'_> {
             self.ping = true;
             self.frequency_shift = 0.0;
             self.period_shift = 0;
+            self.last_sample = 0;
+            self.last_sample_pos = 0.0;
 
             // println!("channel_state: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, self.sample.relative_note, pattern.note as i8 + self.sample.relative_note, self.volume);
 
             self.set_note(tone, self.sample.finetune);
-            self.update_frequency(rate);
+            self.update_frequency(rate, false);
             self.sustained = true;
             self.reset_envelopes();
         }
@@ -252,26 +221,26 @@ impl ChannelState<'_> {
         } else {
             let mut up = true;
             if self.note.period < self.porta_to_note.target_note.period {
-                self.note.period += self.porta_to_note.speed as i32 * 4;
+                self.note.period += self.porta_to_note.speed as i16 * 4;
                 up = true;
             } else if self.note.period > self.porta_to_note.target_note.period {
-                self.note.period -= self.porta_to_note.speed as i32 * 4;
+                self.note.period -= self.porta_to_note.speed as i16 * 4;
                 up = false;
             }
 
             if up {
                 if self.note.period > self.porta_to_note.target_note.period {
                     self.note = self.porta_to_note.target_note;
-                    // self.period_shift = 0;
-                    // self.frequency_shift = 0.0;
+                    self.period_shift = 0;
+                    self.frequency_shift = 0.0;
                 }
             } else if self.note.period < self.porta_to_note.target_note.period {
                 self.note = self.porta_to_note.target_note;
-                // self.period_shift = 0;
-                // self.frequency_shift = 0.0;
+                self.period_shift = 0;
+                self.frequency_shift = 0.0;
             }
 
-            self.update_frequency(rate);
+            self.update_frequency(rate, self.glissando);
         }
     }
 
@@ -281,11 +250,11 @@ impl ChannelState<'_> {
                 self.last_porta_up = (amount * 4) as u16;
             }
         } else {
-            self.note.period -= self.last_porta_up as i32;
+            self.note.period -= self.last_porta_up as i16;
             if self.note.period < 1 {
                 self.note.period = 1;
             }
-            self.update_frequency(rate);
+            self.update_frequency(rate, false);
         }
     }
 
@@ -295,11 +264,11 @@ impl ChannelState<'_> {
                 self.last_porta_down = (amount * 4) as u16;
             }
         } else {
-            self.note.period += self.last_porta_down as i32;
+            self.note.period += self.last_porta_down as i16;
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }
-            self.update_frequency(rate);
+            self.update_frequency(rate, false);
         }
     }
 
@@ -308,11 +277,11 @@ impl ChannelState<'_> {
             if amount != 0 {
                 self.last_fine_porta_up = (amount * 4) as u16;
             }
-            self.note.period -= self.last_fine_porta_up as i32;
+            self.note.period -= self.last_fine_porta_up as i16;
             if self.note.period < 1 {
                 self.note.period = 1;
             }
-            self.update_frequency(rate);
+            self.update_frequency(rate, false);
         }
     }
 
@@ -321,11 +290,11 @@ impl ChannelState<'_> {
             if amount != 0 {
                 self.last_fine_porta_down = (amount * 4) as u16;
             }
-            self.note.period += self.last_fine_porta_down as i32;
+            self.note.period += self.last_fine_porta_down as i16;
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }
-            self.update_frequency(rate);
+            self.update_frequency(rate, false);
         }
     }
 

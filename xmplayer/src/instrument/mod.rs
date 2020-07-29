@@ -87,6 +87,7 @@ impl Sample {
         } else {
             self.data = Sample::unpack_i16(read_i16_vec(file, self.length as usize));
         }
+        self.data.push(self.data[self.data.len() - 1]);
     }
 }
 

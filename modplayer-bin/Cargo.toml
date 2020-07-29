@@ -5,12 +5,14 @@ authors = ["gilad.benor@gmail.com"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[profile.release]
-debug = true
+[features]
+default = ["portaudio-feature"] # "portaudio-feature"/"sdl2-feature"
+portaudio-feature = ["portaudio"]
+sdl2-feature = ["sdl2"]
+#sdl2 = [package.metadata.vcpkg]
 
 [dependencies]
-#portaudio = "0.7"
+portaudio = {version = "0.7", optional = true}
 crossbeam = "0.7"
 getch = "0.2.1"
 xmplayer = {path="../xmplayer"}
@@ -19,11 +21,20 @@ xmplayer = {path="../xmplayer"}
 #async-scoped = "0.4.1"
 crossterm = "0.17.5"
 
+#[target.'cfg(os = "android")'.patch.crates-io]
+#termios = { path = "../termios-0.2.2" }
+[target.aarch64-unix-android.termios]
+rustc-cfg = ['target-os="linux"']
+#[dependencies.termios]
+#path = "../termios-0.2.2"
+
 [dependencies.sdl2]
 version = "0.34.2"
+optional = true
 features = ["bundled","static-link","use-vcpkg"]
 
 [package.metadata.vcpkg]
 dependencies = ["sdl2", "sdl2-image[libjpeg-turbo,tiff,libwebp]", "sdl2-ttf", "sdl2-gfx", "sdl2-mixer"]
 git = "https://github.com/microsoft/vcpkg"
 rev = "a0518036077baa4"
+optional = true

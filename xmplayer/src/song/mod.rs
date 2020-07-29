@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::Receiver;
 
 use crate::channel_state::ChannelState;
-use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl, Panning, clamp};
+use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl, Panning, clamp, USE_AMIGA};
 use crate::instrument::{LoopType, Sample, Instrument};
 use crate::producer_consumer_queue::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE};
 use crate::xm_reader::{SongData, is_note_valid};
@@ -14,6 +14,7 @@ use crate::tables::PANNING_TAB;
 use crate::TripleBuffer::{TripleBuffer, TripleBufferWriter, Init};
 use crate::song;
 use std::borrow::BorrowMut;
+use std::sync::atomic::Ordering::Release;
 
 struct BPM {
     pub bpm:                        u32,
@@ -134,7 +135,10 @@ pub enum PlaybackCmd {
     LoopPattern,
     Restart,
     Quit,
+    AmigaTable,
+    LinearTable,
     PauseToggle,
+    FilterToggle,
     ChannelToggle(u8),
 }
 
@@ -152,7 +156,7 @@ pub struct ChannelStatus<'a> {
     pub sample:                             &'a Sample,
     pub sample_position:                    f32,
     pub note:                               String,
-    pub period:                             i32,
+    pub period:                             i16,
     pub final_panning:                      u8,
 }
 
@@ -168,6 +172,7 @@ pub struct PlayData<'a> {
     pub bpm:                                u32,
     pub speed:                              u32,
     pub channel_status:                     Vec<ChannelStatus<'a>>,
+    pub filter:                             bool,
 }
 
 impl Init for PlayData<'_> {
@@ -182,7 +187,8 @@ impl Init for PlayData<'_> {
             pattern_len: 1,
             bpm: 0,
             speed: 0,
-            channel_status: vec![]
+            channel_status: vec![],
+            filter: false
         }
     }
 }
@@ -202,6 +208,7 @@ pub struct Song<'a> {
     bpm:                        BPM,
     loop_pattern:               bool,
     pause:                      bool,
+    filter:                     bool,
     triple_buffer_writer:       TripleBufferWriter<PlayData<'a>>,
 }
 
@@ -262,11 +269,15 @@ impl<'a> Song<'a> {
                 last_sample_offset: 0,
                 last_panning_speed: 0,
                 panning: Panning::new(),
-                force_off: false
+                force_off: false,
+                glissando: false,
+                last_sample: 0,
+                last_sample_pos: 0.0
             }; 32],
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
+            filter: true,
             triple_buffer_writer,
         }
     }
@@ -292,6 +303,7 @@ impl<'a> Song<'a> {
         play_data.bpm                       = self.bpm.bpm;
         play_data.speed                     = self.speed;
         play_data.channel_status.clear();
+        play_data.filter                    = self.filter;
 
         let mut idx = 0;
         for channel in &self.channels {
@@ -399,7 +411,10 @@ impl<'a> Song<'a> {
                     PlaybackCmd::DecSpeed => {self.speed -= 1;}
                     PlaybackCmd::LoopPattern => {self.loop_pattern = !self.loop_pattern}
                     PlaybackCmd::PauseToggle => {self.pause = !self.pause}
+                    PlaybackCmd::FilterToggle => {self.filter = !self.filter}
                     PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
+                    PlaybackCmd::AmigaTable => unsafe {USE_AMIGA.store(true, Release)}
+                    PlaybackCmd::LinearTable => unsafe {USE_AMIGA.store(false, Release)}
                 }
             }
             else
@@ -506,7 +521,7 @@ impl<'a> Song<'a> {
             // handle vibrato
             if !first_tick && pattern.has_vibrato() { // vibrate
                 channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::SIN) as f32;
-                channel.update_frequency(self.rate);
+                channel.update_frequency(self.rate, false);
             }
 
             // handle tremolo (not really need to do it here, but oh, well)
@@ -550,7 +565,7 @@ impl<'a> Song<'a> {
                 0x0 => {  // Arpeggio
                     if pattern.effect_param != 0 {
                         channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y());
-                        channel.update_frequency(self.rate);
+                        channel.update_frequency(self.rate, true);
                     }
                 }
                 0x1 => { channel.porta_up(first_tick, pattern.effect_param, self.rate); } // Porta up
@@ -686,7 +701,12 @@ impl<'a> Song<'a> {
     //     channel_state.frequency_shift += frequency_shift;
     // }
 
+    fn lerp(pos: f32, p1: i16, p2: i16) -> f32 {
 
+        let t = pos.fract();
+
+        return ((1.0 - t) * (p1 as f32) + t * (p2 as f32)) / 32768.0;
+    }
 
     fn output_channels(&mut self, current_buf_position: usize, buf: &mut [f32; AUDIO_BUF_SIZE], ticks_to_generate: usize) {
         // let mut  idx: u32 = 0;
@@ -716,8 +736,18 @@ impl<'a> Song<'a> {
                     break;
                 }
 
-                buf[(current_buf_position + i) * 2 + 0] +=  vol_left * channel.sample.data[channel.sample_position as usize] as f32 / 32768.0  / 4.0 * channel.volume.output_volume;// * global_volume;
-                buf[(current_buf_position + i) * 2 + 1] += vol_right * channel.sample.data[channel.sample_position as usize] as f32 / 32768.0  / 4.0 * channel.volume.output_volume;// * global_volume;
+                let sample_data = channel.sample.data[channel.sample_position as usize];
+                let mut out_sample: f32;
+                if self.filter {
+                    out_sample = Self::lerp(channel.sample_position, sample_data, channel.sample.data[channel.sample_position as usize + 1]);
+                } else {
+                    out_sample = sample_data as f32 / 32768.0;
+                }
+                channel.last_sample = sample_data;
+                channel.last_sample_pos = channel.sample_position;
+
+                buf[(current_buf_position + i) * 2 + 0] +=  vol_left * out_sample / 4.0 * channel.volume.output_volume;// * global_volume;
+                buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.volume.output_volume;// * global_volume;
 
                 // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
                 if channel.sample.loop_type == LoopType::PingPongLoop && !channel.ping {
