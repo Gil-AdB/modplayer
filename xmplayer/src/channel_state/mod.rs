@@ -1,10 +1,10 @@
-use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, clamp, Panning, USE_AMIGA};
+use std::sync::atomic::Ordering::Acquire;
+
+use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, USE_AMIGA, VibratoState, Volume};
 use crate::instrument::{Instrument, Sample};
 use crate::pattern::Pattern;
-use crate::xm_reader::is_note_valid;
-use std::sync::atomic::Ordering::Acquire;
-use crate::song::PlaybackCmd::AmigaTable;
 use crate::tables::{AMIGA_PERIODS, LINEAR_PERIODS};
+use crate::xm_reader::is_note_valid;
 
 pub(crate) mod channel_state;
 

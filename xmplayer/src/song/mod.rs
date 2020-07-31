@@ -470,9 +470,8 @@ impl<'a> Song<'a> {
 
         let mut missing = String::new();
         for (i, pattern) in row.channels.iter().enumerate() {
-            // if i != 12 { continue; }
             let mut channel = &mut self.channels[i];
-            //let mut channel_state = &mut self.channels.split_at_mut(i).1[0];//channel_borrow_mut(i);
+            let note_delay_first_tick = if pattern.is_note_delay() { self.tick == pattern.get_y() as u32 } else {first_tick};
 
             if !channel.sustained {
                 if channel.volume.fadeout_vol - channel.volume.fadeout_speed < 0 {
@@ -485,11 +484,12 @@ impl<'a> Song<'a> {
             if first_tick && pattern.is_porta_to_note() && pattern.instrument != 0 {
                 channel.volume.retrig(channel.sample.volume as i32);
             }
+
             if !pattern.is_porta_to_note() &&
                 ((pattern.is_note_delay() && self.tick == pattern.get_y() as u32) ||
                     (!pattern.is_note_delay() && first_tick)) { // new row, set instruments
 
-                let note = if pattern.note == 0 && pattern.is_note_delay() {channel.last_played_note} else {pattern.note};
+                let note = if !is_note_valid(pattern.note) && pattern.is_note_delay() && !first_tick {channel.last_played_note} else {pattern.note};
                 if note == 97 { // note off
                     if !channel.key_off() {
                         continue;
@@ -517,8 +517,6 @@ impl<'a> Song<'a> {
                 }
 
                 channel.trigger_note(note, self.rate);
-            } else if self.tick == pattern.get_y() as u32 && pattern.is_note_delay() && pattern.instrument != 0 {
-                channel.reset_envelopes();
             }
 
             // handle vibrato
@@ -533,11 +531,11 @@ impl<'a> Song<'a> {
             }
 
             match pattern.volume {
-                0x10..=0x50 => { channel.set_volume(first_tick, pattern.volume - 0x10); }       // set volume
-                0x60..=0x6f => { channel.volume_slide(first_tick, -(pattern.get_volume_param() as i8)); }       // Volume slide down
-                0x70..=0x7f => { channel.volume_slide(first_tick, pattern.get_volume_param() as i8); }    // Volume slide up
-                0x80..=0x8f => { channel.fine_volume_slide(first_tick, -(pattern.get_volume_param() as i8)); }   // Fine volume slide down
-                0x90..=0x9f => { channel.fine_volume_slide(first_tick, pattern.get_volume_param() as i8); } // Fine volume slide up
+                0x10..=0x50 => { channel.set_volume(note_delay_first_tick, pattern.volume - 0x10); }       // set volume
+                0x60..=0x6f => { channel.volume_slide(note_delay_first_tick, -(pattern.get_volume_param() as i8)); }       // Volume slide down
+                0x70..=0x7f => { channel.volume_slide(note_delay_first_tick, pattern.get_volume_param() as i8); }    // Volume slide up
+                0x80..=0x8f => { channel.fine_volume_slide(note_delay_first_tick, -(pattern.get_volume_param() as i8)); }   // Fine volume slide down
+                0x90..=0x9f => { channel.fine_volume_slide(note_delay_first_tick, pattern.get_volume_param() as i8); } // Fine volume slide up
                 0xa0..=0xaf => { channel.vibrato_state.set_speed((pattern.get_volume_param() * 4) as i8); } // Set vibrato speed (*4 is probably because S3M did this in order to support finer vibrato)
                 0xb0..=0xbf => { channel.vibrato(first_tick, 0,pattern.get_volume_param()) } // Vibrato
                 0xc0..=0xcf => { channel.panning.set_panning((pattern.get_volume_param() as i32) * 16);}// Set panning
@@ -598,12 +596,12 @@ impl<'a> Song<'a> {
                     }
                 }
                 0xA => {
-                    channel.volume_slide_main(first_tick, pattern.effect_param);
+                    channel.volume_slide_main(note_delay_first_tick, pattern.effect_param);
                 }
                 0xB => { // Pattern Jump
                     self.pattern_change.set_jump(first_tick, pattern.effect_param);
                 }
-                0xC => { channel.set_volume(first_tick, pattern.effect_param); } // set volume
+                0xC => { channel.set_volume(note_delay_first_tick, pattern.effect_param); } // set volume
                 0xD => { // Pattern Break
                     self.pattern_change.set_break(first_tick, pattern.get_x() * 10 + pattern.get_y());
                 }
@@ -618,10 +616,10 @@ impl<'a> Song<'a> {
                     }
                 }
                 0x10 => { // set global volume
-                    self.global_volume.set_volume(first_tick, pattern.effect_param);
+                    self.global_volume.set_volume(note_delay_first_tick, pattern.effect_param);
                 }
                 0x11 => { // global volume slide
-                    self.global_volume.volume_slide(first_tick, pattern.effect_param);
+                    self.global_volume.volume_slide(note_delay_first_tick, pattern.effect_param);
                 }
                 0x14 => { // key off
                     if self.tick == pattern.effect_param as u32 {
@@ -647,8 +645,8 @@ impl<'a> Song<'a> {
                             channel.trigger_note(pattern.note, self.rate);
                         }
                     }
-                    0xa => { channel.fine_volume_slide_up(first_tick, pattern.get_y());} // volume slide up
-                    0xb => { channel.fine_volume_slide_down(first_tick, pattern.get_y());} // volume slide up
+                    0xa => { channel.fine_volume_slide_up(note_delay_first_tick, pattern.get_y());} // volume slide up
+                    0xb => { channel.fine_volume_slide_down(note_delay_first_tick, pattern.get_y());} // volume slide up
                     0xc => { channel.set_volume(self.tick == pattern.get_y() as u32, 0); }
                     0xd => {} // handled elsewhere
                     _ => {missing.push_str(format!("channel_state: {}, eff: 0xe{:x},", i, pattern.get_x()).as_ref());}

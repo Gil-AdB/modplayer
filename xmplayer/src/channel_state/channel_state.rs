@@ -403,7 +403,8 @@ impl Note {
 
         self.note = note;
         self.finetune = finetune;
-        let idx = (self.note - 1) as u32 * 16 + ((self.finetune >> 3) + 16) as u32;
+        let sidx= (self.note as i32 - 1) * 16 + ((self.finetune >> 3) + 16) as i32;
+        let idx = clamp(sidx, 0, 1935);
 
         unsafe { self.period = if USE_AMIGA.load(Relaxed) { tables::AMIGA_PERIODS[idx as usize] } else { tables::LINEAR_PERIODS[idx as usize] }; }
     }
@@ -415,6 +416,36 @@ impl Note {
             return Err(false);
         }
         Ok(tone as u8)
+    }
+
+
+    // indexing:   let idx = (self.note - 1) as u32 * 16 + ((self.finetune >> 3) + 16) as u32;
+    // note is 7 bits << 4  - bits 11..4
+    // finetune is 8 bit >> 3 = 5 bits - 0..31 (after fixup)
+
+    //  B-3 -15 -14 -13 -12 -11 -10 -9 -8 -9 -6 -5 -4 -3 -2 -1 C-4 +1 +2 +3 +4 +5 +6 +7 +8 +9 +10 +11 +12 +13 +14 +15 D-4
+    //  -16
+    //  note: C-4
+    //  C-4 - 1 = B-3
+    //  FineTune +16 shifts the the FineTune into place. We subtract 1 * 16 from note, and fixup the FineTune
+    //  Which means we can just do a binary search inside the table and round to the nearest semi tone...
+    fn nearestSemiTone(&self, period: u16, added_note: u8) -> i16 {
+
+        let use_amiga: bool = unsafe { USE_AMIGA.load(Acquire) };
+        let mut note2period: &[i16; 1936];
+        if use_amiga {
+            note2period = &AMIGA_PERIODS;
+        } else {
+            note2period = &LINEAR_PERIODS;
+        }
+
+        let needed_period = period as i16;
+        let idx = (note2period.binary_search(&needed_period).unwrap_or_else(|x| x) + 7) & !0xf;
+
+
+        let fixed_note_id = idx as isize - 16 + (self.finetune >> 3) as isize + 16 + (added_note * 16) as isize;
+        let clamped_note_idx = clamp(fixed_note_id, 0, 1935) as usize;
+        note2period[clamped_note_idx]
     }
 
     // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
@@ -496,6 +527,26 @@ impl Note {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use crate::channel_state::channel_state::Note;
+
+    #[test]
+    fn it_works() {
+        for note_idx in 0..120 {
+            for finetune in -16..16 {
+                let mut note = Note::new();
+                note.set_note(note_idx, finetune);
+
+                assert_eq!(note.nearestSemiTone(note.period as u16, 0 ), note.relocateTon(note.period as u16, 0) , "note: {}, finetune: {}", note_idx, finetune)
+
+            }
+        }
+    }
+}
+
 
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct Volume {

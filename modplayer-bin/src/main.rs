@@ -18,7 +18,6 @@ use std::sync::atomic::Ordering::Release;
 use std::time::{Duration, SystemTime};
 use std::io::{Read, ErrorKind, Error};
 use std::thread::sleep;
-use crossterm::cursor::{MoveTo, Show, Hide};
 use std::io::{stdout, Write};
 use xmplayer::TripleBuffer::{TripleBuffer, State};
 #[cfg(feature="sdl2-feature")] use sdl2::audio::{AudioSpecDesired, AudioCallback};
@@ -27,123 +26,11 @@ use xmplayer::TripleBuffer::State::STATE_NO_CHANGE;
 
 #[cfg(feature="portaudio-feature")] extern crate portaudio;
 #[cfg(feature="portaudio-feature")] use portaudio as pa;
+use crossterm::terminal::ClearType::All;
+use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+use crate::display::Display;
 
-#[derive(Copy, Clone)]
-struct RGB {
-    R: u8,
-    G: u8,
-    B: u8,
-}
-
-struct Display{}
-
-impl Display {
-    fn color(color: RGB, str: &str) -> String {
-        format!("\x1b[38;2;{};{};{}m{}", color.R, color.G, color.B, str)
-    }
-
-    fn range(pos: u32, start: u32, end: u32, width: usize) -> String {
-        let mut result: String = String::from("");
-        let mut indicator_pos = ((pos - start) as f32 / (end - start) as f32 * (width) as f32) as usize;
-        if indicator_pos > width {
-            indicator_pos = width;
-        }
-        for i in 0..indicator_pos {
-            result += "-";
-        }
-        result += "=";
-        for i in indicator_pos + 1..(width + 1) as usize {
-            result += "-";
-        }
-        result
-    }
-
-    fn range_with_color(pos: u32, start: u32, end: u32, width: usize, colors: &[RGB]) -> String {
-        let mut result: String = String::from("");
-        if pos == 0 {
-            for i in 0..width + 1 {
-                result += " ";
-            }
-            return result;
-        }
-
-        let mut indicator_pos = ((pos - start) as f32 / (end - start) as f32 * (width) as f32) as usize;
-        if indicator_pos > width {
-            indicator_pos = width;
-        }
-        for i in 0..indicator_pos {
-            result += &*Self::color(colors[i], "=");
-        }
-        result += &*Self::color(colors[indicator_pos], "=");
-        for i in indicator_pos + 1..(width + 1) as usize {
-            result += " "; //&*Self::color(colors[i], "-");
-        }
-        result += "\x1b[0m";
-        result
-    }
-
-
-    fn display(play_data: &PlayData, cur_tick: usize) {
-        let colors: [RGB; 12] = [
-            RGB { R: 0, G: 120, B: 0 },
-            RGB { R: 0, G: 140, B: 0 },
-            RGB { R: 0, G: 160, B: 0 },
-            RGB { R: 0, G: 180, B: 0 },
-            RGB { R: 180, G: 180, B: 0 },
-            RGB { R: 195, G: 195, B: 0 },
-            RGB { R: 210, G: 210, B: 0 },
-            RGB { R: 225, G: 225, B: 0 },
-            RGB { R: 225, G: 64, B: 0 },
-            RGB { R: 225, G: 64, B: 0 },
-            RGB { R: 225, G: 64, B: 0 },
-            RGB { R: 225, G: 64, B: 0 },
-        ];
-        let first_tick = play_data.tick == 0;
-        if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0,0)) {}
-        println!("duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3}/{:<3} bpm: {:3} speed: {:3} filter: {:5}",
-                 play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
-                 play_data.pattern_len - 1,
-                 play_data.bpm, play_data.speed,
-                 play_data.filter
-        );
-        if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
-
-        println!("on | channel |         instrument         |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |");
-
-        let mut idx = 0u32;
-        for channel in &play_data.channel_status {
-            idx = idx + 1;
-//            if idx != 1  {continue;}
-
-
-            if channel.on {
-                let final_vol =
-                    (channel.volume / 64.0) *
-                        (channel.envelope_volume / 16384.0) *
-                        (channel.global_volume / 64.0) *
-                        (channel.fadeout_volume / 65536.0);
-
-                println!("{:3}| {:7} | {:26} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
-                         if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
-                         if channel.on { (channel.frequency) as u32 } else { 0 },
-                         Self::range_with_color((final_vol * 12.0).ceil() as u32, 0, 12, 11, &colors),
-                         Self::range(channel.sample_position as u32, 0, channel.sample.length - 1, 14),
-                         channel.note, channel.period,
-                         Self::range_with_color(channel.volume as u32, 0, 64, 11, &colors),
-                         Self::range_with_color(channel.envelope_volume as u32, 0, 16384, 11, &colors),
-                         Self::range_with_color(channel.global_volume as u32, 0, 64, 11, &colors),
-                         Self::range_with_color(channel.fadeout_volume as u32, 0, 65536, 11, &colors),
-                         Self::range(channel.final_panning as u32, 0, 255, 8),
-                );
-            } else {
-                println!("{:3}| {:7} | {:26} |  {:<6} |{:12}| {:14}| {:5}| {:7}|{:12}|{:12}|{:12}|{:12}| {:8}|      ", "off", idx, "", "", "",
-                         "", "", "", "", "", "", "", "");
-            }
-        }
-        if let Err(_e) = crossterm::execute!(stdout(), Show) {}
-    }
-}
-
+mod display;
 
 fn main() {
     if env::args().len() < 2 {return;}
@@ -262,10 +149,12 @@ fn run(song_data : SongData) -> Result<(), ErrorType> {
                thread_stopped.store(true, Ordering::Release);
             });
 
+            if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
+
             scope.spawn( move |_| {
                 let mut song_row = 0;
                 let mut song_tick = 2000;
-
+                crossterm::terminal::Clear(All);
                 loop {
                     if thread_stopped_reader.load(Ordering::Acquire) == true {
                         break;
@@ -305,6 +194,7 @@ fn run(song_data : SongData) -> Result<(), ErrorType> {
 
     #[cfg(feature="sdl2-feature")]
     audio_output.close_and_get_callback();
+    if let Err(_e) = crossterm::execute!(stdout(), LeaveAlternateScreen) {}
     println!("Test finished.");
 
 
