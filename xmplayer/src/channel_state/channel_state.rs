@@ -239,7 +239,7 @@ impl EnvelopeState {
         EnvelopeState { frame: 0, sustained: false, looped: false, idx: 0 }
     }
 
-    pub(crate) fn handle(&mut self, env: &Envelope, channel_sustained: bool, default: u16) -> u16 {
+    pub(crate) fn handle(&mut self, env: &Envelope, channel_sustained: bool, default: u16, sticky_sustain: bool) -> u16 {
         if !env.on || env.size < 1 { return default * 256;} // bail out
 
         if env.size == 1 { // whatever
@@ -247,13 +247,14 @@ impl EnvelopeState {
         }
 
         // set sustained if channel_state is sustained, we have a sustain point and we reached the sustain point
+        // I did all my testing on the panning envelope, and caught this,
+        // but later realized that volume envelopes works differently, and "fixed it". Oh, Well... xm...
         if !self.sustained && env.sustain && channel_sustained && self.frame == env.points[env.sustain_point as usize].frame {
             self.sustained = true;
         }
 
-
-        // if sustain was triggered, it's sticky
-        if self.sustained && channel_sustained {
+        // if sustain was triggered, it's sticky if panning envelope
+        if self.sustained && (channel_sustained || sticky_sustain) {
             return env.points[env.sustain_point as usize].value * 256
         }
 

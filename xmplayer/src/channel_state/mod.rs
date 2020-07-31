@@ -42,6 +42,7 @@ pub(crate) struct ChannelState<'a> {
     pub(crate) glissando:                      bool,
     pub(crate) last_sample:                    i16,
     pub(crate) last_sample_pos:                f32,
+    pub(crate) last_played_note:               u8,
 }
 
 impl ChannelState<'_> {
@@ -75,10 +76,10 @@ impl ChannelState<'_> {
     }
 
 
-    pub(crate) fn trigger_note(&mut self, pattern: &Pattern, rate: f32) {
-        if pattern.note >= 1 && pattern.note < 97 { // trigger note
+    pub(crate) fn trigger_note(&mut self, note: u8, rate: f32) {
+        if note >= 1 && note < 97 { // trigger note
 
-            let tone = match Note::get_tone(pattern.note, self.sample.relative_note) {
+            let tone = match Note::get_tone(note, self.sample.relative_note) {
                 Ok(p) => p,
                 Err(_e) => return,
             };

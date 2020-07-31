@@ -272,7 +272,8 @@ impl<'a> Song<'a> {
                 force_off: false,
                 glissando: false,
                 last_sample: 0,
-                last_sample_pos: 0.0
+                last_sample_pos: 0.0,
+                last_played_note: 0
             }; 32],
             loop_pattern: false,
             pattern_change: PatternChange::new(),
@@ -484,13 +485,12 @@ impl<'a> Song<'a> {
             if first_tick && pattern.is_porta_to_note() && pattern.instrument != 0 {
                 channel.volume.retrig(channel.sample.volume as i32);
             }
-
             if !pattern.is_porta_to_note() &&
                 ((pattern.is_note_delay() && self.tick == pattern.get_y() as u32) ||
                     (!pattern.is_note_delay() && first_tick)) { // new row, set instruments
 
-
-                if pattern.note == 97 { // note off
+                let note = if pattern.note == 0 && pattern.is_note_delay() {channel.last_played_note} else {pattern.note};
+                if note == 97 { // note off
                     if !channel.key_off() {
                         continue;
                     }
@@ -499,8 +499,9 @@ impl<'a> Song<'a> {
                 if pattern.instrument != 0 {
                     let instrument = &instruments[pattern.instrument as usize];
                     channel.instrument = instrument;
-                    if is_note_valid(pattern.note) {
-                        channel.sample = &instrument.samples[instrument.sample_indexes[(pattern.note - 1)  as usize] as usize];
+                    if is_note_valid(note) {
+                        channel.sample = &instrument.samples[instrument.sample_indexes[(note - 1)  as usize] as usize];
+                        channel.last_played_note = note;
                     }
                     channel.volume.retrig(channel.sample.volume as i32);
                     channel.panning.panning = channel.sample.panning;
@@ -515,7 +516,9 @@ impl<'a> Song<'a> {
                     channel.reset_envelopes();
                 }
 
-                channel.trigger_note(pattern, self.rate);
+                channel.trigger_note(note, self.rate);
+            } else if self.tick == pattern.get_y() as u32 && pattern.is_note_delay() && pattern.instrument != 0 {
+                channel.reset_envelopes();
             }
 
             // handle vibrato
@@ -641,7 +644,7 @@ impl<'a> Song<'a> {
                     0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
                     0x9 => { // retrig note
                         if !first_tick && (self.tick % pattern.get_y() as u32 == 0) {
-                            channel.trigger_note(pattern, self.rate);
+                            channel.trigger_note(pattern.note, self.rate);
                         }
                     }
                     0xa => { channel.fine_volume_slide_up(first_tick, pattern.get_y());} // volume slide up
@@ -657,7 +660,7 @@ impl<'a> Song<'a> {
             let mut ves = channel.volume_envelope_state;
 
 
-            let envelope_volume = channel.volume_envelope_state.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
+            let envelope_volume = channel.volume_envelope_state.handle(&channel.instrument.volume_envelope, channel.sustained, 64, false);
 
             // if i == 7 && self.song_position == 8 && channel.volume_envelope_state.sustained == false {
             //     let _test = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
@@ -673,7 +676,7 @@ impl<'a> Song<'a> {
             // if envelope_volume != envelope_volume1 {
             //     let banana = 1;
             // }
-            let mut envelope_panning = channel.panning_envelope_state.handle(&channel.instrument.panning_envelope, channel.sustained, 32);
+            let mut envelope_panning = channel.panning_envelope_state.handle(&channel.instrument.panning_envelope, channel.sustained, 32, true);
             // let scale = 0.9;
             envelope_panning = clamp(envelope_panning, 0, 64 * 256);
 
