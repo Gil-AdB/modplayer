@@ -71,7 +71,7 @@ impl AudioCallback for AudioCB {
 fn run(song_data : SongData) -> Result<(), ErrorType> {
     const CHANNELS: i32 = 2;
     const NUM_SECONDS: i32 = 500;
-    const SAMPLE_RATE: f32 = 192_000.0;
+    const SAMPLE_RATE: f32 = 48_000.0;
 
     let (mut triple_buffer_reader, mut triple_buffer_writer) = TripleBuffer::<PlayData>::new();
 

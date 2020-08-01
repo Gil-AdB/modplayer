@@ -421,7 +421,7 @@ impl Note {
 
     // indexing:   let idx = (self.note - 1) as u32 * 16 + ((self.finetune >> 3) + 16) as u32;
     // note is 7 bits << 4  - bits 11..4
-    // finetune is 8 bit >> 3 = 5 bits - 0..31 (after fixup)
+    // finetune is 8 bit >> 3 = 5 bits - 0..31 (after fixup) - bits 0..4
 
     //  B-3 -15 -14 -13 -12 -11 -10 -9 -8 -9 -6 -5 -4 -3 -2 -1 C-4 +1 +2 +3 +4 +5 +6 +7 +8 +9 +10 +11 +12 +13 +14 +15 D-4
     //  -16
@@ -440,21 +440,30 @@ impl Note {
         }
 
         let needed_period = period as i16;
-        let idx = (note2period.binary_search_by(|element| needed_period.cmp(element)).unwrap_or_else(|x| x)) & !0xf;
+        let mut idx: isize = ((note2period.binary_search_by(|element| needed_period.cmp(element)).unwrap_or_else(|x| x)) & (!0xf)) as isize;
 
-        let mut fixed_note_id = idx as isize + (self.finetune / 8) as isize;// + (added_note as isize * 16);
+        let ft = if self.finetune >= 0 && idx != 0 {self.finetune >> 3} else {(self.finetune >> 3) + 16};
 
-        if fixed_note_id < 16 {fixed_note_id = 16}
-        if fixed_note_id > (8*12*16) {fixed_note_id = (8*12*16)}
+        let mut fixed_note_id = idx as isize + ft as isize;
 
-        let clamped_note_idx = clamp(fixed_note_id, 0, 1935) as usize;
+        // clamp to note 97
+        if fixed_note_id < 0 {fixed_note_id = 0}
+        if fixed_note_id >= (8*12*16) {
+            fixed_note_id = 8 * 12 * 16;
+            fixed_note_id -= (ft & 1) as isize; // FT2 bug
+        }
+
+        fixed_note_id += added_note as isize * 16;
+
+        // actual allowed values
+        let clamped_note_idx = clamp(fixed_note_id, 0, 1551) as usize;
         note2period[clamped_note_idx]
     }
 
     // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
     fn relocateTon(&self, period: u16, arpNote: u8) -> i16 {
         // int32_t fineTune, loPeriod, hiPeriod, tmpPeriod, tableIndex;
-        let fineTune : i32 = (((self.finetune >> 3) + 16) << 1) as i32;
+        let fineTune : u32 = (((self.finetune >> 3) + 16) << 1) as u32;
         let mut hiPeriod : u32 = (8 * 12 * 16) * 2;
         let mut loPeriod : u32 = 0;
 
@@ -467,20 +476,20 @@ impl Note {
         }
 
         for i in 0..8 {
-            let tmpPeriod = (((loPeriod + hiPeriod) >> 1) & 0xFFFFFFE0) as i32 + fineTune;
+            let tmpPeriod = (((loPeriod + hiPeriod) >> 1) & 0xFFFFFFE0) as u32 + fineTune;
 
             let mut tableIndex = (tmpPeriod - 16) as i32 >> 1;
             tableIndex = clamp(tableIndex, 0, 1935); // 8bitbubsy: added security check
 
             if period >= note2Period[tableIndex as usize] as u16 {
-                hiPeriod = (tmpPeriod - fineTune) as u32 & 0xFFFFFFE0;
+                hiPeriod = ((tmpPeriod - fineTune) as u32 & 0xFFFFFFE0) as u32;
             } else {
-                loPeriod = (tmpPeriod - fineTune) as u32 & 0xFFFFFFE0;
+                loPeriod = ((tmpPeriod - fineTune) as u32 & 0xFFFFFFE0) as u32;
             }
         }
 
         // arpNote is between 0..16
-        let mut tmpPeriod = loPeriod + fineTune as u32 + (arpNote << 5) as u32;
+        let mut tmpPeriod = loPeriod + fineTune as u32 + ((arpNote as u32) << 5);
 
         if tmpPeriod < 0 {// 8bitbubsy: added security check
             tmpPeriod = 0;
@@ -500,7 +509,8 @@ impl Note {
         // if semitone {
         let mut period:i16 = 0;
         if semitone {
-            period = self.relocateTon(self.period as u16, period_shift as u8);
+            // period = self.relocateTon(self.period as u16, period_shift as u8);
+            period = self.nearestSemiTone(self.period as u16, period_shift as u8);
         } else {
             period = (self.period as i16 - (period_shift * 16 * 4) as i16) ;
         }
@@ -538,17 +548,17 @@ mod tests {
 
     #[test]
     fn it_works() {
-        for note_idx in 0..121 {
-            for finetune in -128..=127 {
-                for added_note in 0..1 {
+        for note_idx in 0..=120 {
+            for finetune in -16..=15 {
+                for added_note in 0..16 {
                     let mut note = Note::new();
-                    note.set_note(note_idx, finetune);
+                    note.set_note(note_idx, finetune >> 3);
 
                     let actual = note.nearestSemiTone(note.period as u16, added_note);
                     let expected = note.relocateTon(note.period as u16, added_note);
                     println!("expected: {}, actual: {}, note {:3}, finetune {:3}, added_note:{:3}, {}", expected, actual, note_idx, finetune, added_note, expected != actual);
-                    // assert_eq!(actual, expected, "note: {}, finetune: {}, added_note: {}", note_idx, finetune, added_note)
-                    if note_idx == 119 {assert!(false, "blah")}
+                    assert_eq!(actual, expected, "note: {}, finetune: {}, added_note: {}", note_idx, finetune, added_note)
+                    // assert!(note_idx != 2);
                 }
             }
         }

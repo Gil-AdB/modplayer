@@ -492,7 +492,7 @@ impl<'a> Song<'a> {
                 let note = if !is_note_valid(pattern.note) && pattern.is_note_delay() && !first_tick {channel.last_played_note} else {pattern.note};
                 if note == 97 { // note off
                     if !channel.key_off() {
-                        continue;
+                  //      continue;
                     }
                 }
 
