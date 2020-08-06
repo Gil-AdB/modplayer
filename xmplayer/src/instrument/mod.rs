@@ -35,7 +35,7 @@ pub struct Sample {
     pub panning: u8,
     pub relative_note: i8,
     pub name: String,
-    pub data: Vec<i16>
+    pub data: Vec<f32>
 }
 
 impl Sample {
@@ -70,7 +70,7 @@ impl Sample {
         data
     }
 
-    fn upsample(data: Vec<i8>) -> Vec<i16> {
+    fn upsamplei8(data: Vec<i8>) -> Vec<i16> {
         let mut result = vec!(0i16; data.len());
         result.reserve_exact(data.len() as usize);
         for i in 0..data.len() {
@@ -80,12 +80,21 @@ impl Sample {
     }
 
 
+    fn upsamplei16(data: Vec<i16>) -> Vec<f32> {
+        let mut result = vec!(0.0f32; data.len());
+        result.reserve_exact(data.len() as usize);
+        for i in 0..data.len() {
+            result[i] = data[i] as f32 / 32768.0;
+        }
+        result
+    }
+
     pub(crate) fn read_data<R: Read>(&mut self, file: &mut R) {
         if self.length == 0 { return; }
         if self.bitness == 8 {
-            self.data = Sample::upsample(Sample::unpack_i8(read_i8_vec(file, self.length as usize)));
+            self.data = Sample::upsamplei16(Sample::upsamplei8(Sample::unpack_i8(read_i8_vec(file, self.length as usize))));
         } else {
-            self.data = Sample::unpack_i16(read_i16_vec(file, self.length as usize));
+            self.data = Sample::upsamplei16(Sample::unpack_i16(read_i16_vec(file, self.length as usize)));
         }
         self.data.push(self.data[self.data.len() - 1]);
     }

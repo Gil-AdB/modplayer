@@ -6,11 +6,11 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::Receiver;
 
 use crate::channel_state::ChannelState;
-use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl, Panning, clamp, USE_AMIGA};
+use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl, Panning, clamp};
 use crate::instrument::{LoopType, Sample, Instrument};
 use crate::producer_consumer_queue::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE};
 use crate::xm_reader::{SongData, is_note_valid};
-use crate::tables::PANNING_TAB;
+use crate::tables::{PANNING_TAB, LINEAR_PERIODS, AMIGA_PERIODS};
 use crate::TripleBuffer::{TripleBuffer, TripleBufferWriter, Init};
 use crate::song;
 use std::borrow::BorrowMut;
@@ -139,6 +139,7 @@ pub enum PlaybackCmd {
     LinearTable,
     PauseToggle,
     FilterToggle,
+    DisplayToggle,
     ChannelToggle(u8),
 }
 
@@ -193,6 +194,70 @@ impl Init for PlayData<'_> {
     }
 }
 
+fn log(i: usize) -> f64 {
+    (i as f64 / 768.0).exp2() * (8363.0 * 256.0)
+}
+
+fn log_table() -> [f64; 768] {
+    let mut result = [0.0f64; 768];
+    for i in 0..768 {
+        result[i] = log(i);
+    }
+
+    result
+}
+
+lazy_static! {
+static ref D_LOG_TAB: [f64; 768] = log_table();
+}
+
+#[derive(Eq, PartialEq, Clone, Copy)]
+pub enum TableType {
+    LinearFrequency,
+    AmigaFrequency
+}
+
+pub struct AudioTables {
+    pub Periods:        [i16; 1936],
+    pub dPeriod2HzTab:  [f64; 65536],
+}
+
+impl AudioTables {
+    fn calcTablesLinear() -> Self // taken directly from ft2clone
+    {
+        let mut result = Self { Periods: [0i16; 1936], dPeriod2HzTab: [0.0f64; 65536] };
+        result.dPeriod2HzTab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
+
+        result.Periods = LINEAR_PERIODS;
+        // linear periods
+        for i in 1..65536 {
+            let invPeriod = (12 * 192 * 4 as u16).wrapping_sub(i as u16); // this intentionally overflows uint16_t to be accurate to FT2
+            let octave = invPeriod as u32 / 768;
+            let period = invPeriod as u32 % 768;
+            let bitshift = (14u32.wrapping_sub(octave)) & 0x1F; // 100% accurate to FT2
+
+            result.dPeriod2HzTab[i] = D_LOG_TAB[period as usize] / (1 << bitshift) as f64;
+        }
+        result
+    }
+
+    fn calcTablesAmiga() -> AudioTables // taken directly from ft2clone
+    {
+        let mut result = Self { Periods: [0i16; 1936], dPeriod2HzTab: [0.0f64; 65536] };
+        result.dPeriod2HzTab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
+        result.Periods = AMIGA_PERIODS;
+        // Amiga periods
+        for i in 1..65536 {
+            result.dPeriod2HzTab[i] = (8363.0 * 1712.0) / i as f64;
+        }
+        result
+    }
+}
+
+lazy_static! {
+pub static ref AmigaTables:   AudioTables   = AudioTables::calcTablesAmiga();
+pub static ref LinearTables:  AudioTables   = AudioTables::calcTablesLinear();
+}
 
 // const BUFFER_SIZE: usize = 4096;
 pub struct Song<'a> {
@@ -209,6 +274,8 @@ pub struct Song<'a> {
     loop_pattern:               bool,
     pause:                      bool,
     filter:                     bool,
+    display:                    bool,
+    use_amiga:                  TableType,
     triple_buffer_writer:       TripleBufferWriter<PlayData<'a>>,
 }
 
@@ -271,14 +338,16 @@ impl<'a> Song<'a> {
                 panning: Panning::new(),
                 force_off: false,
                 glissando: false,
-                last_sample: 0,
-                last_sample_pos: 0.0,
+                // last_sample: 0,
+                // last_sample_pos: 0.0,
                 last_played_note: 0
             }; 32],
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
             filter: true,
+            display: true,
+            use_amiga: if song_data.use_amiga {TableType::AmigaFrequency} else {TableType::LinearFrequency},
             triple_buffer_writer,
         }
     }
@@ -348,7 +417,9 @@ impl<'a> Song<'a> {
 
                 self.process_tick();
 
-                self.queue_display();
+                if self.display {
+                    self.queue_display();
+                }
 
 //            self.internal_buffer.resize((tick_duration_in_frames * 2) as usize, 0.0);
 
@@ -410,12 +481,13 @@ impl<'a> Song<'a> {
                     PlaybackCmd::DecBPM => {self.bpm.update(self.bpm.bpm - 1, self.rate);}
                     PlaybackCmd::IncSpeed => {self.speed += 1;}
                     PlaybackCmd::DecSpeed => {self.speed -= 1;}
-                    PlaybackCmd::LoopPattern => {self.loop_pattern = !self.loop_pattern}
-                    PlaybackCmd::PauseToggle => {self.pause = !self.pause}
-                    PlaybackCmd::FilterToggle => {self.filter = !self.filter}
+                    PlaybackCmd::LoopPattern => {self.loop_pattern = !self.loop_pattern;}
+                    PlaybackCmd::PauseToggle => {self.pause = !self.pause;}
+                    PlaybackCmd::FilterToggle => {self.filter = !self.filter;}
+                    PlaybackCmd::DisplayToggle => {self.display = !self.display;}
                     PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
-                    PlaybackCmd::AmigaTable => unsafe {USE_AMIGA.store(true, Release)}
-                    PlaybackCmd::LinearTable => unsafe {USE_AMIGA.store(false, Release)}
+                    PlaybackCmd::AmigaTable => {self.use_amiga = TableType::AmigaFrequency;}
+                    PlaybackCmd::LinearTable => {self.use_amiga = TableType::LinearFrequency;}
                 }
             }
             else
@@ -516,13 +588,13 @@ impl<'a> Song<'a> {
                     channel.reset_envelopes();
                 }
 
-                channel.trigger_note(note, self.rate);
+                channel.trigger_note(note, self.rate, self.use_amiga);
             }
 
             // handle vibrato
             if !first_tick && pattern.has_vibrato() { // vibrate
                 channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::SIN) as f32;
-                channel.update_frequency(self.rate, false);
+                channel.update_frequency(self.rate, false, self.use_amiga);
             }
 
             // handle tremolo (not really need to do it here, but oh, well)
@@ -555,7 +627,7 @@ impl<'a> Song<'a> {
                         channel.panning.set_panning(pan as i32);
                     }
                 }
-                0xf0..=0xff => {channel.porta_to_note(first_tick, pattern.volume & 0xf, pattern.note, self.rate); }// Tone porta
+                0xf0..=0xff => {channel.porta_to_note(first_tick, pattern.volume & 0xf, pattern.note, self.rate, self.use_amiga); }// Tone porta
 
                 _ => {}
             }
@@ -566,15 +638,15 @@ impl<'a> Song<'a> {
                 0x0 => {  // Arpeggio
                     if pattern.effect_param != 0 {
                         channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y());
-                        channel.update_frequency(self.rate, true);
+                        channel.update_frequency(self.rate, true, self.use_amiga);
                     }
                 }
-                0x1 => { channel.porta_up(first_tick, pattern.effect_param, self.rate); } // Porta up
-                0x2 => { channel.porta_down(first_tick, pattern.effect_param, self.rate); } // Porta down
-                0x3 => { channel.porta_to_note(first_tick,pattern.effect_param,  pattern.note, self.rate); } // Porta to note
+                0x1 => { channel.porta_up(first_tick, pattern.effect_param, self.rate, self.use_amiga); } // Porta up
+                0x2 => { channel.porta_down(first_tick, pattern.effect_param, self.rate, self.use_amiga); } // Porta down
+                0x3 => { channel.porta_to_note(first_tick,pattern.effect_param,  pattern.note, self.rate, self.use_amiga); } // Porta to note
                 0x4 => { channel.vibrato(first_tick, pattern.get_x() * 4, pattern.get_y()); } // vibrato
                 0x5 => { // porta to note + volume slide
-                    channel.porta_to_note(first_tick, 0,0, self.rate);
+                    channel.porta_to_note(first_tick, 0,0, self.rate, self.use_amiga);
                     channel.volume_slide_main(first_tick, pattern.effect_param);
                 }
                 0x6 => { // vibrato + volume slide
@@ -637,12 +709,12 @@ impl<'a> Song<'a> {
 
             if pattern.effect == 0xe {
                 match pattern.get_x() {
-                    0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate); } // Porta up
-                    0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate); } // Porta down
+                    0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate, self.use_amiga); } // Porta up
+                    0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate, self.use_amiga); } // Porta down
                     0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
                     0x9 => { // retrig note
-                        if !first_tick && (self.tick % pattern.get_y() as u32 == 0) {
-                            channel.trigger_note(pattern.note, self.rate);
+                        if !first_tick && pattern.get_y() != 0 && (self.tick % pattern.get_y() as u32 == 0) {
+                            channel.trigger_note(pattern.note, self.rate, self.use_amiga);
                         }
                     }
                     0xa => { channel.fine_volume_slide_up(note_delay_first_tick, pattern.get_y());} // volume slide up
@@ -702,11 +774,11 @@ impl<'a> Song<'a> {
     //     channel_state.frequency_shift += frequency_shift;
     // }
 
-    fn lerp(pos: f32, p1: i16, p2: i16) -> f32 {
+    fn lerp(pos: f32, p1: f32, p2: f32) -> f32 {
 
         let t = pos.fract();
 
-        return ((1.0 - t) * (p1 as f32) + t * (p2 as f32)) / 32768.0;
+        return (1.0 - t) * p1 + t * p2;
     }
 
     fn output_channels(&mut self, current_buf_position: usize, buf: &mut [f32; AUDIO_BUF_SIZE], ticks_to_generate: usize) {
@@ -742,10 +814,10 @@ impl<'a> Song<'a> {
                 if self.filter {
                     out_sample = Self::lerp(channel.sample_position, sample_data, channel.sample.data[channel.sample_position as usize + 1]);
                 } else {
-                    out_sample = sample_data as f32 / 32768.0;
+                    out_sample = sample_data;
                 }
-                channel.last_sample = sample_data;
-                channel.last_sample_pos = channel.sample_position;
+                // channel.last_sample = sample_data;
+                // channel.last_sample_pos = channel.sample_position;
 
                 buf[(current_buf_position + i) * 2 + 0] +=  vol_left * out_sample / 4.0 * channel.volume.output_volume;// * global_volume;
                 buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.volume.output_volume;// * global_volume;

@@ -1,10 +1,9 @@
-use std::sync::atomic::Ordering::Acquire;
-
-use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, USE_AMIGA, VibratoState, Volume};
+use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume};
 use crate::instrument::{Instrument, Sample};
 use crate::pattern::Pattern;
 use crate::tables::{AMIGA_PERIODS, LINEAR_PERIODS};
 use crate::xm_reader::is_note_valid;
+use crate::song::TableType;
 
 pub(crate) mod channel_state;
 
@@ -40,17 +39,17 @@ pub(crate) struct ChannelState<'a> {
     pub(crate) panning:                        Panning,
     pub(crate) force_off:                      bool,
     pub(crate) glissando:                      bool,
-    pub(crate) last_sample:                    i16,
-    pub(crate) last_sample_pos:                f32,
+    // pub(crate) last_sample:                    i16,
+    // pub(crate) last_sample_pos:                f32,
     pub(crate) last_played_note:               u8,
 }
 
 impl ChannelState<'_> {
-    fn set_note(&mut self, note: u8, fine_tune: i8) {
-        self.note.set_note(note, fine_tune);
+    fn set_note(&mut self, note: u8, fine_tune: i8, use_amiga: TableType) {
+        self.note.set_note(note, fine_tune, use_amiga);
         self.frequency_shift = 0.0;
         self.period_shift = 0;
-        self.frequency = self.note.frequency(self.period_shift, false);
+        self.frequency = self.note.frequency(self.period_shift, false, use_amiga);
     }
 
     pub(crate) fn key_off(&mut self) -> bool {
@@ -64,9 +63,9 @@ impl ChannelState<'_> {
         return true;
     }
 
-    pub(crate) fn update_frequency(&mut self, rate: f32, semitone: bool) {
+    pub(crate) fn update_frequency(&mut self, rate: f32, semitone: bool, use_amiga: TableType) {
         // self.frequency = self.note.frequency(self.period_shift) + self.frequency_shift;
-        self.frequency = self.note.frequency(self.period_shift, semitone) + self.frequency_shift;
+        self.frequency = self.note.frequency(self.period_shift, semitone, use_amiga) + self.frequency_shift;
         self.du = self.frequency / rate;
     }
 
@@ -76,7 +75,7 @@ impl ChannelState<'_> {
     }
 
 
-    pub(crate) fn trigger_note(&mut self, note: u8, rate: f32) {
+    pub(crate) fn trigger_note(&mut self, note: u8, rate: f32, use_amiga: TableType) {
         if note >= 1 && note < 97 { // trigger note
 
             let tone = match Note::get_tone(note, self.sample.relative_note) {
@@ -90,13 +89,13 @@ impl ChannelState<'_> {
             self.ping = true;
             self.frequency_shift = 0.0;
             self.period_shift = 0;
-            self.last_sample = 0;
-            self.last_sample_pos = 0.0;
+            // self.last_sample = 0;
+            // self.last_sample_pos = 0.0;
 
             // println!("channel_state: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, self.sample.relative_note, pattern.note as i8 + self.sample.relative_note, self.volume);
 
-            self.set_note(tone, self.sample.finetune);
-            self.update_frequency(rate, false);
+            self.set_note(tone, self.sample.finetune, use_amiga);
+            self.update_frequency(rate, false, use_amiga);
             self.sustained = true;
             self.reset_envelopes();
         }
@@ -208,7 +207,7 @@ impl ChannelState<'_> {
         self.volume.set_volume(new_volume);
     }
 
-    pub(crate) fn porta_to_note(&mut self, first_tick: bool, speed: u8, note: u8, rate: f32) {
+    pub(crate) fn porta_to_note(&mut self, first_tick: bool, speed: u8, note: u8, rate: f32, use_amiga: TableType) {
         // let speed = pattern.effect_param;
 
         if first_tick {
@@ -217,7 +216,7 @@ impl ChannelState<'_> {
             }
 
             if is_note_valid(note) {
-                self.porta_to_note.target_note.set_note(clamp(note as i16 + self.sample.relative_note as i16, 0, 119) as u8, self.sample.finetune);
+                self.porta_to_note.target_note.set_note(clamp(note as i16 + self.sample.relative_note as i16, 0, 119) as u8, self.sample.finetune, use_amiga);
             }
         } else {
             let mut up = true;
@@ -241,11 +240,11 @@ impl ChannelState<'_> {
                 self.frequency_shift = 0.0;
             }
 
-            self.update_frequency(rate, self.glissando);
+            self.update_frequency(rate, self.glissando, use_amiga);
         }
     }
 
-    pub(crate) fn porta_up(&mut self, first_tick: bool, amount: u8, rate: f32) {
+    pub(crate) fn porta_up(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
         if first_tick {
             if amount != 0 {
                 self.last_porta_up = (amount * 4) as u16;
@@ -255,11 +254,11 @@ impl ChannelState<'_> {
             if self.note.period < 1 {
                 self.note.period = 1;
             }
-            self.update_frequency(rate, false);
+            self.update_frequency(rate, false, use_amiga);
         }
     }
 
-    pub(crate) fn porta_down(&mut self, first_tick: bool, amount: u8, rate: f32) {
+    pub(crate) fn porta_down(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
         if first_tick {
             if amount != 0 {
                 self.last_porta_down = (amount * 4) as u16;
@@ -269,11 +268,11 @@ impl ChannelState<'_> {
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }
-            self.update_frequency(rate, false);
+            self.update_frequency(rate, false, use_amiga);
         }
     }
 
-    pub(crate) fn fine_porta_up(&mut self, first_tick: bool, amount: u8, rate: f32) {
+    pub(crate) fn fine_porta_up(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
         if first_tick {
             if amount != 0 {
                 self.last_fine_porta_up = (amount * 4) as u16;
@@ -282,11 +281,11 @@ impl ChannelState<'_> {
             if self.note.period < 1 {
                 self.note.period = 1;
             }
-            self.update_frequency(rate, false);
+            self.update_frequency(rate, false, use_amiga);
         }
     }
 
-    pub(crate) fn fine_porta_down(&mut self, first_tick: bool, amount: u8, rate: f32) {
+    pub(crate) fn fine_porta_down(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
         if first_tick {
             if amount != 0 {
                 self.last_fine_porta_down = (amount * 4) as u16;
@@ -295,7 +294,7 @@ impl ChannelState<'_> {
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }
-            self.update_frequency(rate, false);
+            self.update_frequency(rate, false, use_amiga);
         }
     }
 

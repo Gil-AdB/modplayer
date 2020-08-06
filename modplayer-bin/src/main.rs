@@ -274,6 +274,9 @@ fn mainloop(tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
             if ch == 'f' as u8 {
                 let _ = tx.send(PlaybackCmd::FilterToggle);
             }
+            if ch == 'd' as u8 {
+                let _ = tx.send(PlaybackCmd::DisplayToggle);
+            }
         }
         //pa.sleep(1_000);
         last_time = SystemTime::now();

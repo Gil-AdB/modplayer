@@ -7,7 +7,6 @@ use crate::envelope::{Envelope, EnvelopePoint, EnvelopePoints};
 use crate::instrument::{Instrument, LoopType, Sample};
 use crate::io_helpers as fio;
 use crate::pattern::Pattern;
-use crate::channel_state::channel_state::USE_AMIGA;
 use std::sync::atomic::Ordering::Release;
 
 #[derive(Debug)]
@@ -366,7 +365,6 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
 
     let instruments = read_instruments(file, instrument_count as usize);
 
-    unsafe { USE_AMIGA.store(if (flags & 1) == 1 { false } else { true }, Release) }
     SongData {
         id: id.trim().to_string(),
         name: name.trim().to_string(),
@@ -381,26 +379,28 @@ fn read_xm_header<R: Read + Seek>(mut file: &mut R) -> SongData
         tempo,
         bpm,
         pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
-        instruments
+        instruments,
+        use_amiga: (flags & 1) != 1
     }
 }
 
 #[derive(Debug)]
 pub struct SongData {
-    id: String,
-    name: String,
-    song_type: SongType,
-    tracker_name: String,
-    pub(crate) song_length: u16,
-    pub(crate) restart_position: u16,
-    channel_count: u16,
-    pub(crate) patterns: Vec<Patterns>,
-    instrument_count: u16,
-    frequency_type: FrequencyType,
-    pub(crate) tempo: u16,
-    pub(crate) bpm: u16,
-    pub(crate) pattern_order: Vec<u8>,
-    pub(crate) instruments: Vec<Instrument>
+                    id:                 String,
+                    name:               String,
+                    song_type:          SongType,
+                    tracker_name:       String,
+    pub(crate)      song_length:        u16,
+    pub(crate)      restart_position:   u16,
+                    channel_count:      u16,
+    pub(crate)      patterns:           Vec<Patterns>,
+                    instrument_count:   u16,
+                    frequency_type:     FrequencyType,
+    pub(crate)      tempo:              u16,
+    pub(crate)      bpm:                u16,
+    pub(crate)      pattern_order:      Vec<u8>,
+    pub(crate)      instruments:        Vec<Instrument>,
+    pub(crate)      use_amiga:          bool,
 }
 
 
