@@ -7,7 +7,6 @@ use crate::envelope::{Envelope, EnvelopePoint, EnvelopePoints};
 use crate::instrument::{Instrument, LoopType, Sample};
 use crate::io_helpers as fio;
 use crate::pattern::Pattern;
-use std::sync::atomic::Ordering::Release;
 
 #[derive(Debug)]
 enum SongType {
@@ -403,7 +402,6 @@ pub struct SongData {
     pub(crate)      use_amiga:          bool,
 }
 
-
 pub fn read_xm(path: &str) -> SongData {
     let f = File::open(path).expect("failed to open the file");
     let file_len = f.metadata().expect("Can't read file metadata").len();
@@ -422,6 +420,121 @@ pub fn read_xm(path: &str) -> SongData {
 
     song_data
 }
+
+// pub fn read_mod(path: &str) -> SongData {
+//     let f = File::open(path).expect("failed to open the file");
+//     let file_len = f.metadata().expect("Can't read file metadata").len();
+//     let mut file = BufReader::new(f);
+//
+//
+//     // println!("file length: {}", file_len);
+//     if file_len < 1084 {
+//         panic!("File is too small!")
+//     }
+//
+//     let song_data = read_mod_header(&mut file);
+//     //   dbg!(song_data);
+//
+//     //  dbg!(file.seek(SeekFrom::Current(0)));
+//
+//     song_data
+// }
+//
+// fn read_mod_header<R: Read + Seek>(mut file: &mut R) -> SongData
+// {
+//     let id = fio::read_string(&mut file, 17);
+//     dbg!(&id);
+//     let name = fio::read_string(&mut file, 20);
+//     dbg!(&name);
+//     let sig = fio::read_u8(file);
+//     if sig != 0x1a {
+//         panic!("Wrong Format!")
+//     }
+//
+//     let tracker_name = fio::read_string(file, 20);
+//     dbg!(&tracker_name);
+//
+//     let ver = fio::read_u16(file);
+//     dbg!(format!("{:x}", ver));
+//
+// //    dbg!(file.seek(SeekFrom::Current(0)));
+//
+//     let header_size = fio::read_u32(file);
+//     dbg!(header_size);
+//
+//     let mut song_length = fio::read_u16(file);
+//     dbg!(song_length);
+//
+//     let restart_position = fio::read_u16(file);
+//     dbg!(restart_position);
+//
+//     let channel_count = fio::read_u16(file);
+//     dbg!(channel_count);
+//
+//     let pattern_count = fio::read_u16(file);
+//     dbg!(pattern_count);
+//
+//     let instrument_count = fio::read_u16(file);
+//     dbg!(instrument_count);
+//
+//     let flags = fio::read_u16(file);
+//     dbg!(flags);
+//
+//     let tempo = fio::read_u16(file);
+//     dbg!(tempo);
+//
+//     let bpm = fio::read_u16(file);
+//     dbg!(bpm);
+//     let mut stream_position = 0;
+//     if let Ok(pos) = file.stream_position() {stream_position = pos;} else {stream_position = 20}
+//
+//     let mut pattern_order = fio::read_bytes(file, (60 + header_size - stream_position as u32) as usize);
+//
+//
+//
+//     let mut patterns = read_patterns(file, pattern_count as usize, channel_count as usize);
+//
+//     // fix empty patterns at end
+//     for idx in 0..pattern_order.len() {
+//         if pattern_order[idx] >= patterns.len() as u8 {
+//             pattern_order[idx] = patterns.len() as u8;
+//         }
+//     }
+//     if song_length > pattern_order.len() as u16 {
+//         song_length = pattern_order.len() as u16;
+//         dbg!("Trimming song lonegth to {}", song_length);
+//     }
+//     // dbg!(&pattern_order);
+//
+//     patterns.push(Patterns{ rows: vec![Row{ channels: vec![Pattern{
+//         note: 0,
+//         instrument: 0,
+//         volume: 0,
+//         effect: 0,
+//         effect_param: 0
+//     }; channel_count as usize] }; 64] });
+//
+//     let instruments = read_instruments(file, instrument_count as usize);
+//
+//     SongData {
+//         id: id.trim().to_string(),
+//         name: name.trim().to_string(),
+//         song_type: SongType::XM,
+//         tracker_name: tracker_name.trim().to_string(),
+//         song_length,
+//         restart_position,
+//         channel_count,
+//         patterns,
+//         instrument_count,
+//         frequency_type: if (flags & 1) == 1 { FrequencyType::LINEAR } else { FrequencyType::AMIGA },
+//         tempo,
+//         bpm,
+//         pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
+//         instruments,
+//         use_amiga: (flags & 1) != 1
+//     }
+// }
+
 
 pub fn print_xm(data: &SongData) {
     dbg!(&data.patterns[data.pattern_order[22] as usize]);

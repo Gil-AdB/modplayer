@@ -51,6 +51,16 @@ pub(crate) enum WaveControl {
     SQUARE,
 }
 
+impl WaveControl {
+    pub(crate) fn from(control: u8) -> WaveControl {
+        match control & 3 {
+            0 => WaveControl::SIN,
+            1 => WaveControl::RAMP,
+            _ => WaveControl::SQUARE
+        }
+    }
+}
+
 const SIN_TABLE: [i32; 32] =
     [0,   24,   49,  74,  97, 120, 141, 161,
         180, 197, 212, 224, 235, 244, 250, 253,
@@ -84,6 +94,10 @@ impl VibratoState {
         if depth != 0 {
             self.depth = depth;
         }
+    }
+
+    pub(crate) fn set_pos(&mut self, pos: i8) {
+        self.pos = pos;
     }
 
     pub(crate) fn get_frequency_shift(&mut self, wave_control: WaveControl) -> i32 {
@@ -136,6 +150,9 @@ impl TremoloState {
         }
     }
 
+    pub(crate) fn set_pos(&mut self, pos: i8) {
+        self.pos = pos;
+    }
 
     pub(crate) fn get_volume_shift(&mut self, wave_control: WaveControl) -> i32 {
         let delta;
@@ -157,19 +174,18 @@ impl TremoloState {
     }
 }
 
-
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct EnvelopeState {
     frame:      u16,
     pub(crate) sustained:  bool,
-    looped:     bool,
+    // looped:     bool,
     idx:        usize,
     // instrument:         &'a Instrument,
 }
 
 impl EnvelopeState {
     pub(crate) fn new() -> EnvelopeState {
-        EnvelopeState { frame: 0, sustained: false, looped: false, idx: 0 }
+        EnvelopeState { frame: 0, sustained: false, idx: 0 }
     }
 
     pub(crate) fn handle(&mut self, env: &Envelope, channel_sustained: bool, default: u16, sticky_sustain: bool) -> u16 {
@@ -177,6 +193,19 @@ impl EnvelopeState {
 
         if env.size == 1 { // whatever
             return env.points[0].value * 256
+        }
+
+//        && (!env.sustain || channel_sustained)
+        // loop
+        if  (!env.sustain || channel_sustained) && env.has_loop && self.frame == env.points[env.loop_end_point as usize].frame {
+            // self.looped = true;
+            self.idx = env.loop_start_point as usize;
+            self.frame = env.points[self.idx].frame;
+        }
+
+        // reached the end
+        if self.idx == (env.size - 2) as usize && self.frame == env.points[self.idx + 1].frame {
+            return env.points[self.idx + 1].value * 256
         }
 
         // set sustained if channel_state is sustained, we have a sustain point and we reached the sustain point
@@ -191,17 +220,6 @@ impl EnvelopeState {
             return env.points[env.sustain_point as usize].value * 256
         }
 
-        // loop
-        if env.has_loop && self.frame == env.points[env.loop_end_point as usize].frame {
-            self.looped = true;
-            self.idx = env.loop_start_point as usize;
-            self.frame = env.points[self.idx].frame;
-        }
-
-        // reached the end
-        if self.idx == (env.size - 2) as usize && self.frame == env.points[self.idx + 1].frame {
-            return env.points[self.idx + 1].value * 256
-        }
 
         let retval = EnvelopeState::lerp(self.frame, &env.points[self.idx], &env.points[self.idx + 1]);
 
@@ -218,12 +236,23 @@ impl EnvelopeState {
     pub(crate) fn set_position(&mut self, env: &Envelope, pos: u8) {
         // // pre: envelope exists and should be set
         //
-        // if env.size < 2 {
-        //     return;
-        // }
-        //
-        // let mut idx = 0;
-        // while idx <
+        if env.size < 2 {
+            self.frame = 0;
+            self.idx = 0;
+            return;
+        }
+
+        for i in 1..env.size {
+            if (pos as u16) < env.points[i as usize].frame {
+                self.frame = pos as u16;
+                self.idx = (i - 1) as usize;
+                self.sustained = false;
+                return;
+            }
+        }
+
+        self.frame = env.points[env.size as usize - 1].frame;
+        self.idx = (env.size - 1) as usize;
 
     }
 
@@ -299,7 +328,7 @@ impl EnvelopeState {
         if !env.on {return;}
         self.frame      = pos;
         self.sustained  = false;
-        self.looped     = false;
+        // self.looped     = false;
 
         if self.frame > env.points[(env.size - 1) as usize].frame {self.frame = env.points[(env.size - 1) as usize].frame;}
         let mut idx:usize = 0;
@@ -377,19 +406,18 @@ impl Note {
 
         let ft = if self.finetune >= 0 && idx != 0 {self.finetune >> 3} else {(self.finetune >> 3) + 16};
 
-        let mut fixed_note_id = idx as isize + ft as isize;
-
+        let mut fixed_note_id = idx as isize;
         // clamp to note 97
         if fixed_note_id < 0 {fixed_note_id = 0}
-        if fixed_note_id >= (8*12*16) {
+        if fixed_note_id > (8*12*16) {
             fixed_note_id = 8 * 12 * 16;
-            fixed_note_id -= (ft & 1) as isize; // FT2 bug
+             // fixed_note_id += (ft & 2) as isize; // FT2 bug
         }
 
         fixed_note_id += added_note as isize * 16;
 
         // actual allowed values
-        let clamped_note_idx = clamp(fixed_note_id, 0, 1551) as usize;
+        let clamped_note_idx = (clamp(fixed_note_id, 0, 1551) + ft as isize) as usize;
         note2period[clamped_note_idx]
     }
 
@@ -408,7 +436,7 @@ impl Note {
         for i in 0..8 {
             let tmpPeriod = (((loPeriod + hiPeriod) >> 1) & 0xFFFFFFE0) as u32 + fineTune;
 
-            let mut tableIndex = (tmpPeriod - 16) as i32 >> 1;
+            let mut tableIndex = (tmpPeriod as i32 - 16) >> 1;
             tableIndex = clamp(tableIndex, 0, 1935); // 8bitbubsy: added security check
 
             if period >= note2Period[tableIndex as usize] as u16 {
@@ -432,6 +460,73 @@ impl Note {
         return note2Period[(tmpPeriod>>1) as usize];
     }
 
+    fn nearestSemiTone_test(&self, period: u16, added_note: u8, use_amiga: TableType) -> (i16, u32) {
+
+        let note2period = match use_amiga {
+            TableType::LinearFrequency => {&LINEAR_PERIODS},
+            TableType::AmigaFrequency => {&AMIGA_PERIODS},
+        };
+
+        let mut needed_period = period as i16;
+        // needed_period = clamp(needed_period, 0, 1935);
+        if needed_period < note2period[8 * 12 * 16] {needed_period = note2period[8 * 12 * 16];}
+        if needed_period > note2period[0] {needed_period = note2period[0];}
+        let idx: isize = ((note2period.binary_search_by(|element| needed_period.cmp(element)).unwrap_or_else(|x| x)) & (!0xf)) as isize;
+
+        let ft = if self.finetune >= 0 && idx > 0 {self.finetune >> 3} else {(self.finetune >> 3) + 16};
+
+        let mut fixed_note_id = idx as isize + ft as isize + added_note as isize * 16;
+        // clamp to note 97
+        if fixed_note_id < 0 {fixed_note_id = 0}
+        if fixed_note_id > (8*12*16 + 15) {
+            fixed_note_id = 8 * 12 * 16 + 15;
+        }
+
+        // actual allowed values
+        let clamped_note_idx = clamp(fixed_note_id, 0, 1935) as usize;
+        (note2period[clamped_note_idx], idx as u32)
+    }
+
+    // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
+    fn relocateTon_test(&self, period: u16, arpNote: u8, use_amiga: TableType) -> (i16, u32) {
+        // int32_t fineTune, loPeriod, hiPeriod, tmpPeriod, tableIndex;
+        let fineTune : u32 = (((self.finetune >> 3) + 16) << 1) as u32;
+        let mut hiPeriod : u32 = (8 * 12 * 16) * 2;
+        let mut loPeriod : u32 = 0;
+
+        let note2Period = match use_amiga {
+            TableType::LinearFrequency => {&LINEAR_PERIODS},
+            TableType::AmigaFrequency => {&AMIGA_PERIODS},
+        };
+
+        for i in 0..8 {
+            let tmpPeriod = (((loPeriod + hiPeriod) >> 1) & 0xFFFFFFE0) as u32 + fineTune;
+
+            let mut tableIndex = (tmpPeriod as i32 - 16) >> 1;
+            tableIndex = clamp(tableIndex, 0, 1935); // 8bitbubsy: added security check
+
+            if period >= note2Period[tableIndex as usize] as u16 {
+                hiPeriod = ((tmpPeriod - fineTune) as u32 & 0xFFFFFFE0) as u32;
+            } else {
+                loPeriod = ((tmpPeriod - fineTune) as u32 & 0xFFFFFFE0) as u32;
+            }
+        }
+
+        // arpNote is between 0..16
+        let mut tmpPeriod = loPeriod + fineTune as u32 + ((arpNote as u32) << 5);
+
+        let before_clamp = loPeriod;
+
+        if tmpPeriod < 0 {// 8bitbubsy: added security check
+            tmpPeriod = 0;
+        }
+
+        if tmpPeriod >= (8*12*16+15)*2-1 { // FT2 bug: off-by-one edge case
+            tmpPeriod = (8 * 12 * 16 + 15) * 2;
+        }
+
+        return (note2Period[(tmpPeriod>>1) as usize], before_clamp);
+    }
 
 
     pub(crate) fn frequency(&self, period_shift: i16, semitone: bool, use_amiga: TableType) -> f32 {
@@ -474,26 +569,86 @@ impl Note {
 mod tests {
     use crate::channel_state::channel_state::Note;
     use crate::song::TableType;
+    use std::any::Any;
 
     #[test]
-    fn it_works() {
-        for note_idx in 0..=120 {
-            for finetune in -16..=15 {
+    fn test_glissando() {
+        for t in [ TableType::AmigaFrequency, TableType::LinearFrequency,].iter() {
+            for note_idx in 1..=120 {
                 for added_note in 0..16 {
-                    let mut note = Note::new();
-                    note.set_note(note_idx, finetune >> 3, TableType::LinearFrequency);
+                    for finetune in -16..=15 {
+                        let mut note = Note::new();
+                        note.set_note(note_idx, finetune << 3, *t);
 
-                    let actual = note.nearestSemiTone(note.period as u16, added_note, TableType::LinearFrequency);
-                    let expected = note.relocateTon(note.period as u16, added_note, TableType::LinearFrequency);
-                    // println!("expected: {}, actual: {}, note {:3}, finetune {:3}, added_note:{:3}, {}", expected, actual, note_idx, finetune, added_note, expected != actual);
-                    assert_eq!(actual, expected, "note: {}, finetune: {}, added_note: {}", note_idx, finetune, added_note)
-                    // assert!(note_idx != 2);
+                        if note_idx == 83 && finetune == 15 {
+                            let banana = true;
+                        }
+
+                        let actual = note.nearestSemiTone_test(note.period as u16, added_note, *t);
+                        let expected = note.relocateTon_test(note.period as u16, added_note, *t);
+                        println!("{}expected: {}, actual: {}, note {:3}, finetune {:3}, added_note:{:3}, {}, {}, {}, {}, {}",
+                                 if expected.0 != actual.0 {"\x1b[38;2;255;0;0m"} else {""},
+                                 expected.0, actual.0, note_idx, finetune, added_note, expected.0 != actual.0, actual.1, expected.1/2, expected.1/2 != actual.1, "\x1b[0m");
+                       // assert_eq!(actual.0, expected.0, "note: {}, finetune: {}, added_note: {}, table: {:?}", note_idx, finetune, added_note, t)
+                    }
                 }
             }
         }
+        assert!(false);
+    }
+
+    fn tremor_state(x: u8, y: u8, tick: i8) -> bool {
+        let mut tremorPos = 0u8;
+
+        let mut tremorSign = (tremorPos & 0x80);
+        let mut tremorData = (tremorPos & 0x7F) as i8;
+
+        for i in 0..=tick {
+            tremorData -= 1;
+            if tremorData < 0
+            {
+                if tremorSign == 0x80
+                {
+                    tremorSign = 0x00;
+                    tremorData = y as i8;
+                } else {
+                    tremorSign = 0x80;
+                    tremorData = x as i8;
+                }
+            }
+
+            tremorPos = tremorSign | tremorData as u8;
+        }
+        tremorSign == 0x80
+    }
+
+    fn my_tremor(x: u8, y: u8, tick: i8) -> bool {
+        let mut tremor_count = 0;
+        for i in 0..tick-1 {
+            tremor_count += 1;
+            tremor_count = tremor_count % (x + 1 + y + 1);
+        }
+
+        tremor_count <  x + 1
+
+    }
+    #[test]
+    fn test_tremor() {
+            for tick in 0i8..30i8 {
+                for x in 0..15 {
+                    for y in 0..15 {
+                        let orig = tremor_state(x, y, tick);
+                        let mine = my_tremor(x, y, tick);
+                        println!("{}tick: {}, x: {}, y: {}, orig: {}, mine: {}{}",
+                                 if orig != mine {"\x1b[38;2;255;0;0m"} else {""},
+                                 tick, x, y, orig, mine, "\x1b[0m");
+                        // assert_eq!(mine, orig, "tick: {}, x: {}, y: {}, orig: {}, mine: {}", tick, x, y, orig, mine);
+                    }
+                }
+            }
+        assert!(true)
     }
 }
-
 
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct Volume {
@@ -527,8 +682,6 @@ impl Volume {
     pub(crate) fn retrig(&mut self, vol: i32) {
         self.set_volume(vol);
         self.volume_shift  = 0;
-        self.fadeout_speed = 0;
-        self.fadeout_vol = 65536;
         self.fadeout_speed = 0;
     }
 

@@ -11,7 +11,7 @@ edition = "2018"
 
 [lib]
 name = "xmplayer"
-#crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 byteorder = "1"

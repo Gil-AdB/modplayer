@@ -17,14 +17,4 @@ xmplayer = {path="../xmplayer"}
 #memmap = { git = "https://github.com/danburkert/memmap-rs" }
 #async-scoped = "0.4.1"
 #crossterm = "0.17.5"
-
-[dependencies.sdl2]
-version = "0.34.2"
-default-features = false
-features = ["bundled", "static-link","use-vcpkg", "mixer"]
-#features = ["bundled","static-link","use-vcpkg"]
-
-[package.metadata.vcpkg]
-dependencies = ["sdl2", "sdl2-image[libjpeg-turbo,tiff,libwebp]", "sdl2-ttf", "sdl2-gfx", "sdl2-mixer"]
-git = "https://github.com/microsoft/vcpkg"
-rev = "a0518036077baa4"
+wasm-bindgen = "0.2"
