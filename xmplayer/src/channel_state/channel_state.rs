@@ -176,10 +176,10 @@ impl TremoloState {
 
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct EnvelopeState {
-    frame:      u16,
+    pub(crate) frame:      u16,
     pub(crate) sustained:  bool,
     // looped:     bool,
-    idx:        usize,
+    pub(crate) idx:        usize,
     // instrument:         &'a Instrument,
 }
 

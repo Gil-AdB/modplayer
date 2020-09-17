@@ -92,6 +92,7 @@ impl<'a> Voice<'a> {
                 self.volume.fadeout_vol = 0;
             }
 
+
             return false;
         }
         self.volume.fadeout_speed = self.instrument.volume_fadeout as i32;
@@ -154,6 +155,14 @@ impl ChannelState<'_> {
     }
 
     pub(crate) fn key_off(&mut self, is_note_delay: bool) -> bool {
+        if self.voice.instrument.volume_envelope.on && self.volume_envelope_state.frame >= self.voice.instrument.volume_envelope.points[self.volume_envelope_state.idx].frame {
+            if self.volume_envelope_state.idx > 0 {
+                self.volume_envelope_state.frame = self.voice.instrument.volume_envelope.points[self.volume_envelope_state.idx].frame - 1;
+                self.volume_envelope_state.idx -= 1;
+            }
+            self.volume_envelope_state.sustained = false;
+        }
+
         self.voice.key_off(is_note_delay)
     }
 

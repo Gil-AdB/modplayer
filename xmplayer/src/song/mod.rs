@@ -298,6 +298,17 @@ impl<'a> Song<'a> {
     // }
 
     pub fn new(song_data: &'a SongData, triple_buffer_writer: TripleBufferWriter<PlayData<'a>>, sample_rate: f32) -> Song<'a> {
+
+        // fugly hack to force lazy_static init here.
+        let dPeriod2HzTab_linear = &LinearTables.dPeriod2HzTab;
+        let dPeriod2HzTab_amiga = &AmigaTables.dPeriod2HzTab;
+        let periods_linear = &LinearTables.Periods;
+        let periods_amiga = &AmigaTables.Periods;
+        dbg!(dPeriod2HzTab_linear[0]);
+        dbg!(dPeriod2HzTab_amiga[0]);
+        dbg!(periods_linear[0]);
+        dbg!(periods_amiga[0]);
+
         Song {
             song_position: 0,
             row: 0,
@@ -575,7 +586,7 @@ impl<'a> Song<'a> {
 
                 let mut reset_envelope = false;
                 if pattern.instrument != 0 {
-                    let instrument = &instruments[pattern.instrument as usize];
+                    let instrument = if pattern.instrument < instruments.len() as u8 {&instruments[pattern.instrument as usize]} else {&instruments[0]};
                     channel.voice.instrument = instrument;
                     if is_note_valid(note) {
                         channel.voice.sample = &instrument.samples[instrument.sample_indexes[(note - 1)  as usize] as usize];
