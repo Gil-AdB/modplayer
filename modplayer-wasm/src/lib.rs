@@ -12,7 +12,7 @@ use crossbeam::thread;
 
 use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES, PCQHolder};
 use xmplayer::song::{Song, PlaybackCmd, PlayData};
-use xmplayer::xm_reader::{read_xm, SongData, print_xm};
+use xmplayer::module_reader::{read_module, SongData};
 use std::env;
 use std::sync::atomic::Ordering::Release;
 use std::time::{Duration, SystemTime};
@@ -31,10 +31,10 @@ pub fn main() {
     let path = env::args().nth(1).unwrap();
     //let file = File::open(path).expect("failed to open the file");
 
-    let data = read_xm(path.as_str());
+    let data = read_module(path.as_str()).unwrap();
 
     if env::args().len() > 2 {
-        print_xm(&data);
+        // print_xm(&data);
     } else {
         run(data).unwrap();
     }

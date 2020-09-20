@@ -9,7 +9,7 @@ use crate::channel_state::{ChannelState, Voice};
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl, Panning, clamp};
 use crate::instrument::{LoopType, Sample, Instrument};
 use crate::producer_consumer_queue::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE};
-use crate::xm_reader::{SongData, is_note_valid};
+use crate::module_reader::{SongData, is_note_valid};
 use crate::tables::{PANNING_TAB, LINEAR_PERIODS, AMIGA_PERIODS};
 use crate::TripleBuffer::{TripleBuffer, TripleBufferWriter, Init};
 use crate::song;
@@ -874,7 +874,7 @@ impl<'a> Song<'a> {
                 }
 
                 if channel.voice.sample_position as u32 >= channel.voice.sample.length ||
-                    (channel.voice.loop_started && channel.voice.sample_position >= channel.voice.sample.loop_end as f32) {
+                    (channel.voice.sample.loop_type != LoopType::NoLoop && channel.voice.sample_position >= channel.voice.sample.loop_end as f32) {
                     channel.voice.loop_started = true;
                     match channel.voice.sample.loop_type {
                         LoopType::PingPongLoop => {

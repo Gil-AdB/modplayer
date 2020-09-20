@@ -31,10 +31,23 @@ pub(crate) fn read_u16<R: Read>(file: &mut R) -> u16 {
     u16::from_le_bytes(buf)
 }
 
+pub(crate) fn read_u16_be<R: Read>(file: &mut R) -> u16 {
+    let mut buf = [0u8;2];
+    file.read_exact(&mut buf).unwrap();
+    u16::from_be_bytes(buf)
+}
+
+
 pub(crate) fn read_u32<R: Read>(file: &mut R) -> u32 {
     let mut buf = [0u8;4];
     file.read_exact(&mut buf).unwrap();
     u32::from_le_bytes(buf)
+}
+
+pub(crate) fn read_u32_be<R: Read>(file: &mut R) -> u32 {
+    let mut buf = [0u8;4];
+    file.read_exact(&mut buf).unwrap();
+    u32::from_be_bytes(buf)
 }
 
 pub(crate) fn read_bytes<R: Read>(file: &mut R, size: usize) -> Vec<u8> {

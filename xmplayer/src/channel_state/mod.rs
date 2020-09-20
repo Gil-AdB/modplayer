@@ -2,7 +2,7 @@ use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, P
 use crate::instrument::{Instrument, Sample};
 use crate::pattern::Pattern;
 use crate::tables::{AMIGA_PERIODS, LINEAR_PERIODS};
-use crate::xm_reader::{is_note_valid, SongData};
+use crate::module_reader::{is_note_valid, SongData};
 use crate::song::TableType;
 
 pub(crate) mod channel_state;

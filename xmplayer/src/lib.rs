@@ -5,9 +5,10 @@
 #![feature(seek_convenience)]
 #[macro_use]
 extern crate lazy_static;
+extern crate simple_error;
 
 pub mod io_helpers;
-pub mod xm_reader;
+pub mod module_reader;
 pub mod envelope;
 pub mod instrument;
 pub mod channel_state;

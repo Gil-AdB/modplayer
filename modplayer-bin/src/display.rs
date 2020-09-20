@@ -1,6 +1,7 @@
 use crossterm::cursor::{MoveTo, Show, Hide};
 use xmplayer::song::PlayData;
 use std::io::{stdout, Write};
+use std::cmp::max;
 
 
 #[derive(Copy, Clone)]
@@ -102,7 +103,7 @@ impl Display {
                          if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
                          if channel.on { (channel.frequency) as u32 } else { 0 },
                          Self::range_with_color((final_vol * 12.0).ceil() as u32, 0, 12, 11, &colors),
-                         Self::range(channel.sample_position as u32, 0, channel.sample.length - 1, 14),
+                         Self::range(channel.sample_position as u32, 0, max(channel.sample.length, 1) - 1, 14),
                          channel.note, channel.period,
                          Self::range_with_color(channel.volume as u32, 0, 64, 11, &colors),
                          Self::range_with_color(channel.envelope_volume as u32, 0, 16384, 11, &colors),

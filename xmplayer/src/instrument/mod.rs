@@ -88,6 +88,15 @@ impl Sample {
         }
         result
     }
+    pub(crate) fn read_non_packed_data<R: Read>(&mut self, file: &mut R) {
+        if self.length == 0 { return; }
+        if self.bitness == 8 {
+            self.data = Sample::upsamplei16(Sample::upsamplei8(read_i8_vec(file, self.length as usize)));
+        } else {
+            self.data = Sample::upsamplei16(read_i16_vec(file, self.length as usize));
+        }
+        self.data.push(self.data[self.data.len() - 1]);
+    }
 
     pub(crate) fn read_data<R: Read>(&mut self, file: &mut R) {
         if self.length == 0 { return; }

@@ -27,7 +27,7 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    pub(crate) fn new() -> Envelope {
+    pub(crate) fn new() -> Self {
         Envelope{
             points: [EnvelopePoint { frame: 0, value: 0 }; 12],
             size: 0,
@@ -39,5 +39,19 @@ impl Envelope {
             has_loop: false
         }
     }
+
+    pub(crate) fn create(points: [EnvelopePoint; 12], size: u8, sustain_point: u8, loop_start_point: u8, loop_end_point: u8, env_type: u8) -> Self {
+        Envelope {
+            points,
+            size,
+            sustain_point,
+            loop_start_point,
+            loop_end_point,
+            on: (env_type & 1) == 1,
+            sustain: (env_type & 2) == 2,
+            has_loop: (env_type & 4) == 4,
+        }
+    }
+
 }
 
