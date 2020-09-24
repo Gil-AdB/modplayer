@@ -20,6 +20,8 @@ use std::io::{Read, ErrorKind, Error};
 use std::thread::sleep;
 use std::io::{stdout, Write};
 use xmplayer::TripleBuffer::{TripleBuffer, State};
+use js_sys;
+
 #[cfg(feature="sdl2-feature")] use sdl2::audio::{AudioSpecDesired, AudioCallback};
 
 use xmplayer::TripleBuffer::State::STATE_NO_CHANGE;
@@ -40,6 +42,29 @@ pub fn main() {
     }
 }
 
+
+// #[wasm_bindgen]
+// pub fn play(path:String) -> fn(&mut js_sys::Float32Array) -> i32 {
+//     const SAMPLE_RATE: f32 = 48_000.0;
+//     let song_data = read_module(path.as_str()).unwrap();
+//
+//     let (mut triple_buffer_reader, mut triple_buffer_writer) = TripleBuffer::<PlayData>::new();
+//
+//     let mut song = Song::new(&song_data, triple_buffer_writer, SAMPLE_RATE);
+//     let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
+//
+//     let mut temp_buf = [0.0f32; AUDIO_BUF_SIZE];
+//     let buf_ref = Arc::new(AtomicPtr::new(&mut temp_buf as *mut [f32; AUDIO_BUF_SIZE]));
+//     let mut generator = song.get_next_tick_callback(buf_ref.clone(), rx);
+//
+//     let cb = |buf: &mut js_sys::Float32Array| -> i32 {
+//
+//         return 0i32;
+//     };
+//
+//     cb
+// }
+//
 // pub struct JSCB {
 //     song_data: SongData,
 //     song: Song,

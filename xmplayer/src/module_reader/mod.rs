@@ -1,5 +1,6 @@
 mod xm;
 mod module;
+mod s3m;
 
 use std::fmt;
 use std::fs::File;
@@ -12,6 +13,7 @@ use crate::instrument::{Instrument, LoopType, Sample};
 use crate::io_helpers as fio;
 use crate::pattern::Pattern;
 use simple_error::SimpleResult;
+use crate::module_reader::s3m::s3m::read_s3m;
 
 #[derive(Debug)]
 enum SongType {
@@ -61,7 +63,6 @@ pub(crate) struct Patterns {
     pub(crate) rows: Vec<Row>
 }
 
-
 #[derive(Debug)]
 pub struct SongData {
                     id:                 String,
@@ -88,7 +89,12 @@ pub fn read_module(path: &str) -> SimpleResult<SongData> {
         Err(_) => {},
     }
 
-    return read_mod(path)
+    match read_mod(path) {
+        Ok(module) => {return Ok(module)},
+        Err(_) => {},
+    }
+
+    read_s3m(path)
 }
 
 pub fn print_module(data: &SongData) {
