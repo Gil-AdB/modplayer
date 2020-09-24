@@ -69,7 +69,7 @@ pub(crate) mod module {
         dbg!(restart_position);
 
         let mut pattern_order = fio::read_bytes(file, 128);
-        let pattern_count = *pattern_order.iter().max().unwrap() + 1;
+        let pattern_count = pattern_order.iter().cloned().max().unwrap() + 1;
         dbg!(pattern_count);
 
         let id = fio::read_string(file, 4);

@@ -2,7 +2,7 @@ pub(crate) mod s3m {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
     use std::fs::File;
     use std::io::{BufReader, Read, Seek, SeekFrom, Error, ErrorKind};
-    use crate::io_helpers::{read_string, read_bytes, read_u8, read_u16};
+    use crate::io_helpers::{read_string, read_bytes, read_u8, read_u16, read_u16_vec, BinaryReader, read_u32, read_u24};
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
@@ -126,23 +126,15 @@ pub(crate) mod s3m {
         }
 
         let mut pattern_order = read_bytes(file, song_length as usize);
-
-        let mut write_pos = 0;
-        for i in 0..pattern_count as usize {
-            if pattern_order[i] < 254 {
-                pattern_order[write_pos] = pattern_order[i];
-                write_pos += 1;
-            } else if pattern_order[i] == 255 {
-                break;
-            }
-        }
-        pattern_count = write_pos as u16;
-
-        pattern_order.truncate(pattern_count as usize);
-
+        truncate_patterns(pattern_count, &mut pattern_order);
         dbg!(pattern_order);
 
-        
+        let instrument_ptrs = read_u16_vec(file, instrument_count as usize);
+        let pattern_ptrs = read_u16_vec(file, pattern_count as usize);
+
+        // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
+        let instruments = read_instruments(file, &instrument_ptrs);
+        read_patterns(file, &instrument_ptrs, 255);
 
 
         return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Not Implemented"))); // Simple how exactly?
@@ -233,59 +225,73 @@ pub(crate) mod s3m {
         // })
     }
 
+    fn truncate_patterns(pattern_count: u16, pattern_order: &mut Vec<u8>) {
+        let mut write_pos = 0;
+        for i in 0..pattern_count as usize {
+            if pattern_order[i] < 254 {
+                pattern_order[write_pos] = pattern_order[i];
+                write_pos += 1;
+            } else if pattern_order[i] == 255 {
+                break;
+            }
+        }
+
+        pattern_order.truncate(write_pos as usize);
+    }
+
     fn read_sample_data<R: Read + Seek>(f: &mut R, instruments: &mut Vec<Instrument>) {
         for i in 1..instruments.len() {
             instruments[i].samples[0].read_non_packed_data(f);
         }
     }
 
-    fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize) -> Vec<Patterns> {
+    fn read_patterns<R: Read>(file: &mut R, pattern_ptrs: &Vec<u16>, channel_count: usize) -> Vec<Patterns> {
         let mut patterns: Vec<Patterns> = vec![];
-        patterns.reserve_exact(pattern_count as usize);
-
-        for _pattern_idx in 0..pattern_count {
-            let ROW_COUNT = 64;
-
-            let mut rows: Vec<Row> = vec![];
-            rows.reserve_exact(ROW_COUNT as usize);
-
-            for _row_idx in 0..ROW_COUNT {
-                let mut channels: Vec<Pattern> = vec![];
-                channels.reserve_exact(channel_count);
-
-                for _channel_idx in 0..channel_count {
-                    let data = fio::read_u32_be(file);
-                    let sample = (((data & 0xF0000000) >> 24) | ((data & 0xF000) >> 12)) as u8;
-                    let period = ((data >> 16) & 0x0FFF) as u16;
-                    let mut effect = ((data & 0xF00) >> 8) as u8;
-                    let mut effect_param = (data & 0xFF) as u8;
-
-                    let mut note = 0u8;
-                    for i in 0..8 * 12usize {
-                        if period >= AMIGA_PERIOD[i] {
-                            note = (i + 1) as u8;
-                            break;
-                        }
-                    }
-
-                    let e = fix_effects(effect, effect_param);
-                    effect = e.0;
-                    effect_param = e.1;
-
-                    channels.push(
-                        Pattern {
-                            note,
-                            instrument: sample,
-                            volume: 0,
-                            effect,
-                            effect_param
-                        }
-                    );
-                }
-                rows.push(Row { channels });
-            }
-            patterns.push(Patterns { rows })
-        }
+        // patterns.reserve_exact(pattern_count as usize);
+        //
+        // for _pattern_idx in 0..pattern_count {
+        //     let ROW_COUNT = 64;
+        //
+        //     let mut rows: Vec<Row> = vec![];
+        //     rows.reserve_exact(ROW_COUNT as usize);
+        //
+        //     for _row_idx in 0..ROW_COUNT {
+        //         let mut channels: Vec<Pattern> = vec![];
+        //         channels.reserve_exact(channel_count);
+        //
+        //         for _channel_idx in 0..channel_count {
+        //             let data = fio::read_u32_be(file);
+        //             let sample = (((data & 0xF0000000) >> 24) | ((data & 0xF000) >> 12)) as u8;
+        //             let period = ((data >> 16) & 0x0FFF) as u16;
+        //             let mut effect = ((data & 0xF00) >> 8) as u8;
+        //             let mut effect_param = (data & 0xFF) as u8;
+        //
+        //             let mut note = 0u8;
+        //             for i in 0..8 * 12usize {
+        //                 if period >= AMIGA_PERIOD[i] {
+        //                     note = (i + 1) as u8;
+        //                     break;
+        //                 }
+        //             }
+        //
+        //             let e = fix_effects(effect, effect_param);
+        //             effect = e.0;
+        //             effect_param = e.1;
+        //
+        //             channels.push(
+        //                 Pattern {
+        //                     note,
+        //                     instrument: sample,
+        //                     volume: 0,
+        //                     effect,
+        //                     effect_param
+        //                 }
+        //             );
+        //         }
+        //         rows.push(Row { channels });
+        //     }
+        //     patterns.push(Patterns { rows })
+        // }
 
         patterns
     }
@@ -382,22 +388,56 @@ pub(crate) mod s3m {
         }
     }
 
-    fn read_instruments<R: Read + Seek>(file: &mut R) -> Vec<Instrument> {
+    fn read_instruments<R: Read + Seek>(file: &mut R, instrument_ptrs: &Vec<u16>) -> Vec<Instrument> {
         let mut instruments: Vec<Instrument> = vec![];
-        let INSTRUMENT_COUNT = 31;
+        let INSTRUMENT_COUNT = instrument_ptrs.len();
 
         // Instruments are one based, go figure. We'll add an empty instrument as sample 0.
         instruments.reserve_exact(INSTRUMENT_COUNT + 1 as usize);
 
         instruments.push(Instrument::new());
 
-        for instrument_idx in 1..INSTRUMENT_COUNT+1 {
+        for instrument_ptr in instrument_ptrs.iter().cloned() {
             let mut instrument = Instrument::new();
-            let sample = read_sample(file);
-            instrument.name = sample.name.clone();
-            instrument.idx = instrument_idx as u8;
-            instrument.samples = vec![sample];
-            instruments.push(instrument);
+            file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16));
+            let type_ = read_u8(file);
+            dbg!(type_);
+            let dos_name = read_string(file,12);
+            dbg!(dos_name);
+            let sample_ptr = read_u24(file);
+            dbg!(sample_ptr);
+            let sample_len = read_u32(file) & 0xFFFF;
+            dbg!(sample_len);
+            let sample_loop_start = read_u32(file) & 0xFFFF;
+            dbg!(sample_loop_start);
+            let sample_loop_end = read_u32(file) & 0xFFFF;
+            dbg!(sample_loop_end);
+            let sample_volume = read_u8(file);
+            dbg!(sample_volume);
+            let _ = read_u8(file);
+            let sample_packing = read_u8(file);
+            dbg!(sample_packing);
+            if sample_packing != 0 {
+                panic!("Unknown file format");
+            }
+            let sample_flags = read_u8(file);
+            dbg!(sample_flags);
+            let c2spd = read_u32(file) & 0xFFFF;
+            dbg!(c2spd);
+            let _ = read_bytes(file, 12);
+            let sample_name = read_string(file, 28);
+            dbg!(sample_name);
+            let sample_sig = read_string(file, 4);
+            if sample_sig != "SCRS" {
+                panic!("unknown sample format!");
+            }
+
+
+            // let sample = read_sample(file);
+            // instrument.name = sample.name.clone();
+            // instrument.idx = instrument_idx as u8;
+            // instrument.samples = vec![sample];
+            // instruments.push(instrument);
         }
         instruments
     }
