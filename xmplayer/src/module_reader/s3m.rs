@@ -14,7 +14,6 @@ pub(crate) mod s3m {
     use crate::tables::AMIGA_PERIOD;
     use simple_error::{SimpleError, SimpleResult};
     use std::io;
-    use byteorder::ReadBytesExt;
     use std::cmp::max;
 
     pub fn read_s3m(path: &str) -> SimpleResult<SongData> {
@@ -47,75 +46,75 @@ pub(crate) mod s3m {
 
         file.seek(SeekFrom::Start(0));
 
-        let name = read_string(file, 28);
-        dbg!(name);
-        let sig = read_u8(file);
+        let name = file.read_string(28);
+        dbg!(&name);
+        let sig = file.read_u8();
         dbg!(sig);
-        let file_type = read_u8(file);
+        let file_type = file.read_u8();
         dbg!(file_type);
         if file_type != 16 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format"))); // Simple how exactly?
         }
 
-        let _ = read_u16(file);
+        let _ = file.read_u16();
 
-        let song_length = read_u16(file);
+        let song_length = file.read_u16();
         dbg!(song_length);
 
         if song_length > 256 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - song length"))); // Simple how exactly?
         }
 
-        let instrument_count = read_u16(file);
+        let instrument_count = file.read_u16();
         dbg!(instrument_count);
 
         if instrument_count > 128 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - instruments"))); // Simple how exactly?
         }
 
-        let mut pattern_count = read_u16(file);
+        let mut pattern_count = file.read_u16();
         dbg!(pattern_count);
 
         if pattern_count > 256 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - patterns"))); // Simple how exactly?
         }
 
-        let flags = read_u16(file);
+        let flags = file.read_u16();
         dbg!(flags);
 
-        let cwtv = read_u16(file);
+        let cwtv = file.read_u16();
         dbg!(cwtv);
 
-        let signed_samples = read_u16(file);
+        let signed_samples = file.read_u16();
         dbg!(signed_samples);
 
-        let signature = read_string(file, 4);
+        let signature = file.read_string(4);
         dbg!(&signature);
 
         if signature != "SCRM" {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - signature"))); // Simple how exactly?
         }
 
-        let global_volume = read_u8(file);
+        let global_volume = file.read_u8();
         dbg!(global_volume);
 
-        let speed = read_u8(file);
+        let speed = file.read_u8();
         dbg!(speed);
 
-        let bpm = read_u8(file);
+        let bpm = file.read_u8();
         dbg!(bpm);
 
-        let master_volume = read_u8(file);
+        let master_volume = file.read_u8();
         dbg!(master_volume);
 
-        let _ = read_u8(file);
+        let _ = file.read_u8();
 
-        let default_panning = read_u8(file);
+        let default_panning = file.read_u8();
         dbg!(default_panning);
 
         file.seek(SeekFrom::Current(10));
 
-        let channel_data = read_bytes(file, 32);
+        let channel_data = file.read_bytes(32);
         let mut channel_map = [255u8; 32];
 
         for i in 0..channel_data.len() {
@@ -125,104 +124,49 @@ pub(crate) mod s3m {
             }
         }
 
-        let mut pattern_order = read_bytes(file, song_length as usize);
+        let mut pattern_order = file.read_bytes(song_length as usize);
         truncate_patterns(pattern_count, &mut pattern_order);
-        dbg!(pattern_order);
+        dbg!(&pattern_order);
 
-        let instrument_ptrs = read_u16_vec(file, instrument_count as usize);
-        let pattern_ptrs = read_u16_vec(file, pattern_count as usize);
+        let instrument_ptrs = file.read_u16_vec(instrument_count as usize);
+        let pattern_ptrs = file.read_u16_vec(pattern_count as usize);
 
         // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
         let instruments = read_instruments(file, &instrument_ptrs);
-        read_patterns(file, &instrument_ptrs, 255);
+        let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map);
 
 
-        return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Not Implemented"))); // Simple how exactly?
+
+        patterns.push(Patterns {
+            rows: vec![Row {
+                channels: vec![Pattern {
+                    note: 0,
+                    instrument: 0,
+                    volume: 0,
+                    effect: 0,
+                    effect_param: 0
+                }; num_channels as usize]
+            }; 64]
+        });
 
 
-        //
-        //
-        //
-        //
-        // file.seek(SeekFrom::Start(1080));
-        //
-        // let id = read_bytes(file, 4);
-        //
-        // if id == "M.K.".as_bytes() {
-        //     num_channels = 4;
-        // } else if id == "6CHN".as_bytes() {
-        //     num_channels = 6;
-        // } else if id == "8CHN".as_bytes() {
-        //     num_channels = 8;
-        // } else if id[2] == 'C' as u8 && id[3] == 'H' as u8 {
-        //     num_channels = String::from_utf8(id[0..2].to_vec()).unwrap().parse().unwrap();
-        //     if num_channels < 10 || num_channels > 32 {
-        //         return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown mod format")));
-        //     }
-        // } else {
-        //     return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Not a mod file")));
-        // }
-        //
-        // file.seek(SeekFrom::Start(0));
-        //
-        // let name = read_string(file, 20);
-        //
-        // let mut instruments = read_instruments(file);
-        //
-        // let song_length = fio::read_u8(file);
-        // dbg!(song_length);
-        //
-        // let restart_position = fio::read_u8(file); // unused
-        // dbg!(restart_position);
-        //
-        // let mut pattern_order = fio::read_bytes(file, 128);
-        // let pattern_count = *pattern_order.iter().max().unwrap() + 1;
-        // dbg!(pattern_count);
-        //
-        // let id = fio::read_string(file, 4);
-        // dbg!(&id);
-        //
-        // let mut patterns = read_patterns(file, pattern_count as usize, num_channels as usize);
-        //
-        // read_sample_data(file, &mut instruments);
-        //
-        // // fix empty patterns at end
-        // for idx in 0..pattern_order.len() {
-        //     if pattern_order[idx] >= patterns.len() as u8 {
-        //         pattern_order[idx] = patterns.len() as u8;
-        //     }
-        // }
-        //
-        // patterns.push(Patterns {
-        //     rows: vec![Row {
-        //         channels: vec![Pattern {
-        //             note: 0,
-        //             instrument: 0,
-        //             volume: 0,
-        //             effect: 0,
-        //             effect_param: 0
-        //         }; num_channels as usize]
-        //     }; 64]
-        // });
-        //
-        //
-        // Ok(SongData {
-        //     id: id.trim().to_string(),
-        //     name: name.trim().to_string(),
-        //     song_type: SongType::MOD,
-        //     tracker_name: "Unknown".to_string(),
-        //     song_length: song_length as u16,
-        //     restart_position: restart_position as u16,
-        //     channel_count: num_channels,
-        //     patterns,
-        //     instrument_count: instruments.len() as u16,
-        //     frequency_type: FrequencyType::AMIGA,
-        //     tempo: 6,
-        //     bpm: 125,
-        //     pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
-        //     instruments,
-        //     use_amiga: true
-        // })
+        Ok(SongData {
+            id: String::from_utf8_lossy(id.as_ref()).trim().to_string(),
+            name: name.trim().to_string(),
+            song_type: SongType::MOD,
+            tracker_name: "Unknown".to_string(),
+            song_length: song_length as u16,
+            restart_position: 0u16,
+            channel_count: num_channels as u16,
+            patterns,
+            instrument_count: instruments.len() as u16,
+            frequency_type: FrequencyType::AMIGA,
+            tempo: speed as u16,
+            bpm: bpm as u16,
+            pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
+            instruments,
+            use_amiga: true
+        })
     }
 
     fn truncate_patterns(pattern_count: u16, pattern_order: &mut Vec<u8>) {
@@ -245,94 +189,296 @@ pub(crate) mod s3m {
         }
     }
 
-    fn read_patterns<R: Read>(file: &mut R, pattern_ptrs: &Vec<u16>, channel_count: usize) -> Vec<Patterns> {
+    fn read_patterns<R: Read + Seek>(file: &mut R, pattern_ptrs: &Vec<u16>, channel_count: usize, channel_map: &[u8; 32]) -> Vec<Patterns> {
+        let mut last_effect_param       = [0u8; 32];
+        let mut last_effect             = [0u8; 32];
+        let mut last_vibrato_param      = [0u8; 32];
+        let mut last_instrument = [0u8; 32];
+
+        let pattern_count = pattern_ptrs.len();
         let mut patterns: Vec<Patterns> = vec![];
-        // patterns.reserve_exact(pattern_count as usize);
-        //
-        // for _pattern_idx in 0..pattern_count {
-        //     let ROW_COUNT = 64;
-        //
-        //     let mut rows: Vec<Row> = vec![];
-        //     rows.reserve_exact(ROW_COUNT as usize);
-        //
-        //     for _row_idx in 0..ROW_COUNT {
-        //         let mut channels: Vec<Pattern> = vec![];
-        //         channels.reserve_exact(channel_count);
-        //
-        //         for _channel_idx in 0..channel_count {
-        //             let data = fio::read_u32_be(file);
-        //             let sample = (((data & 0xF0000000) >> 24) | ((data & 0xF000) >> 12)) as u8;
-        //             let period = ((data >> 16) & 0x0FFF) as u16;
-        //             let mut effect = ((data & 0xF00) >> 8) as u8;
-        //             let mut effect_param = (data & 0xFF) as u8;
-        //
-        //             let mut note = 0u8;
-        //             for i in 0..8 * 12usize {
-        //                 if period >= AMIGA_PERIOD[i] {
-        //                     note = (i + 1) as u8;
-        //                     break;
-        //                 }
-        //             }
-        //
-        //             let e = fix_effects(effect, effect_param);
-        //             effect = e.0;
-        //             effect_param = e.1;
-        //
-        //             channels.push(
-        //                 Pattern {
-        //                     note,
-        //                     instrument: sample,
-        //                     volume: 0,
-        //                     effect,
-        //                     effect_param
-        //                 }
-        //             );
-        //         }
-        //         rows.push(Row { channels });
-        //     }
-        //     patterns.push(Patterns { rows })
-        // }
+        patterns.reserve_exact(pattern_count);
+        let ROW_COUNT = 64;
+
+        for pattern_ptr in pattern_ptrs.iter().cloned() {
+            if pattern_ptr == 0 {continue;}
+            file.seek(SeekFrom::Start((pattern_ptr as u64)  * 16));
+
+            let mut pattern = Patterns::new(ROW_COUNT, channel_count);
+
+            let size = file.read_u16();
+            dbg!(size);
+
+            let mut row_idx = 0;
+            for row in pattern.rows.iter_mut() {
+                let channels = &mut row.channels;
+
+                loop {
+                    let pattern_data = file.read_u8();
+                    if pattern_data == 0 { break; }
+
+                    let channel_num = pattern_data & 31;
+                    let channel_id = channel_map[channel_num as usize] as usize;
+
+                    let mut note = 0u8;
+                    let mut instrument = 0u8;
+                    let mut volume = 0u8;
+                    let mut effect = 0u8;
+                    let mut effect_param = 0u8;
+
+                    if pattern_data & 32 == 32 {
+                        note = file.read_u8();
+                        instrument = file.read_u8();
+
+                        if note == 255 {
+                            note = 0;
+                        } else if note == 254 {
+                            note = 97;
+                        } else {
+                            dbg!(note);
+                            note = 1 + (note >> 4) * 12 + (note & 0xF);
+                            if note > 96 {note = 0;}
+                        }
+                    }
+
+                    if pattern_data & 64 == 64 {
+                        volume = file.read_u8();
+                        if volume <= 64 {volume += 0x10} else { volume = 0;}
+                    }
+
+                    if pattern_data & 128 == 128 {
+                        effect = file.read_u8();
+                        effect_param = file.read_u8();
+                    }
+
+                    if channel_num >= channel_count as u8 { continue; }
+                    let channel = &mut channels[channel_id];
+
+                    channel.note = note;
+                    channel.instrument = instrument;
+                    channel.volume = volume;
+                    channel.effect = effect;
+                    channel.effect_param = effect_param;
+                    
+                    if pattern_data & 128 == 128 {
+                        fix_effects(
+                            channel,
+                            &mut last_effect[channel_id],
+                            &mut last_effect_param[channel_id],
+                            &mut last_vibrato_param[channel_id],
+                            &mut last_instrument[channel_id]
+                        );
+                    }
+
+
+                    let channel = &mut channels[channel_id as usize];
+                }
+                row_idx += 1;
+            }
+            dbg!(&pattern);
+            patterns.push(pattern)
+        }
 
         patterns
     }
 
-    fn fix_effects(e: u8, p: u8) -> (u8, u8) {
-        let mut effect = e;
-        let mut effect_param = p;
-
-        if effect == 0xC {              // Clamp Volume to 64
-            if effect_param > 64 {
-                effect_param = 64;
-            }
-        } else if effect == 0x1 {       // No porta memory
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0x2 {       // No porta memorty
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0x5 {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0x3;
-            }
-        } else if effect == 0x6 {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0x4;
-            }
-        } else if effect == 0xA {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0xE {       // No porta & volume slide memory
-            // check if certain E commands are empty
-            if effect_param == 0x10 || effect_param == 0x20 || effect_param == 0xA0 || effect_param == 0xB0
-            {
-                effect = 0;
-                effect_param = 0;
+    fn fix_effects(pattern : &mut Pattern, last_effect: &mut u8, last_effect_param: &mut u8, last_vibrato_param: &mut u8,last_instrument: &mut u8) {
+        // lifted from FT2
+        if pattern.effect_param > 0 {
+            *last_effect_param = pattern.effect_param;
+            if pattern.effect == 8 || pattern.effect == 21 {
+                *last_vibrato_param = pattern.effect_param;
             }
         }
-        return (effect, effect_param)
+
+        if pattern.effect_param == 0 && pattern.effect != 7 {
+            if pattern.effect == 8 || pattern.effect == 21 {
+                pattern.effect_param = *last_vibrato_param;
+            } else if (pattern.effect >= 4 && pattern.effect <= 12) || (pattern.effect >= 17 && pattern.effect <= 19) {
+                pattern.effect_param = *last_effect_param;
+            }
+
+            if pattern.effect != *last_effect && pattern.effect != 10 && pattern.effect != 19 {
+                let extra_fine_pitch_slides = (pattern.effect == 5 || pattern.effect == 6) && ((pattern.effect_param & 0xF0) == 0xE0);
+                let fine_vol_slides = (pattern.effect == 4 || pattern.effect == 11) &&
+                    ((pattern.effect_param > 0xF0) || (((pattern.effect_param & 0xF) == 0xF) && ((pattern.effect_param & 0xF0) > 0)));
+
+                if !extra_fine_pitch_slides && !fine_vol_slides {
+                    pattern.effect_param = 0;
+                }
+            }
+        }
+        if pattern.effect > 0 {
+            *last_effect = pattern.effect;
+        }
+        
+        match pattern.effect {
+            1 => // A
+                {
+                    pattern.effect = 0xF;
+                    if pattern.effect_param == 0 || pattern.effect_param > 0x1F {
+                        pattern.effect = 0;
+                        pattern.effect_param = 0;
+                    }
+                }
+
+            2 => pattern.effect = 0xB, // B
+            3 => pattern.effect = 0xD,  // C
+            4 => // D
+                {
+                    if pattern.effect_param > 0xF0 {// fine slide up
+                        pattern.effect = 0xE;
+                        pattern.effect_param = 0xB0 | (pattern.effect_param & 0xF);
+                    } else if (pattern.effect_param & 0x0F) == 0x0F && (pattern.effect_param & 0xF0) > 0 {// fine slide down
+                        pattern.effect = 0xE;
+                        pattern.effect_param = 0xA0 | (pattern.effect_param >> 4);
+                    } else {
+                        pattern.effect = 0xA;
+                        if (pattern.effect_param & 0x0F) != 0 { // on D/K, last nybble has first priority in ST3
+                            pattern.effect_param &= 0x0F;
+                        }
+                    }
+                }
+
+            5 | 6 => { // E, F
+                if (pattern.effect_param & 0xF0) >= 0xE0 {
+                    // convert to fine slide
+                    let mut new_effect = if (pattern.effect_param & 0xF0) == 0xE0 { 0x21 } else { 0xE };
+
+                    pattern.effect_param &= 0x0F;
+
+                    if pattern.effect == 0x05 {
+                        pattern.effect_param |= 0x20;
+                    } else {
+                        pattern.effect_param |= 0x10;
+                    }
+                    pattern.effect = new_effect;
+
+                    if pattern.effect == 0x21 && pattern.effect_param == 0 {
+                        pattern.effect_param = 0;
+                    }
+                } else {
+                    // convert to normal 1xx/2xx slide
+                    pattern.effect = 7 - pattern.effect;
+                }
+            }
+
+            7 => { // G
+                pattern.effect = 0x03;
+
+                // fix illegal slides (to new instruments)
+                if pattern.instrument != 0 && pattern.instrument != *last_instrument {
+                    pattern.instrument = *last_instrument;
+                }
+            }
+
+            11 => { // K
+                if pattern.effect_param > 0xF0 { // fine slide up
+                    pattern.effect = 0xE;
+                    pattern.effect_param = 0xB0 | (pattern.effect_param & 0xF);
+
+                    // if volume column is unoccupied, set to vibrato
+                    if pattern.volume == 0 {
+                        pattern.volume = 0xB0;
+                    }
+                } else if (pattern.effect_param & 0x0F) == 0x0F && (pattern.effect_param & 0xF0) > 0 { // fine slide down
+                    pattern.effect = 0xE;
+                    pattern.effect_param = 0xA0 | (pattern.effect_param >> 4);
+
+                    // if volume column is unoccupied, set to vibrato
+                    if pattern.volume == 0 {
+                        pattern.volume = 0xB0;
+                    }
+                } else {
+                    pattern.effect = 0x6;
+                    if (pattern.effect_param & 0x0F) != 0 { // on D/K, last nybble has first priority in ST3
+                        pattern.effect_param &= 0x0F;
+                    }
+                }
+            }
+            8 => { pattern.effect = 0x04; } // H
+            9 => { pattern.effect = 0x1D; } // I
+            10 => { pattern.effect = 0x00; } // J
+            12 => { pattern.effect = 0x05; } // L
+            15 => { pattern.effect = 0x09; } // O
+            17 => { pattern.effect = 0x1B; } // Q
+            18 => { pattern.effect = 0x07; } // R
+            19 => { // S
+                pattern.effect = 0xE;
+                let tmp = pattern.effect_param >> 4;
+                pattern.effect_param &= 0x0F;
+
+                if tmp == 0x1 {
+                    pattern.effect_param |= 0x30;
+                } else if tmp == 0x2 {
+                    pattern.effect_param |= 0x50;
+                } else if tmp == 0x3 {
+                    pattern.effect_param |= 0x40;
+                } else if (tmp == 0x4) {
+                    pattern.effect_param |= 0x70;
+                } else if tmp == 0xB { // ignore S8x becuase it's not compatible with FT2 panning
+                    pattern.effect_param |= 0x60;
+                } else if tmp == 0xC { // Note Cut
+                    pattern.effect_param |= 0xC0;
+                    if pattern.effect_param == 0xC0 {
+                        // EC0 does nothing in ST3 but cuts voice in FT2, remove effect
+                        pattern.effect = 0;
+                        pattern.effect_param = 0;
+                    }
+                } else if tmp == 0xD { // Note Delay
+                    pattern.effect_param |= 0xD0;
+                    if pattern.note == 0 || pattern.note == 97 {
+                        // EDx without a note does nothing in ST3 but retrigs in FT2, remove effect
+                        pattern.effect = 0;
+                        pattern.effect_param = 0;
+                    } else if pattern.effect_param == 0xD0 {
+                        // ED0 prevents note/smp/vol from updating in ST3, remove everything
+                        pattern.note = 0;
+                        pattern.instrument = 0;
+                        pattern.volume = 0;
+                        pattern.effect = 0;
+                        pattern.effect_param = 0;
+                    }
+                } else if tmp == 0xE {
+                    pattern.effect_param |= 0xE0;
+                } else if tmp == 0xF {
+                    pattern.effect_param |= 0xF0;
+                } else {
+                    pattern.effect = 0;
+                    pattern.effect_param = 0;
+                }
+            }
+
+            20 => { // T
+                pattern.effect = 0x0F;
+                if pattern.effect_param < 0x21 {// Txx with a value lower than 33 (0x21) does nothing in ST3, remove effect
+                    pattern.effect = 0;
+                    pattern.effect_param = 0;
+                }
+            }
+            22 => { // V
+                pattern.effect = 0x10;
+                if pattern.effect_param > 0x40 {
+                    // Vxx > 0x40 does nothing in ST3
+                    pattern.effect = 0;
+                    pattern.effect_param = 0;
+                }
+            }
+
+            _ => {
+                pattern.effect = 0;
+                pattern.effect_param = 0;
+            }
+        }
+
+        if pattern.instrument != 0 && pattern.effect != 0x3 {
+            *last_instrument = pattern.instrument;
+        }
+
+        if pattern.effect > 35 {
+            pattern.effect = 0;
+            pattern.effect_param = 0;
+        }
     }
 
     fn read_sample<R: Read>(file: &mut R) -> Sample {
@@ -397,7 +543,7 @@ pub(crate) mod s3m {
 
         instruments.push(Instrument::new());
 
-        for instrument_ptr in instrument_ptrs.iter().cloned() {
+        for (instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
             let mut instrument = Instrument::new();
             file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16));
             let type_ = read_u8(file);
@@ -426,19 +572,49 @@ pub(crate) mod s3m {
             dbg!(c2spd);
             let _ = read_bytes(file, 12);
             let sample_name = read_string(file, 28);
-            dbg!(sample_name);
+            dbg!(&sample_name);
             let sample_sig = read_string(file, 4);
+            dbg!(&sample_sig);
             if sample_sig != "SCRS" {
-                panic!("unknown sample format!");
+//                panic!("unknown sample format!");
             }
 
+            let (finetune, relative_note) = c2spd_to_finetune_relnote(c2spd);
 
-            // let sample = read_sample(file);
-            // instrument.name = sample.name.clone();
-            // instrument.idx = instrument_idx as u8;
-            // instrument.samples = vec![sample];
-            // instruments.push(instrument);
+            let mut sample = Sample{
+                length: sample_len,
+                loop_start: sample_loop_start,
+                loop_end: sample_loop_end,
+                loop_len: sample_loop_end - sample_loop_start,
+                volume: sample_volume,
+                finetune,
+                loop_type: if sample_flags & 1 == 1 {LoopType::ForwardLoop} else {LoopType::NoLoop},
+                bitness: 8,
+                panning: 128,
+                relative_note,
+                name: sample_name.clone().to_string(),
+                data: vec![]
+            };
+            sample.read_s3m_sample_data(file, sample_ptr);
+            instrument.name = sample.name.clone();
+            instrument.idx = instrument_idx as u8;
+            instrument.samples = vec![sample];
+            instruments.push(instrument);
         }
         instruments
+    }
+
+    fn c2spd_to_finetune_relnote(c2spd: u32) -> (i8, i8) {
+        let mut finetune = 0i8;
+        let mut relative_note = 0i8;
+
+        let d_freq = (c2spd as f64 / 8363.0).log2() * (12.0 * 128.0);
+        let linear_freq = (d_freq + 0.5) as i32; // rounded
+        finetune = (((linear_freq + 128) & 255) - 128) as i8;
+
+        relative_note = ((linear_freq - finetune as i32) >> 7) as i8;
+        relative_note = clamp(relative_note, -48, 71);
+
+        (finetune, relative_note)
     }
 }

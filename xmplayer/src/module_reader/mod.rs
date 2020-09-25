@@ -18,7 +18,8 @@ use crate::module_reader::s3m::s3m::read_s3m;
 #[derive(Debug)]
 enum SongType {
     XM,
-    MOD
+    MOD,
+    S3M
 }
 
 #[derive(Debug)]
@@ -33,6 +34,12 @@ pub(crate) fn is_note_valid(note: u8) -> bool {
 #[derive(Clone)]
 pub(crate) struct Row {
     pub(crate) channels: Vec<Pattern>
+}
+
+impl Row {
+    fn new(channel_count: usize) -> Self {
+        Self { channels: vec![Pattern::new(); channel_count] }
+    }
 }
 
 impl fmt::Debug for Row {
@@ -61,6 +68,15 @@ impl fmt::Display for Row {
 #[derive(Debug)]
 pub(crate) struct Patterns {
     pub(crate) rows: Vec<Row>
+}
+
+impl Patterns {
+    fn new(row_count: usize, channel_count: usize) -> Self {
+        Self {
+            rows: vec![Row::new(channel_count); row_count],
+        }
+    }
+
 }
 
 #[derive(Debug)]

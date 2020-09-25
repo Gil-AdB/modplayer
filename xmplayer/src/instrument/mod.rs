@@ -1,8 +1,8 @@
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::num::Wrapping;
 
 use crate::envelope::Envelope;
-use crate::io_helpers::{read_i16_vec, read_i8_vec};
+use crate::io_helpers::{read_i16_vec, read_i8_vec, read_u8_vec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopType {
@@ -79,6 +79,15 @@ impl Sample {
         result
     }
 
+    fn upsampleu8(data: Vec<u8>) -> Vec<i16> {
+        let mut result = vec!(0i16; data.len());
+        result.reserve_exact(data.len() as usize);
+        for i in 0..data.len() {
+            result[i] = (Wrapping((data[i]  as u16 * 0x0101u16) as u16) + Wrapping((-32768i16) as u16)).0 as i16;
+        }
+        result
+    }
+
 
     fn upsamplei16(data: Vec<i16>) -> Vec<f32> {
         let mut result = vec!(0.0f32; data.len());
@@ -88,6 +97,20 @@ impl Sample {
         }
         result
     }
+
+    pub(crate) fn read_s3m_sample_data<R: Read + Seek>(&mut self, file: &mut R, sample_ptr: u32) {
+        if self.length == 0 { return; }
+        file.seek(SeekFrom::Start((sample_ptr as u64)  * 16));
+
+        if self.bitness == 8 {
+            self.data = Sample::upsamplei16(Sample::upsampleu8(read_u8_vec(file, self.length as usize)));
+        } else {
+            panic!("Unknown S3M sample format");
+            // self.data = Sample::upsamplei16(read_i16_vec(file, self.length as usize));
+        }
+        self.data.push(self.data[self.data.len() - 1]);
+    }
+
     pub(crate) fn read_non_packed_data<R: Read>(&mut self, file: &mut R) {
         if self.length == 0 { return; }
         if self.bitness == 8 {

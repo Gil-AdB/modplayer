@@ -155,3 +155,10 @@ pub(crate) fn read_i8_vec<R: Read>(file: &mut R, size: usize) -> Vec<i8> {
     rdr.read_i8_into(result.as_mut_slice()).unwrap();
     result
 }
+
+pub(crate) fn read_u8_vec<R: Read>(file: &mut R, size: usize) -> Vec<u8> {
+    let mut buf = vec!(0u8; size);
+    file.read_exact(&mut buf).unwrap();
+
+    buf
+}

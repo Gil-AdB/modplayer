@@ -414,7 +414,7 @@ impl ChannelState<'_> {
     pub(crate) fn porta_up(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
         if first_tick {
             if amount != 0 {
-                self.last_porta_up = (amount * 4) as u16;
+                self.last_porta_up = (amount as u16) * 4;
             }
         } else {
             self.note.period -= self.last_porta_up as i16;
@@ -428,7 +428,7 @@ impl ChannelState<'_> {
     pub(crate) fn porta_down(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
         if first_tick {
             if amount != 0 {
-                self.last_porta_down = (amount * 4) as u16;
+                self.last_porta_down = (amount as u16) * 4;
             }
         } else {
             self.note.period += self.last_porta_down as i16;
@@ -442,7 +442,7 @@ impl ChannelState<'_> {
     pub(crate) fn fine_porta_up(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
         if first_tick {
             if amount != 0 {
-                self.last_fine_porta_up = (amount * 4) as u16;
+                self.last_fine_porta_up = (amount as u16) * 4;
             }
             self.note.period -= self.last_fine_porta_up as i16;
             if self.note.period < 1 {
@@ -455,7 +455,7 @@ impl ChannelState<'_> {
     pub(crate) fn fine_porta_down(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
         if first_tick {
             if amount != 0 {
-                self.last_fine_porta_down = (amount * 4) as u16;
+                self.last_fine_porta_down = (amount as u16) * 4;
             }
             self.note.period += self.last_fine_porta_down as i16;
             if self.note.period > 31999 {

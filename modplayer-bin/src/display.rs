@@ -84,7 +84,7 @@ impl Display {
         );
         if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
 
-        println!("on | channel |         instrument         |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |");
+        println!("on | channel |            instrument            |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |");
 
         let mut idx = 0u32;
         for channel in &play_data.channel_status {
@@ -99,7 +99,7 @@ impl Display {
                         (channel.global_volume / 64.0) *
                         (channel.fadeout_volume / 65536.0);
 
-                println!("{:3}| {:7} | {:26} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
+                println!("{:3}| {:7} | {:32} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
                          if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
                          if channel.on { (channel.frequency) as u32 } else { 0 },
                          Self::range_with_color((final_vol * 12.0).ceil() as u32, 0, 12, 11, &colors),
@@ -112,7 +112,7 @@ impl Display {
                          Self::range(channel.final_panning as u32, 0, 255, 8),
                 );
             } else {
-                println!("{:3}| {:7} | {:26} |  {:<6} |{:12}| {:14}| {:5}| {:7}|{:12}|{:12}|{:12}|{:12}| {:8}|      ", "off", idx, "", "", "",
+                println!("{:3}| {:7} | {:32} |  {:<6} |{:12}| {:14}| {:5}| {:7}|{:12}|{:12}|{:12}|{:12}| {:8}|      ", "off", idx, "", "", "",
                          "", "", "", "", "", "", "", "");
             }
         }
