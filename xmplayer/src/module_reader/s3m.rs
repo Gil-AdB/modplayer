@@ -125,8 +125,9 @@ pub(crate) mod s3m {
         }
 
         let mut pattern_order = file.read_bytes(song_length as usize);
-        truncate_patterns(pattern_count, &mut pattern_order);
-        dbg!(&pattern_order);
+        eprintln!("pattern_order: {:?}", pattern_order);
+        truncate_patterns(&mut pattern_order);
+        eprintln!("pattern_order: {:?}", pattern_order);
 
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize);
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize);
@@ -155,7 +156,7 @@ pub(crate) mod s3m {
             name: name.trim().to_string(),
             song_type: SongType::MOD,
             tracker_name: "Unknown".to_string(),
-            song_length: song_length as u16,
+            song_length: pattern_order.len() as u16,
             restart_position: 0u16,
             channel_count: num_channels as u16,
             patterns,
@@ -169,9 +170,9 @@ pub(crate) mod s3m {
         })
     }
 
-    fn truncate_patterns(pattern_count: u16, pattern_order: &mut Vec<u8>) {
+    fn truncate_patterns(pattern_order: &mut Vec<u8>) {
         let mut write_pos = 0;
-        for i in 0..pattern_count as usize {
+        for i in 0..pattern_order.len() as usize {
             if pattern_order[i] < 254 {
                 pattern_order[write_pos] = pattern_order[i];
                 write_pos += 1;
@@ -206,8 +207,7 @@ pub(crate) mod s3m {
 
             let mut pattern = Patterns::new(ROW_COUNT, channel_count);
 
-            let size = file.read_u16();
-            dbg!(size);
+            let _size = file.read_u16();
 
             let mut row_idx = 0;
             for row in pattern.rows.iter_mut() {
@@ -235,7 +235,6 @@ pub(crate) mod s3m {
                         } else if note == 254 {
                             note = 97;
                         } else {
-                            dbg!(note);
                             note = 1 + (note >> 4) * 12 + (note & 0xF);
                             if note > 96 {note = 0;}
                         }
@@ -275,7 +274,6 @@ pub(crate) mod s3m {
                 }
                 row_idx += 1;
             }
-            dbg!(&pattern);
             patterns.push(pattern)
         }
 
@@ -283,7 +281,8 @@ pub(crate) mod s3m {
     }
 
     fn fix_effects(pattern : &mut Pattern, last_effect: &mut u8, last_effect_param: &mut u8, last_vibrato_param: &mut u8,last_instrument: &mut u8) {
-        // lifted from FT2
+        // lifted from FT2 - effect memory handling seems somewhat wrong - it should be handled during effect processing
+        //                   Fixing it needs additional work in the player code - seems like this workaround will suffice for now
         if pattern.effect_param > 0 {
             *last_effect_param = pattern.effect_param;
             if pattern.effect == 8 || pattern.effect == 21 {
@@ -313,7 +312,7 @@ pub(crate) mod s3m {
         }
         
         match pattern.effect {
-            1 => // A
+            1 => // A - Set speed - don't support speeds > 1F
                 {
                     pattern.effect = 0xF;
                     if pattern.effect_param == 0 || pattern.effect_param > 0x1F {
@@ -322,25 +321,25 @@ pub(crate) mod s3m {
                     }
                 }
 
-            2 => pattern.effect = 0xB, // B
-            3 => pattern.effect = 0xD,  // C
+            2 => pattern.effect = 0xB,  // B - Pattern Jump
+            3 => pattern.effect = 0xD,  // C - Volume slide
             4 => // D
                 {
-                    if pattern.effect_param > 0xF0 {// fine slide up
+                    if pattern.effect_param > 0xF0 { // fine slide up
                         pattern.effect = 0xE;
                         pattern.effect_param = 0xB0 | (pattern.effect_param & 0xF);
-                    } else if (pattern.effect_param & 0x0F) == 0x0F && (pattern.effect_param & 0xF0) > 0 {// fine slide down
+                    } else if (pattern.effect_param & 0x0F) == 0x0F && (pattern.effect_param & 0xF0) > 0 { // fine slide down
                         pattern.effect = 0xE;
                         pattern.effect_param = 0xA0 | (pattern.effect_param >> 4);
                     } else {
                         pattern.effect = 0xA;
-                        if (pattern.effect_param & 0x0F) != 0 { // on D/K, last nybble has first priority in ST3
+                        if (pattern.effect_param & 0x0F) != 0 { // on D/K (Volume slide/Vibrato + Volume slide), last nybble has first priority in ST3
                             pattern.effect_param &= 0x0F;
                         }
                     }
                 }
 
-            5 | 6 => { // E, F
+            5 | 6 => { // E, F - porta up/down
                 if (pattern.effect_param & 0xF0) >= 0xE0 {
                     // convert to fine slide
                     let mut new_effect = if (pattern.effect_param & 0xF0) == 0xE0 { 0x21 } else { 0xE };
@@ -363,7 +362,7 @@ pub(crate) mod s3m {
                 }
             }
 
-            7 => { // G
+            7 => { // G - Porta to note
                 pattern.effect = 0x03;
 
                 // fix illegal slides (to new instruments)
@@ -372,7 +371,7 @@ pub(crate) mod s3m {
                 }
             }
 
-            11 => { // K
+            11 => { // K - Vibrato + volume slide
                 if pattern.effect_param > 0xF0 { // fine slide up
                     pattern.effect = 0xE;
                     pattern.effect_param = 0xB0 | (pattern.effect_param & 0xF);
@@ -396,67 +395,64 @@ pub(crate) mod s3m {
                     }
                 }
             }
-            8 => { pattern.effect = 0x04; } // H
-            9 => { pattern.effect = 0x1D; } // I
-            10 => { pattern.effect = 0x00; } // J
-            12 => { pattern.effect = 0x05; } // L
-            15 => { pattern.effect = 0x09; } // O
-            17 => { pattern.effect = 0x1B; } // Q
-            18 => { pattern.effect = 0x07; } // R
-            19 => { // S
+            8 =>  { pattern.effect = 0x04; } // H - Vibrato
+            9 =>  { pattern.effect = 0x1D; } // I - Tremor
+            10 => { pattern.effect = 0x00; } // J - Arpeggio
+            12 => { pattern.effect = 0x05; } // L - Porta + Volume slide
+            15 => { pattern.effect = 0x09; } // O - Sample offset
+            17 => { pattern.effect = 0x1B; } // Q - Retrig + Volume slide
+            18 => { pattern.effect = 0x07; } // R - Tremolo
+            19 => { // S - Extended commands
                 pattern.effect = 0xE;
-                let tmp = pattern.effect_param >> 4;
+                let subcommand = pattern.get_x();
                 pattern.effect_param &= 0x0F;
 
-                if tmp == 0x1 {
-                    pattern.effect_param |= 0x30;
-                } else if tmp == 0x2 {
-                    pattern.effect_param |= 0x50;
-                } else if tmp == 0x3 {
-                    pattern.effect_param |= 0x40;
-                } else if (tmp == 0x4) {
-                    pattern.effect_param |= 0x70;
-                } else if tmp == 0xB { // ignore S8x becuase it's not compatible with FT2 panning
-                    pattern.effect_param |= 0x60;
-                } else if tmp == 0xC { // Note Cut
-                    pattern.effect_param |= 0xC0;
-                    if pattern.effect_param == 0xC0 {
-                        // EC0 does nothing in ST3 but cuts voice in FT2, remove effect
+                match subcommand {
+                    0x1 => { pattern.effect_param |= 0x30; } // Glissando
+                    0x2 => { pattern.effect_param |= 0x50; } // Set finetune
+                    0x3 => { pattern.effect_param |= 0x40; } // Set Vibrato Waveform
+                    0x4 => { pattern.effect_param |= 0x70; } // Set Tremolo Waveform (Firelight S3M tutorial is wrong here)
+                    0xB => { pattern.effect_param |= 0x60; } // Channel pan position. ignore S8x because it's not compatible with FT2 panning
+                    0xC => {
+                        pattern.effect_param |= 0xC0;
+                        if pattern.effect_param == 0xC0 {
+                            // EC0 does nothing in ST3 but cuts voice in FT2, remove effect
+                            pattern.effect = 0;
+                            pattern.effect_param = 0;
+                        }
+                    }
+                    0xD => { // Note Delay
+                        pattern.effect_param |= 0xD0;
+                        if pattern.note == 0 || pattern.note == 97 {
+                            // EDx without a note does nothing in ST3 but retrigs in FT2, remove effect
+                            pattern.effect = 0;
+                            pattern.effect_param = 0;
+                        } else if pattern.effect_param == 0xD0 {
+                            // ED0 prevents note/smp/vol from updating in ST3, remove everything
+                            pattern.note = 0;
+                            pattern.instrument = 0;
+                            pattern.volume = 0;
+                            pattern.effect = 0;
+                            pattern.effect_param = 0;
+                        }
+                    }
+                    0xE => { pattern.effect_param |= 0xE0; } // Pattern Delay
+                    0xF => { pattern.effect_param |= 0xF0; } // Funk Repeat - not supported anyway...
+                    _ => {
                         pattern.effect = 0;
                         pattern.effect_param = 0;
                     }
-                } else if tmp == 0xD { // Note Delay
-                    pattern.effect_param |= 0xD0;
-                    if pattern.note == 0 || pattern.note == 97 {
-                        // EDx without a note does nothing in ST3 but retrigs in FT2, remove effect
-                        pattern.effect = 0;
-                        pattern.effect_param = 0;
-                    } else if pattern.effect_param == 0xD0 {
-                        // ED0 prevents note/smp/vol from updating in ST3, remove everything
-                        pattern.note = 0;
-                        pattern.instrument = 0;
-                        pattern.volume = 0;
-                        pattern.effect = 0;
-                        pattern.effect_param = 0;
-                    }
-                } else if tmp == 0xE {
-                    pattern.effect_param |= 0xE0;
-                } else if tmp == 0xF {
-                    pattern.effect_param |= 0xF0;
-                } else {
-                    pattern.effect = 0;
-                    pattern.effect_param = 0;
                 }
             }
 
-            20 => { // T
+            20 => { // T - Set Tempo/BPM
                 pattern.effect = 0x0F;
                 if pattern.effect_param < 0x21 {// Txx with a value lower than 33 (0x21) does nothing in ST3, remove effect
                     pattern.effect = 0;
                     pattern.effect_param = 0;
                 }
             }
-            22 => { // V
+            22 => { // V - Set Global Volume
                 pattern.effect = 0x10;
                 if pattern.effect_param > 0x40 {
                     // Vxx > 0x40 does nothing in ST3

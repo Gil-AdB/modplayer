@@ -187,7 +187,7 @@ pub(crate) mod module {
             if effect_param == 0 {
                 effect = 0;
             }
-        } else if effect == 0x2 {       // No porta memorty
+        } else if effect == 0x2 {       // No porta memory
             if effect_param == 0 {
                 effect = 0;
             }
@@ -223,7 +223,7 @@ pub(crate) mod module {
         finetune <<= 1;
         finetune *= 8;
 
-        let ft_ft = 8 * ((2 * ((ft & 0xF) ^ 8)) - 16) as i8;
+        let ft_ft = 8 * ((2 * (((ft as i16) & 0xF) ^ 8)) - 16) as i8;
 
         if ft_ft != finetune {
             panic!("bugbug");

@@ -141,6 +141,8 @@ pub(crate) struct ChannelState<'a> {
     pub(crate) tremolo_control:                u8,
     pub(crate) tremor:                         u8,
     pub(crate) tremor_count:                   u32,
+    pub(crate) multi_retrig_count:             u8,
+    pub(crate) multi_retrig_volume:            u8,
     // pub(crate) last_sample:                    i16,
     // pub(crate) last_sample_pos:                f32,
     pub(crate) last_played_note:               u8,
@@ -178,8 +180,8 @@ impl ChannelState<'_> {
         self.voice.volume.fadeout_speed = 0;//self.instrument.volume_fadeout as i32;
         self.volume_envelope_state.reset(0, &self.voice.instrument.volume_envelope);
         self.panning_envelope_state.reset(0, &self.voice.instrument.panning_envelope);
-        if self.vibrato_control & 0x4 != 4 {self.vibrato_state.set_pos(0);}
-        if self.tremolo_control & 0x4 != 4 {self.tremolo_state.set_pos(0);}
+        if self.vibrato_control & 0x4 != 4 { self.vibrato_state.set_pos(0); }
+        if self.tremolo_control & 0x4 != 4 { self.tremolo_state.set_pos(0); }
     }
 
 
@@ -208,7 +210,7 @@ impl ChannelState<'_> {
         }
     }
 
-    pub(crate) fn vibrato(&mut self, first_tick: bool, speed:u8, depth: u8) {
+    pub(crate) fn vibrato(&mut self, first_tick: bool, speed: u8, depth: u8) {
         if first_tick {
             self.vibrato_state.set_speed(speed as i8);
             self.vibrato_state.set_depth(depth as i8);
@@ -217,7 +219,7 @@ impl ChannelState<'_> {
         }
     }
 
-    pub(crate) fn tremolo(&mut self, first_tick: bool, speed:u8, depth: u8) {
+    pub(crate) fn tremolo(&mut self, first_tick: bool, speed: u8, depth: u8) {
         if first_tick {
             self.tremolo_state.set_speed(speed as i8);
             self.tremolo_state.set_depth(depth as i8);
@@ -227,11 +229,11 @@ impl ChannelState<'_> {
     }
 
 
-    pub(crate) fn arpeggio(&mut self, tick: u32, x:u8, y: u8) {
+    pub(crate) fn arpeggio(&mut self, tick: u32, x: u8, y: u8) {
         match tick % 3 {
-            0 => {self.period_shift = 0;}
-            1 => {self.period_shift = x as i16;}
-            2 => {self.period_shift = y as i16;}
+            0 => { self.period_shift = 0; }
+            1 => { self.period_shift = x as i16; }
+            2 => { self.period_shift = y as i16; }
             _ => {}
         }
     }
@@ -247,26 +249,51 @@ impl ChannelState<'_> {
             if up != 0 {
                 self.panning_inner(first_tick, up as i8);
             } else if down != 0 {
-                self.panning_inner(first_tick, - (down as i8));
+                self.panning_inner(first_tick, -(down as i8));
             }
         }
     }
 
-    pub(crate) fn multi_retrig(&mut self, tick: u32, param: u8) {
-        // if tick == 0 {
-        //     if param != 0 {
-        //         self.multi_retrig_count = (param & 0xf0) >> 4;
-        //         self.multi_retrig_vol = param & 0xf;
-        //     }
-        // }
+    pub(crate) fn retrig_note(&mut self, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, use_amiga: TableType) {
+        if !first_tick && param != 0 && (tick % param as u32 == 0) {
+            self.trigger_note(note, rate, use_amiga);
+        }
+    }
 
-        //
-        // let x = (self.tremor & 0xf0 >> 4) as u32;
-        // let y = (self.tremor & 0xf) as u32;
-        // self.force_off = !(self.tremor_count <  x + 1);
-        //
-        // self.tremor_count += 1;
-        // self.tremor_count = self.tremor_count % (x + 1 + y + 1);
+    pub(crate) fn multi_retrig(&mut self, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, use_amiga: TableType) {
+        // still need to bring volume column and add checks based on it
+        if first_tick {
+            if param != 0 {
+                self.multi_retrig_count = (param & 0xf0) >> 4;
+                self.multi_retrig_volume = param & 0xf;
+            }
+        } else {
+            if self.multi_retrig_count != 0 && (tick % param as u32 == 0) {
+
+                let mut vol = self.voice.volume.volume;
+                match self.multi_retrig_volume
+                {
+                    0x1 => { vol -= 1;  }
+                    0x2 => { vol -= 2;  }
+                    0x3 => { vol -= 4;  }
+                    0x4 => { vol -= 8;  }
+                    0x5 => { vol -= 16; }
+                    0x6 => { vol = vol * 2 / 3; }
+                    0x7 => { vol /= 2; }
+                    0x8 => {} // does not change the volume
+                    0x9 => { vol += 1;  }
+                    0xA => { vol += 2;  }
+                    0xB => { vol += 4;  }
+                    0xC => { vol += 8;  }
+                    0xD => { vol += 16; }
+                    0xE => { vol = vol * 3 / 2; }
+                    0xF => { vol *= 2;  }
+                    _ => {}
+                }
+                self.voice.volume.set_volume(vol as i32);
+                self.trigger_note(note, rate, use_amiga);
+            }
+        }
     }
 
     pub(crate) fn tremor(&mut self, tick: u32, param: u8) {

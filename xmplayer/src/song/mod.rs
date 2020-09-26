@@ -356,6 +356,8 @@ impl<'a> Song<'a> {
                 tremolo_control: 0,
                 tremor: 0,
                 tremor_count: 0,
+                multi_retrig_count: 0,
+                multi_retrig_volume: 0,
                 last_played_note: 0
             }; 32],
             loop_pattern: false,
@@ -740,7 +742,7 @@ impl<'a> Song<'a> {
                     channel.panning_slide(first_tick, pattern.effect_param);
                 }
                 0x1b => {
-                    channel.multi_retrig(self.tick, pattern.effect_param);
+                    channel.multi_retrig(first_tick, self.tick, pattern.effect_param, note, self.rate, self.use_amiga);
                 }
                 0x1d => {
                     channel.tremor(self.tick, pattern.effect_param);
@@ -756,11 +758,7 @@ impl<'a> Song<'a> {
                     0x4 => { channel.vibrato_control = pattern.get_y();}
                     0x7 => { channel.tremolo_control = pattern.get_y();}
                     0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
-                    0x9 => { // retrig note
-                        if !first_tick && pattern.get_y() != 0 && (self.tick % pattern.get_y() as u32 == 0) {
-                            channel.trigger_note(pattern.note, self.rate, self.use_amiga);
-                        }
-                    }
+                    0x9 => { channel.retrig_note(first_tick, self.tick, pattern.get_y(), pattern.note, self.rate, self.use_amiga);}
                     0xa => { channel.fine_volume_slide_up(note_delay_first_tick, pattern.get_y());} // volume slide up
                     0xb => { channel.fine_volume_slide_down(note_delay_first_tick, pattern.get_y());} // volume slide up
                     0xc => { channel.set_volume(self.tick == pattern.get_y() as u32, 0); }
