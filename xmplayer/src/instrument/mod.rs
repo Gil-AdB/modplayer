@@ -100,7 +100,7 @@ impl Sample {
 
     pub(crate) fn read_s3m_sample_data<R: Read + Seek>(&mut self, file: &mut R, sample_ptr: u32) {
         if self.length == 0 { return; }
-        file.seek(SeekFrom::Start((sample_ptr as u64)  * 16));
+        file.seek(SeekFrom::Start((sample_ptr as u64)  * 16)).unwrap();
 
         if self.bitness == 8 {
             self.data = Sample::upsamplei16(Sample::upsampleu8(read_u8_vec(file, self.length as usize)));

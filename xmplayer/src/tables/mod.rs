@@ -328,3 +328,157 @@ pub const PANNING_TAB: [u32;257] = // bit-exact to FT2 table
 63455,63587,63719,63850,63982,64113,64243,64374,64504,64634,64763,64893,65022,65151,65279,65408,
 65536
 ];
+
+// #[derive(Eq, PartialEq, Clone, Copy, Debug)]
+// pub enum TableType {
+//     LinearFrequency,
+//     AmigaFrequency
+// }
+//
+// pub struct AudioTables {
+//     pub periods:        [i16; 1936],
+//     pub d_period2hz_tab:  [f64; 65536],
+// }
+//
+// pub const AmigaTables: AudioTables = AudioTables { periods: LINEAR_PERIODS, d_period2hz_tab: [0.0f64; 65536] };
+// pub const LinearTables: AudioTables = AudioTables{ periods: AMIGA_PERIODS, d_period2hz_tab: [0.0f64; 65536] };
+//
+//
+//
+// use core::fmt;
+// impl fmt::Display for AudioTables {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         let mut first = true;
+//         let mut i = 0;
+//         write!(f, "    AudioTables   = {{ periods: [");
+//         // for period in self.periods.iter().cloned() {
+//         //     if first { first = false; } else { write!(f, ",\t")?; }
+//         //     write!(f, "{}", period)?;
+//         //     if i > 16 {
+//         //         i = 0;
+//         //         write!(f, "\n\t\t\t");
+//         //     }
+//         // }
+//         write!(f, "],");
+//         write!(f, "\t\t\tdPeriod2HzTab: [\n");
+//         for hz in self.d_period2hz_tab.iter().cloned() {
+//             if first { first = false; } else { write!(f, ",\t")?; }
+//             write!(f, "{:.9}", hz)?;
+//             if i > 10 {
+//                 i = 0;
+//                 write!(f, "\n\t\t\t");
+//             } else {
+//                 i +=1;
+//             }
+//         }
+//         write!(f, "]}};");
+//
+//         Ok(())
+//     }
+// }
+//
+//
+// #[cfg(test)]
+// mod tests {
+//     use crate::tables::{AudioTables, LINEAR_PERIODS, AMIGA_PERIODS};
+//     use std::fs::File;
+//     use std::io::Write;
+//
+//     fn log(i: usize) -> f64 {
+//         (i as f64 / 768.0).exp2() * (8363.0 * 256.0)
+//     }
+//
+//     #[test]
+//     fn calc_tables_linear() // taken directly from ft2clone
+//     {
+//         let mut result = AudioTables { periods: LINEAR_PERIODS, d_period2hz_tab: [0.0f64; 65536] };
+//         result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
+//
+//         // linear periods
+//         for i in 1..65536 {
+//             let invPeriod = (12 * 192 * 4 as u16).wrapping_sub(i as u16); // this intentionally overflows uint16_t to be accurate to FT2
+//             let octave = invPeriod as u32 / 768;
+//             let period = invPeriod as u32 % 768;
+//             let bitshift = (14u32.wrapping_sub(octave)) & 0x1F; // 100% accurate to FT2
+//
+//             result.d_period2hz_tab[i] = log(period as usize) / (1 << bitshift) as f64;
+//         }
+//         let mut file = File::create("linear.txt").unwrap();
+//         file.write_all(format!("pub const LinearTables: {}", result).as_ref());
+//     }
+//
+//     #[test]
+//     fn calc_tables_amiga() // taken directly from ft2clone
+//     {
+//         let mut result = AudioTables { periods: AMIGA_PERIODS, d_period2hz_tab: [0.0f64; 65536] };
+//         result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
+//         // Amiga periods
+//         for i in 1..65536 {
+//             result.d_period2hz_tab[i] = (8363.0 * 1712.0) / i as f64;
+//         }
+//         let mut file = File::create("amiga.txt").unwrap();
+//         file.write_all(format!("pub const AmigaTables:  {}", result).as_ref());
+//     }
+// }
+
+
+fn log(i: usize) -> f64 {
+    (i as f64 / 768.0).exp2() * (8363.0 * 256.0)
+}
+
+fn log_table() -> Box<[f64; 768]> {
+    let mut result = box [0.0f64; 768];
+    for i in 0..768 {
+        result[i] = log(i);
+    }
+    result
+}
+
+lazy_static! {
+pub static ref D_LOG_TAB: Box<[f64; 768]> = log_table();
+}
+
+#[derive(Eq, PartialEq, Clone, Copy, Debug)]
+pub enum TableType {
+    LinearFrequency,
+    AmigaFrequency
+}
+
+pub struct AudioTables {
+    pub periods:        [i16; 1936],
+    pub d_period2hz_tab:  [f64; 65536],
+}
+
+impl AudioTables {
+    fn calc_tables_linear() -> Box<AudioTables> // taken directly from ft2clone
+    {
+        let mut result = box Self { periods: LINEAR_PERIODS, d_period2hz_tab: [0.0f64; 65536] };
+        result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
+        // linear periods
+        for i in 1..65536 {
+            let inv_period = (12 * 192 * 4 as u16).wrapping_sub(i as u16); // this intentionally overflows uint16_t to be accurate to FT2
+            let octave = inv_period as u32 / 768;
+            let period = inv_period as u32 % 768;
+            let bitshift = (14u32.wrapping_sub(octave)) & 0x1F; // 100% accurate to FT2
+
+            result.d_period2hz_tab[i] = D_LOG_TAB[period as usize] / (1 << bitshift) as f64;
+        }
+        result
+    }
+
+    fn calc_tables_amiga() -> Box<AudioTables> // taken directly from ft2clone
+    {
+        let mut result = box Self { periods: AMIGA_PERIODS, d_period2hz_tab: [0.0f64; 65536] };
+        result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
+        // Amiga periods
+        for i in 1..65536 {
+            result.d_period2hz_tab[i] = (8363.0 * 1712.0) / i as f64;
+        }
+        result
+    }
+}
+
+lazy_static! {
+pub static ref AMIGA_TABLES:   Box<AudioTables>   = AudioTables::calc_tables_amiga();
+pub static ref LINEAR_TABLES:  Box<AudioTables>   = AudioTables::calc_tables_linear();
+}

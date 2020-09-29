@@ -1,20 +1,16 @@
 use std::cmp::min;
-use std::io::{stdout, Write};
 use std::ops::Generator;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::mpsc::Receiver;
 
 use crate::channel_state::{ChannelState, Voice};
-use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, Volume, WaveControl, Panning, clamp};
+use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp};
 use crate::instrument::{LoopType, Sample, Instrument};
 use crate::producer_consumer_queue::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE};
 use crate::module_reader::{SongData, is_note_valid};
-use crate::tables::{PANNING_TAB, LINEAR_PERIODS, AMIGA_PERIODS};
-use crate::TripleBuffer::{TripleBuffer, TripleBufferWriter, Init};
-use crate::song;
-use std::borrow::BorrowMut;
-use std::sync::atomic::Ordering::Release;
+use crate::tables::{PANNING_TAB, TableType};
+use crate::triple_buffer::{TripleBufferWriter, Init};
 
 struct BPM {
     pub bpm:                    u32,
@@ -194,71 +190,6 @@ impl Init for PlayData<'_> {
     }
 }
 
-fn log(i: usize) -> f64 {
-    (i as f64 / 768.0).exp2() * (8363.0 * 256.0)
-}
-
-fn log_table() -> [f64; 768] {
-    let mut result = [0.0f64; 768];
-    for i in 0..768 {
-        result[i] = log(i);
-    }
-
-    result
-}
-
-lazy_static! {
-static ref D_LOG_TAB: [f64; 768] = log_table();
-}
-
-#[derive(Eq, PartialEq, Clone, Copy, Debug)]
-pub enum TableType {
-    LinearFrequency,
-    AmigaFrequency
-}
-
-pub struct AudioTables {
-    pub Periods:        [i16; 1936],
-    pub dPeriod2HzTab:  [f64; 65536],
-}
-
-impl AudioTables {
-    fn calcTablesLinear() -> Self // taken directly from ft2clone
-    {
-        let mut result = Self { Periods: [0i16; 1936], dPeriod2HzTab: [0.0f64; 65536] };
-        result.dPeriod2HzTab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
-
-        result.Periods = LINEAR_PERIODS;
-        // linear periods
-        for i in 1..65536 {
-            let invPeriod = (12 * 192 * 4 as u16).wrapping_sub(i as u16); // this intentionally overflows uint16_t to be accurate to FT2
-            let octave = invPeriod as u32 / 768;
-            let period = invPeriod as u32 % 768;
-            let bitshift = (14u32.wrapping_sub(octave)) & 0x1F; // 100% accurate to FT2
-
-            result.dPeriod2HzTab[i] = D_LOG_TAB[period as usize] / (1 << bitshift) as f64;
-        }
-        result
-    }
-
-    fn calcTablesAmiga() -> AudioTables // taken directly from ft2clone
-    {
-        let mut result = Self { Periods: [0i16; 1936], dPeriod2HzTab: [0.0f64; 65536] };
-        result.dPeriod2HzTab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
-        result.Periods = AMIGA_PERIODS;
-        // Amiga periods
-        for i in 1..65536 {
-            result.dPeriod2HzTab[i] = (8363.0 * 1712.0) / i as f64;
-        }
-        result
-    }
-}
-
-lazy_static! {
-pub static ref AmigaTables:   AudioTables   = AudioTables::calcTablesAmiga();
-pub static ref LinearTables:  AudioTables   = AudioTables::calcTablesLinear();
-}
-
 // const BUFFER_SIZE: usize = 4096;
 pub struct Song<'a> {
     song_position:              usize,
@@ -298,17 +229,6 @@ impl<'a> Song<'a> {
     // }
 
     pub fn new(song_data: &'a SongData, triple_buffer_writer: TripleBufferWriter<PlayData<'a>>, sample_rate: f32) -> Song<'a> {
-
-        // fugly hack to force lazy_static init here.
-        let dPeriod2HzTab_linear = &LinearTables.dPeriod2HzTab;
-        let dPeriod2HzTab_amiga = &AmigaTables.dPeriod2HzTab;
-        let periods_linear = &LinearTables.Periods;
-        let periods_amiga = &AmigaTables.Periods;
-        dbg!(dPeriod2HzTab_linear[0]);
-        dbg!(dPeriod2HzTab_amiga[0]);
-        dbg!(periods_linear[0]);
-        dbg!(periods_amiga[0]);
-
         Song {
             song_position: 0,
             row: 0,
@@ -393,7 +313,6 @@ impl<'a> Song<'a> {
         play_data.channel_status.clear();
         play_data.filter                    = self.filter;
 
-        let mut idx = 0;
         for channel in &self.channels {
             play_data.channel_status.push(ChannelStatus {
                 volume:             channel.voice.volume.volume as f32,
@@ -410,7 +329,6 @@ impl<'a> Song<'a> {
                 period:             channel.note.period,
                 final_panning:      channel.panning.final_panning,
             });
-            idx += 1;
         }
         // Song::display(&play_data, 0);
     }
@@ -653,7 +571,7 @@ impl<'a> Song<'a> {
                 }
                 0xe0..=0xef => { // Panning slide right
                     let pan = channel.panning.panning as i16 + pattern.get_volume_param() as i16;
-                    if pattern.get_volume_param() > 255 {
+                    if pan > 255 {
                         channel.panning.set_panning(255);
                     } else {
                         channel.panning.set_panning(pan as i32);
@@ -754,7 +672,7 @@ impl<'a> Song<'a> {
                 match pattern.get_x() {
                     0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate, self.use_amiga); } // Porta up
                     0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate, self.use_amiga); } // Porta down
-                    0x3 => { channel.glissando = (pattern.get_y() == 1); }
+                    0x3 => { channel.glissando = pattern.get_y() == 1; }
                     0x4 => { channel.vibrato_control = pattern.get_y();}
                     0x7 => { channel.tremolo_control = pattern.get_y();}
                     0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
@@ -769,7 +687,7 @@ impl<'a> Song<'a> {
 
 
 
-            let mut ves = channel.volume_envelope_state;
+            // let mut ves = channel.volume_envelope_state;
 
 
             let envelope_volume = channel.volume_envelope_state.handle(&channel.voice.instrument.volume_envelope, channel.voice.sustained, 64, false);
@@ -852,12 +770,11 @@ impl<'a> Song<'a> {
                 }
 
                 let sample_data = channel.voice.sample.data[channel.voice.sample_position as usize];
-                let mut out_sample: f32;
-                if self.filter {
-                    out_sample = Self::lerp(channel.voice.sample_position, sample_data, channel.voice.sample.data[channel.voice.sample_position as usize + 1]);
-                } else {
-                    out_sample = sample_data;
-                }
+                let out_sample: f32 = if self.filter {
+                       Self::lerp(channel.voice.sample_position, sample_data, channel.voice.sample.data[channel.voice.sample_position as usize + 1])
+                    } else {
+                        sample_data
+                    };
                 // channel.last_sample = sample_data;
                 // channel.last_sample_pos = channel.sample_position;
 

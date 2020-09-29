@@ -1,20 +1,14 @@
 pub(crate) mod s3m {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
     use std::fs::File;
-    use std::io::{BufReader, Read, Seek, SeekFrom, Error, ErrorKind};
-    use crate::io_helpers::{read_string, read_bytes, read_u8, read_u16, read_u16_vec, BinaryReader, read_u32, read_u24};
+    use std::io::{BufReader, Read, Seek, SeekFrom};
+    use crate::io_helpers::{read_string, read_bytes, read_u8, BinaryReader, read_u32, read_u24};
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
-    use crate::envelope::Envelope;
-    use crate::io_helpers as fio;
     use crate::channel_state::channel_state::{clamp};
-    use crate::song::TableType::AmigaFrequency;
-    use crate::song::PlaybackCmd::AmigaTable;
-    use crate::tables::AMIGA_PERIOD;
     use simple_error::{SimpleError, SimpleResult};
     use std::io;
-    use std::cmp::max;
 
     pub fn read_s3m(path: &str) -> SimpleResult<SongData> {
         let f = File::open(path).expect("failed to open the file");
@@ -32,11 +26,11 @@ pub(crate) mod s3m {
         song_data
     }
 
-    fn read_s3m_header<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData>
+    fn read_s3m_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     {
         let mut num_channels = 0;
 
-        file.seek(SeekFrom::Start(44));
+        file.seek(SeekFrom::Start(44)).unwrap();
 
         let id = read_bytes(file, 4);
 
@@ -44,7 +38,7 @@ pub(crate) mod s3m {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - signature"))); // Simple how exactly?
         }
 
-        file.seek(SeekFrom::Start(0));
+        file.seek(SeekFrom::Start(0)).unwrap();
 
         let name = file.read_string(28);
         dbg!(&name);
@@ -66,53 +60,42 @@ pub(crate) mod s3m {
         }
 
         let instrument_count = file.read_u16();
-        dbg!(instrument_count);
 
         if instrument_count > 128 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - instruments"))); // Simple how exactly?
         }
 
-        let mut pattern_count = file.read_u16();
-        dbg!(pattern_count);
+        let pattern_count = file.read_u16();
 
         if pattern_count > 256 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - patterns"))); // Simple how exactly?
         }
 
         let flags = file.read_u16();
-        dbg!(flags);
 
         let cwtv = file.read_u16();
-        dbg!(cwtv);
 
         let signed_samples = file.read_u16();
-        dbg!(signed_samples);
 
         let signature = file.read_string(4);
-        dbg!(&signature);
 
         if signature != "SCRM" {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - signature"))); // Simple how exactly?
         }
 
         let global_volume = file.read_u8();
-        dbg!(global_volume);
 
         let speed = file.read_u8();
-        dbg!(speed);
 
         let bpm = file.read_u8();
-        dbg!(bpm);
 
         let master_volume = file.read_u8();
-        dbg!(master_volume);
 
         let _ = file.read_u8();
 
         let default_panning = file.read_u8();
-        dbg!(default_panning);
 
-        file.seek(SeekFrom::Current(10));
+        file.seek(SeekFrom::Current(10)).unwrap();
 
         let channel_data = file.read_bytes(32);
         let mut channel_map = [255u8; 32];
@@ -125,9 +108,7 @@ pub(crate) mod s3m {
         }
 
         let mut pattern_order = file.read_bytes(song_length as usize);
-        eprintln!("pattern_order: {:?}", pattern_order);
         truncate_patterns(&mut pattern_order);
-        eprintln!("pattern_order: {:?}", pattern_order);
 
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize);
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize);
@@ -154,7 +135,7 @@ pub(crate) mod s3m {
         Ok(SongData {
             id: String::from_utf8_lossy(id.as_ref()).trim().to_string(),
             name: name.trim().to_string(),
-            song_type: SongType::MOD,
+            song_type: SongType::S3M,
             tracker_name: "Unknown".to_string(),
             song_length: pattern_order.len() as u16,
             restart_position: 0u16,
@@ -184,32 +165,25 @@ pub(crate) mod s3m {
         pattern_order.truncate(write_pos as usize);
     }
 
-    fn read_sample_data<R: Read + Seek>(f: &mut R, instruments: &mut Vec<Instrument>) {
-        for i in 1..instruments.len() {
-            instruments[i].samples[0].read_non_packed_data(f);
-        }
-    }
-
     fn read_patterns<R: Read + Seek>(file: &mut R, pattern_ptrs: &Vec<u16>, channel_count: usize, channel_map: &[u8; 32]) -> Vec<Patterns> {
-        let mut last_effect_param       = [0u8; 32];
-        let mut last_effect             = [0u8; 32];
-        let mut last_vibrato_param      = [0u8; 32];
-        let mut last_instrument = [0u8; 32];
-
         let pattern_count = pattern_ptrs.len();
         let mut patterns: Vec<Patterns> = vec![];
         patterns.reserve_exact(pattern_count);
-        let ROW_COUNT = 64;
+        let row_count = 64;
 
         for pattern_ptr in pattern_ptrs.iter().cloned() {
             if pattern_ptr == 0 {continue;}
-            file.seek(SeekFrom::Start((pattern_ptr as u64)  * 16));
+            file.seek(SeekFrom::Start((pattern_ptr as u64)  * 16)).unwrap();
 
-            let mut pattern = Patterns::new(ROW_COUNT, channel_count);
+            let mut pattern = Patterns::new(row_count, channel_count);
 
             let _size = file.read_u16();
 
-            let mut row_idx = 0;
+            let mut last_effect_param       = [0u8; 32];
+            let mut last_effect             = [0u8; 32];
+            let mut last_vibrato_param      = [0u8; 32];
+            let mut last_instrument = [0u8; 32];
+
             for row in pattern.rows.iter_mut() {
                 let channels = &mut row.channels;
 
@@ -268,11 +242,7 @@ pub(crate) mod s3m {
                             &mut last_instrument[channel_id]
                         );
                     }
-
-
-                    let channel = &mut channels[channel_id as usize];
                 }
-                row_idx += 1;
             }
             patterns.push(pattern)
         }
@@ -297,7 +267,7 @@ pub(crate) mod s3m {
                 pattern.effect_param = *last_effect_param;
             }
 
-            if pattern.effect != *last_effect && pattern.effect != 10 && pattern.effect != 19 {
+            if pattern.effect == *last_effect && pattern.effect != 10 && pattern.effect != 19 {
                 let extra_fine_pitch_slides = (pattern.effect == 5 || pattern.effect == 6) && ((pattern.effect_param & 0xF0) == 0xE0);
                 let fine_vol_slides = (pattern.effect == 4 || pattern.effect == 11) &&
                     ((pattern.effect_param > 0xF0) || (((pattern.effect_param & 0xF) == 0xF) && ((pattern.effect_param & 0xF0) > 0)));
@@ -342,7 +312,7 @@ pub(crate) mod s3m {
             5 | 6 => { // E, F - porta up/down
                 if (pattern.effect_param & 0xF0) >= 0xE0 {
                     // convert to fine slide
-                    let mut new_effect = if (pattern.effect_param & 0xF0) == 0xE0 { 0x21 } else { 0xE };
+                    let new_effect = if (pattern.effect_param & 0xF0) == 0xE0 { 0x21 } else { 0xE };
 
                     pattern.effect_param &= 0x0F;
 
@@ -477,100 +447,35 @@ pub(crate) mod s3m {
         }
     }
 
-    fn read_sample<R: Read>(file: &mut R) -> Sample {
-        let name = fio::read_string(file, 22);
-        let mut length = fio::read_u16_be(file) * 2;
-        let ft = fio::read_u8(file) & 0xf;
-        let sign = ((ft >> 3) * 0xF0) as i8;
-        let mut finetune= ft as i8 | sign;
-        finetune <<= 1;
-        finetune *= 8;
-
-        let ft_ft = 8 * ((2 * ((ft & 0xF) ^ 8)) - 16) as i8;
-
-        if ft_ft != finetune {
-            panic!("bugbug");
-        }
-
-        let volume = fio::read_u8(file);
-        let mut loop_start = fio::read_u16_be(file) * 2;
-        let mut loop_len = fio::read_u16_be(file) * 2;
-
-        if loop_len < 2 {
-            loop_len = 2;
-        }
-        // fix overflown loop
-        if loop_start+loop_len > length {
-            if loop_start >= length {
-                loop_start = 0;
-                loop_len = 0;
-            } else {
-                loop_len = length - loop_start;
-            }
-        }
-
-        if loop_len <= 2 {
-            loop_start = 0;
-            loop_len = 0;
-        }
-
-        Sample {
-            length: length as u32,
-            loop_start: loop_start as u32,
-            loop_end: (loop_start + loop_len) as u32,
-            loop_len: loop_len as u32,
-            volume: clamp(volume, 0, 64),
-            finetune,
-            loop_type: if loop_len > 2 {LoopType::ForwardLoop} else {LoopType::NoLoop},
-            bitness: 8,
-            panning: 128,
-            relative_note: 0,
-            name,
-            data: vec![],
-        }
-    }
-
     fn read_instruments<R: Read + Seek>(file: &mut R, instrument_ptrs: &Vec<u16>) -> Vec<Instrument> {
         let mut instruments: Vec<Instrument> = vec![];
-        let INSTRUMENT_COUNT = instrument_ptrs.len();
+        let instrument_count = instrument_ptrs.len();
 
         // Instruments are one based, go figure. We'll add an empty instrument as sample 0.
-        instruments.reserve_exact(INSTRUMENT_COUNT + 1 as usize);
+        instruments.reserve_exact(instrument_count + 1 as usize);
 
         instruments.push(Instrument::new());
 
         for (instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
             let mut instrument = Instrument::new();
-            file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16));
+            file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16)).unwrap();
             let type_ = read_u8(file);
-            dbg!(type_);
             let dos_name = read_string(file,12);
-            dbg!(dos_name);
             let sample_ptr = read_u24(file);
-            dbg!(sample_ptr);
             let sample_len = read_u32(file) & 0xFFFF;
-            dbg!(sample_len);
             let sample_loop_start = read_u32(file) & 0xFFFF;
-            dbg!(sample_loop_start);
             let sample_loop_end = read_u32(file) & 0xFFFF;
-            dbg!(sample_loop_end);
             let sample_volume = read_u8(file);
-            dbg!(sample_volume);
             let _ = read_u8(file);
             let sample_packing = read_u8(file);
-            dbg!(sample_packing);
             if sample_packing != 0 {
                 panic!("Unknown file format");
             }
             let sample_flags = read_u8(file);
-            dbg!(sample_flags);
             let c2spd = read_u32(file) & 0xFFFF;
-            dbg!(c2spd);
             let _ = read_bytes(file, 12);
             let sample_name = read_string(file, 28);
-            dbg!(&sample_name);
             let sample_sig = read_string(file, 4);
-            dbg!(&sample_sig);
             if sample_sig != "SCRS" {
 //                panic!("unknown sample format!");
             }
@@ -601,8 +506,8 @@ pub(crate) mod s3m {
     }
 
     fn c2spd_to_finetune_relnote(c2spd: u32) -> (i8, i8) {
-        let mut finetune = 0i8;
-        let mut relative_note = 0i8;
+        let finetune;
+        let mut relative_note;
 
         let d_freq = (c2spd as f64 / 8363.0).log2() * (12.0 * 128.0);
         let linear_freq = (d_freq + 0.5) as i32; // rounded

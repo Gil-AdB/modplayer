@@ -1,9 +1,8 @@
 use std::sync::atomic::{AtomicU32, AtomicPtr, Ordering};
 use std::sync::atomic::Ordering::{Acquire, Release};
-use std::io::Read;
 use std::sync::Arc;
 use ::array_init::array_init;
-use crate::TripleBuffer::State::{STATE_NO_CHANGE, STATE_DIRTY};
+use crate::triple_buffer::State::{StateNoChange, StateDirty};
 
 pub trait Init {
     fn new() -> Self;
@@ -28,8 +27,8 @@ pub struct TripleBuffer<T> {
 
 #[derive(PartialEq, Eq)]
 pub enum State {
-    STATE_NO_CHANGE,
-    STATE_DIRTY
+    StateNoChange,
+    StateDirty
 }
 
 pub struct TripleBufferReader<T> where T: Clone + Init {
@@ -47,7 +46,7 @@ impl <T> TripleBufferReader<T> where T: Clone + Init {
         loop {
             let current_indexes = tb.indexes.load(Acquire);
             if !TripleBuffer::<T>::get_dirty(current_indexes) {
-                return (&tb.buffer[TripleBuffer::<T>::get_reader(current_indexes) as usize], STATE_NO_CHANGE)
+                return (&tb.buffer[TripleBuffer::<T>::get_reader(current_indexes) as usize], StateNoChange)
             }
             // try to exchange ready slot with reader
             let new_indexes = TripleBuffer::<T>::swap_ready_and_reader(current_indexes);
@@ -58,7 +57,7 @@ impl <T> TripleBufferReader<T> where T: Clone + Init {
                 continue;
             }
 
-            return (&tb.buffer[TripleBuffer::<T>::get_reader(new_indexes) as usize], STATE_DIRTY);
+            return (&tb.buffer[TripleBuffer::<T>::get_reader(new_indexes) as usize], StateDirty);
         }
     }
 
@@ -154,10 +153,10 @@ impl<T> TripleBuffer<T> where T: Clone + Init {
 
 // #[test]
 // fn Test() {
-//     let (mut triple_buffer_reader, mut triple_buffer_writer) = TripleBuffer::<u32>::new();
+//     let (mut triple_buffer_reader, mut triple_buffer_writer) = triple_buffer::<u32>::new();
 //
 //     let idx = 0;
-//     assert!(triple_buffer_reader.read() == (&idx, STATE_NO_CHANGE))
+//     assert!(triple_buffer_reader.read() == (&idx, StateNoChange))
 //
 //     //
 //     // assert!(song.)

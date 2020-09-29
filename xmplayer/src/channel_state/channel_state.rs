@@ -1,9 +1,6 @@
 use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
-use crate::tables::{LINEAR_PERIODS, AMIGA_PERIODS};
-use std::sync::atomic::Ordering::{Acquire, Relaxed};
-use std::num::Wrapping;
-use crate::song::{AmigaTables, LinearTables, TableType};
+use crate::tables::{LINEAR_PERIODS, AMIGA_PERIODS, TableType, LINEAR_TABLES, AMIGA_TABLES};
 
 
 /// A value bounded by a minimum and a maximum
@@ -394,73 +391,74 @@ impl Note {
     //  C-4 - 1 = B-3
     //  FineTune +16 shifts the the FineTune into place. We subtract 1 * 16 from note, and fixup the FineTune
     //  Which means we can just do a binary search inside the table and round to the nearest semi tone...
-    fn nearestSemiTone(&self, period: u16, added_note: u8, use_amiga: TableType) -> i16 {
+    // fn nearest_semi_tone(&self, period: u16, added_note: u8, use_amiga: TableType) -> i16 {
+    //
+    //     let note2period = match use_amiga {
+    //         TableType::LinearFrequency => {&LINEAR_PERIODS},
+    //         TableType::AmigaFrequency => {&AMIGA_PERIODS},
+    //     };
+    //
+    //     let needed_period = period as i16;
+    //     let mut idx: isize = ((note2period.binary_search_by(|element| needed_period.cmp(element)).unwrap_or_else(|x| x)) & (!0xf)) as isize;
+    //
+    //     let ft = if self.finetune >= 0 && idx != 0 {self.finetune >> 3} else {(self.finetune >> 3) + 16};
+    //
+    //     let mut fixed_note_id = idx as isize;
+    //     // clamp to note 97
+    //     if fixed_note_id < 0 {fixed_note_id = 0}
+    //     if fixed_note_id > (8*12*16) {
+    //         fixed_note_id = 8 * 12 * 16;
+    //          // fixed_note_id += (ft & 2) as isize; // FT2 bug
+    //     }
+    //
+    //     fixed_note_id += added_note as isize * 16;
+    //
+    //     // actual allowed values
+    //     let clamped_note_idx = (clamp(fixed_note_id, 0, 1551) + ft as isize) as usize;
+    //     note2period[clamped_note_idx]
+    // }
+
+    // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
+    fn relocate_ton(&self, period: u16, arp_note: u8, use_amiga: TableType) -> i16 {
+        // int32_t fine_tune, lo_period, hi_period, tmp_period, tableIndex;
+        let fine_tune: u32 = (((self.finetune >> 3) + 16) << 1) as u32;
+        let mut hi_period: u32 = (8 * 12 * 16) * 2;
+        let mut lo_period: u32 = 0;
 
         let note2period = match use_amiga {
             TableType::LinearFrequency => {&LINEAR_PERIODS},
             TableType::AmigaFrequency => {&AMIGA_PERIODS},
         };
 
-        let needed_period = period as i16;
-        let mut idx: isize = ((note2period.binary_search_by(|element| needed_period.cmp(element)).unwrap_or_else(|x| x)) & (!0xf)) as isize;
+        for _ in 0..8 {
+            let tmp_period = (((lo_period + hi_period) >> 1) & 0xFFFFFFE0) as u32 + fine_tune;
 
-        let ft = if self.finetune >= 0 && idx != 0 {self.finetune >> 3} else {(self.finetune >> 3) + 16};
+            let mut table_index = (tmp_period as i32 - 16) >> 1;
+            table_index = clamp(table_index, 0, 1935); // 8bitbubsy: added security check
 
-        let mut fixed_note_id = idx as isize;
-        // clamp to note 97
-        if fixed_note_id < 0 {fixed_note_id = 0}
-        if fixed_note_id > (8*12*16) {
-            fixed_note_id = 8 * 12 * 16;
-             // fixed_note_id += (ft & 2) as isize; // FT2 bug
-        }
-
-        fixed_note_id += added_note as isize * 16;
-
-        // actual allowed values
-        let clamped_note_idx = (clamp(fixed_note_id, 0, 1551) + ft as isize) as usize;
-        note2period[clamped_note_idx]
-    }
-
-    // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
-    fn relocateTon(&self, period: u16, arpNote: u8, use_amiga: TableType) -> i16 {
-        // int32_t fineTune, loPeriod, hiPeriod, tmpPeriod, tableIndex;
-        let fineTune : u32 = (((self.finetune >> 3) + 16) << 1) as u32;
-        let mut hiPeriod : u32 = (8 * 12 * 16) * 2;
-        let mut loPeriod : u32 = 0;
-
-        let note2Period = match use_amiga {
-            TableType::LinearFrequency => {&LINEAR_PERIODS},
-            TableType::AmigaFrequency => {&AMIGA_PERIODS},
-        };
-
-        for i in 0..8 {
-            let tmpPeriod = (((loPeriod + hiPeriod) >> 1) & 0xFFFFFFE0) as u32 + fineTune;
-
-            let mut tableIndex = (tmpPeriod as i32 - 16) >> 1;
-            tableIndex = clamp(tableIndex, 0, 1935); // 8bitbubsy: added security check
-
-            if period >= note2Period[tableIndex as usize] as u16 {
-                hiPeriod = ((tmpPeriod - fineTune) as u32 & 0xFFFFFFE0) as u32;
+            if period >= note2period[table_index as usize] as u16 {
+                hi_period = ((tmp_period - fine_tune) as u32 & 0xFFFFFFE0) as u32;
             } else {
-                loPeriod = ((tmpPeriod - fineTune) as u32 & 0xFFFFFFE0) as u32;
+                lo_period = ((tmp_period - fine_tune) as u32 & 0xFFFFFFE0) as u32;
             }
         }
 
-        // arpNote is between 0..16
-        let mut tmpPeriod = loPeriod + fineTune as u32 + ((arpNote as u32) << 5);
+        // arp_note is between 0..16
+        let mut tmp_period = lo_period + fine_tune as u32 + ((arp_note as u32) << 5);
 
-        if tmpPeriod < 0 {// 8bitbubsy: added security check
-            tmpPeriod = 0;
+        // if tmp_period < 0 {// 8bitbubsy: added security check
+        //     tmp_period = 0;
+        // }
+
+        if tmp_period >= (8*12*16+15)*2-1 { // FT2 bug: off-by-one edge case
+            tmp_period = (8 * 12 * 16 + 15) * 2;
         }
 
-        if tmpPeriod >= (8*12*16+15)*2-1 { // FT2 bug: off-by-one edge case
-            tmpPeriod = (8 * 12 * 16 + 15) * 2;
-        }
-
-        return note2Period[(tmpPeriod>>1) as usize];
+        return note2period[(tmp_period >>1) as usize];
     }
 
-    fn nearestSemiTone_test(&self, period: u16, added_note: u8, use_amiga: TableType) -> (i16, u32) {
+    #[cfg(test)]
+    fn nearest_semi_tone_test(&self, period: u16, added_note: u8, use_amiga: TableType) -> (i16, u32) {
 
         let note2period = match use_amiga {
             TableType::LinearFrequency => {&LINEAR_PERIODS},
@@ -488,56 +486,57 @@ impl Note {
     }
 
     // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
-    fn relocateTon_test(&self, period: u16, arpNote: u8, use_amiga: TableType) -> (i16, u32) {
-        // int32_t fineTune, loPeriod, hiPeriod, tmpPeriod, tableIndex;
-        let fineTune : u32 = (((self.finetune >> 3) + 16) << 1) as u32;
-        let mut hiPeriod : u32 = (8 * 12 * 16) * 2;
-        let mut loPeriod : u32 = 0;
+    #[cfg(test)]
+    fn relocate_ton_test(&self, period: u16, arp_note: u8, use_amiga: TableType) -> (i16, u32) {
+        // int32_t fine_tune, lo_period, hi_period, tmp_period, tableIndex;
+        let fine_tune: u32 = (((self.finetune >> 3) + 16) << 1) as u32;
+        let mut hi_period: u32 = (8 * 12 * 16) * 2;
+        let mut lo_period: u32 = 0;
 
-        let note2Period = match use_amiga {
+        let note2period = match use_amiga {
             TableType::LinearFrequency => {&LINEAR_PERIODS},
             TableType::AmigaFrequency => {&AMIGA_PERIODS},
         };
 
-        for i in 0..8 {
-            let tmpPeriod = (((loPeriod + hiPeriod) >> 1) & 0xFFFFFFE0) as u32 + fineTune;
+        for _ in 0..8 {
+            let tmp_period = (((lo_period + hi_period) >> 1) & 0xFFFFFFE0) as u32 + fine_tune;
 
-            let mut tableIndex = (tmpPeriod as i32 - 16) >> 1;
-            tableIndex = clamp(tableIndex, 0, 1935); // 8bitbubsy: added security check
+            let mut table_index = (tmp_period as i32 - 16) >> 1;
+            table_index = clamp(table_index, 0, 1935); // 8bitbubsy: added security check
 
-            if period >= note2Period[tableIndex as usize] as u16 {
-                hiPeriod = ((tmpPeriod - fineTune) as u32 & 0xFFFFFFE0) as u32;
+            if period >= note2period[table_index as usize] as u16 {
+                hi_period = ((tmp_period - fine_tune) as u32 & 0xFFFFFFE0) as u32;
             } else {
-                loPeriod = ((tmpPeriod - fineTune) as u32 & 0xFFFFFFE0) as u32;
+                lo_period = ((tmp_period - fine_tune) as u32 & 0xFFFFFFE0) as u32;
             }
         }
 
-        // arpNote is between 0..16
-        let mut tmpPeriod = loPeriod + fineTune as u32 + ((arpNote as u32) << 5);
+        // arp_note is between 0..16
+        let mut tmp_period = lo_period + fine_tune as u32 + ((arp_note as u32) << 5);
 
-        let before_clamp = loPeriod;
+        let before_clamp = lo_period;
 
-        if tmpPeriod < 0 {// 8bitbubsy: added security check
-            tmpPeriod = 0;
+        // if tmp_period < 0 {// 8bitbubsy: added security check
+        //     tmp_period = 0;
+        // }
+
+        if tmp_period >= (8*12*16+15)*2-1 { // FT2 bug: off-by-one edge case
+            tmp_period = (8 * 12 * 16 + 15) * 2;
         }
 
-        if tmpPeriod >= (8*12*16+15)*2-1 { // FT2 bug: off-by-one edge case
-            tmpPeriod = (8 * 12 * 16 + 15) * 2;
-        }
-
-        return (note2Period[(tmpPeriod>>1) as usize], before_clamp);
+        return (note2period[(tmp_period >>1) as usize], before_clamp);
     }
 
 
     pub(crate) fn frequency(&self, period_shift: i16, semitone: bool, use_amiga: TableType) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
-        let mut period:i16 = 0;
+        let mut period:i16;
         if semitone {
-            period = self.relocateTon(self.period as u16, period_shift as u8, use_amiga);
-            // period = self.nearestSemiTone(self.period as u16, period_shift as u8, use_amiga);
+            period = self.relocate_ton(self.period as u16, period_shift as u8, use_amiga);
+            // period = self.nearest_semi_tone(self.period as u16, period_shift as u8, use_amiga);
         } else {
-            period = (self.period as i16 - (period_shift * 16 * 4) as i16) ;
+            period = self.period as i16 - (period_shift * 16 * 4) as i16;
         }
         if period < 0 {
             println!("{}, {}", self.period, period_shift);
@@ -547,8 +546,8 @@ impl Note {
         period = clamp(period, 0, 31999);
 
         return match use_amiga {
-            TableType::LinearFrequency => {LinearTables.dPeriod2HzTab[period as usize] as f32},
-            TableType::AmigaFrequency => {AmigaTables.dPeriod2HzTab[period as usize] as f32},
+            TableType::LinearFrequency => {LINEAR_TABLES.d_period2hz_tab[period as usize] as f32},
+            TableType::AmigaFrequency => {AMIGA_TABLES.d_period2hz_tab[period as usize] as f32},
         }
         // let two = 2.0f32;
         // let freq = 8363.0 * two.powf((6 * 12 * 16 * 4 - period) as f32 / (12 * 16 * 4) as f32);
@@ -568,8 +567,7 @@ impl Note {
 #[cfg(test)]
 mod tests {
     use crate::channel_state::channel_state::Note;
-    use crate::song::TableType;
-    use std::any::Any;
+    use crate::tables::TableType;
 
     #[test]
     fn test_glissando() {
@@ -581,11 +579,11 @@ mod tests {
                         note.set_note(note_idx, finetune << 3, *t);
 
                         if note_idx == 83 && finetune == 15 {
-                            let banana = true;
+                            let _banana = true;
                         }
 
-                        let actual = note.nearestSemiTone_test(note.period as u16, added_note, *t);
-                        let expected = note.relocateTon_test(note.period as u16, added_note, *t);
+                        let actual = note.nearest_semi_tone_test(note.period as u16, added_note, *t);
+                        let expected = note.relocate_ton_test(note.period as u16, added_note, *t);
                         println!("{}expected: {}, actual: {}, note {:3}, finetune {:3}, added_note:{:3}, {}, {}, {}, {}, {}",
                                  if expected.0 != actual.0 {"\x1b[38;2;255;0;0m"} else {""},
                                  expected.0, actual.0, note_idx, finetune, added_note, expected.0 != actual.0, actual.1, expected.1/2, expected.1/2 != actual.1, "\x1b[0m");
@@ -598,33 +596,33 @@ mod tests {
     }
 
     fn tremor_state(x: u8, y: u8, tick: i8) -> bool {
-        let mut tremorPos = 0u8;
+        let tremor_pos = 0u8;
 
-        let mut tremorSign = (tremorPos & 0x80);
-        let mut tremorData = (tremorPos & 0x7F) as i8;
+        let mut tremor_sign = tremor_pos & 0x80;
+        let mut tremor_data = (tremor_pos & 0x7F) as i8;
 
-        for i in 0..=tick {
-            tremorData -= 1;
-            if tremorData < 0
+        for _ in 0..=tick {
+            tremor_data -= 1;
+            if tremor_data < 0
             {
-                if tremorSign == 0x80
+                if tremor_sign == 0x80
                 {
-                    tremorSign = 0x00;
-                    tremorData = y as i8;
+                    tremor_sign = 0x00;
+                    tremor_data = y as i8;
                 } else {
-                    tremorSign = 0x80;
-                    tremorData = x as i8;
+                    tremor_sign = 0x80;
+                    tremor_data = x as i8;
                 }
             }
 
-            tremorPos = tremorSign | tremorData as u8;
+            // tremor_pos = tremor_sign | tremor_data as u8;
         }
-        tremorSign == 0x80
+        tremor_sign == 0x80
     }
 
     fn my_tremor(x: u8, y: u8, tick: i8) -> bool {
         let mut tremor_count = 0;
-        for i in 0..tick-1 {
+        for _ in 0..tick-1 {
             tremor_count += 1;
             tremor_count = tremor_count % (x + 1 + y + 1);
         }
@@ -705,11 +703,11 @@ impl Panning {
         }
     }
 
-    pub(crate) fn get_panning(&self) -> u8 {
-        // let outvol = self.volume as i32 + self.volume_shift;
-        // if outvol > 64 {64} else if outvol < 0 {0} else {outvol as u8}
-        0x80
-    }
+    // pub(crate) fn get_panning(&self) -> u8 {
+    //     // let outvol = self.volume as i32 + self.volume_shift;
+    //     // if outvol > 64 {64} else if outvol < 0 {0} else {outvol as u8}
+    //     0x80
+    // }
 
     pub(crate) fn set_panning(&mut self, panning: i32) {
         self.panning = clamp(panning , 0, 255) as u8;

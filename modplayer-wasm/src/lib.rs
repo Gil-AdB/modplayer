@@ -10,21 +10,19 @@ use std::sync::mpsc::{Receiver, Sender};
 use crossbeam::thread;
 // use getch::Getch;
 
-use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES, PCQHolder};
+use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue};
 use xmplayer::song::{Song, PlaybackCmd, PlayData};
 use xmplayer::module_reader::{read_module, SongData};
 use std::env;
-use std::sync::atomic::Ordering::Release;
-use std::time::{Duration, SystemTime};
-use std::io::{Read, ErrorKind, Error};
+use std::time::{Duration};
+use std::io::{Error};
 use std::thread::sleep;
-use std::io::{stdout, Write};
-use xmplayer::TripleBuffer::{TripleBuffer, State};
-use js_sys;
+use xmplayer::triple_buffer::{TripleBuffer};
+// use js_sys;
 
 #[cfg(feature="sdl2-feature")] use sdl2::audio::{AudioSpecDesired, AudioCallback};
 
-use xmplayer::TripleBuffer::State::STATE_NO_CHANGE;
+use xmplayer::triple_buffer::State::StateNoChange;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -48,7 +46,7 @@ pub fn main() {
 //     const SAMPLE_RATE: f32 = 48_000.0;
 //     let song_data = read_module(path.as_str()).unwrap();
 //
-//     let (mut triple_buffer_reader, mut triple_buffer_writer) = TripleBuffer::<PlayData>::new();
+//     let (mut triple_buffer_reader, mut triple_buffer_writer) = triple_buffer::<PlayData>::new();
 //
 //     let mut song = Song::new(&song_data, triple_buffer_writer, SAMPLE_RATE);
 //     let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
@@ -117,11 +115,11 @@ impl AudioCallback for AudioCB {
 // #[cfg(feature="sdl2-feature")] type ErrorType = Error;
 
 fn run(song_data : SongData) -> Result<(), Error> {
-    const CHANNELS: i32 = 2;
+    // const CHANNELS: i32 = 2;
     const NUM_SECONDS: i32 = 500;
     const SAMPLE_RATE: f32 = 48_000.0;
 
-    let (mut triple_buffer_reader, mut triple_buffer_writer) = TripleBuffer::<PlayData>::new();
+    let (mut triple_buffer_reader, triple_buffer_writer) = TripleBuffer::<PlayData>::new();
 
     let mut song = Song::new(&song_data, triple_buffer_writer, SAMPLE_RATE);
     let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
@@ -156,11 +154,12 @@ fn run(song_data : SongData) -> Result<(), Error> {
         let settings =
         pa.default_output_stream_settings(CHANNELS, SAMPLE_RATE as f64, (AUDIO_BUF_SIZE / 2) as u32)?;
 
-    let mut qclone = q.clone();
 
     // This routine will be called by the PortAudio engine when audio is needed. It may called at
     // interrupt level on some machines so don't do anything that could mess up the system like
     // dynamic resource allocation or IO.
+    #[cfg(feature="portaudio-feature")]
+        let mut qclone = q.clone();
     #[cfg(feature="portaudio-feature")]
         let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
         if frames != AUDIO_BUF_FRAMES {panic!("unexpected frame size: {}", frames);}
@@ -171,6 +170,8 @@ fn run(song_data : SongData) -> Result<(), Error> {
         }
     };
 
+    #[cfg(feature="sdl2-feature")]
+        let qclone = q.clone();
     #[cfg(feature="sdl2-feature")]
         let audio_output = audio.open_playback(None, &desired_spec, |spec| {
         AudioCB{ q: qclone }
@@ -207,7 +208,7 @@ fn run(song_data : SongData) -> Result<(), Error> {
                     }
                     sleep(Duration::from_millis(30));
                     let (play_data, state) = triple_buffer_reader.read();
-                    if STATE_NO_CHANGE == state { continue; }
+                    if StateNoChange == state { continue; }
                     if play_data.tick != song_tick || play_data.row != song_row {
                         // Display::display(play_data, 0);
                         song_row = play_data.row;
@@ -248,15 +249,15 @@ fn run(song_data : SongData) -> Result<(), Error> {
     Ok(())
 }
 
-fn is_num (ch: u8) -> bool {
-    ch >= '0' as u8 && ch <= '9' as u8
-}
+// fn is_num (ch: u8) -> bool {
+//     ch >= '0' as u8 && ch <= '9' as u8
+// }
 
-fn mainloop(tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
+fn mainloop(_tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
 
     // let getter = Getch::new();
-    let mut last_time = SystemTime::now();
-    let mut last_char = 0;
+    // let mut last_time = SystemTime::now();
+    // let mut last_char = 0;
 
     loop {
         if stopped.load(Ordering::Acquire) {break;}
@@ -264,6 +265,6 @@ fn mainloop(tx: Sender<PlaybackCmd>, stopped: Arc<AtomicBool>) {
         // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
         // let input = getter.getch();
         std::thread::sleep(std::time::Duration::from_secs(1));
-        last_time = SystemTime::now();
+        // last_time = SystemTime::now();
     }
 }

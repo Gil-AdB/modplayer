@@ -1,9 +1,7 @@
 use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume};
 use crate::instrument::{Instrument, Sample};
-use crate::pattern::Pattern;
-use crate::tables::{AMIGA_PERIODS, LINEAR_PERIODS};
+use crate::tables::{TableType};
 use crate::module_reader::{is_note_valid, SongData};
-use crate::song::TableType;
 
 pub(crate) mod channel_state;
 
@@ -25,26 +23,26 @@ impl SplineData {
             p3: 0.0
         }
     }
-    pub fn interpolate(&self, t: f32) -> f32 {
-        let p0 = self.p0;
-        let p1 = self.p1;
-        let p2 = self.p2;
-        let p3 = self.p3;
-
-        let c3 =      -p0 + 3.0 * p1 - 3.0 * p2 + p3;
-        let c2 = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
-        let c1 =      -p0                  + p2;
-        let c0 =                  p1;
-
-        0.5 * (((c3 * t + c2) * t) + c1) * t + c0
-    }
-    
-    pub fn push(&mut self, p: f32) {
-        self.p0 = self.p1;
-        self.p1 = self.p2;
-        self.p2 = self.p3;
-        self.p3 = p;
-    }
+    // pub fn interpolate(&self, t: f32) -> f32 {
+    //     let p0 = self.p0;
+    //     let p1 = self.p1;
+    //     let p2 = self.p2;
+    //     let p3 = self.p3;
+    //
+    //     let c3 =      -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+    //     let c2 = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
+    //     let c1 =      -p0                  + p2;
+    //     let c0 =                  p1;
+    //
+    //     0.5 * (((c3 * t + c2) * t) + c1) * t + c0
+    // }
+    //
+    // pub fn push(&mut self, p: f32) {
+    //     self.p0 = self.p1;
+    //     self.p1 = self.p2;
+    //     self.p2 = self.p3;
+    //     self.p3 = p;
+    // }
 }
 
 #[derive(Clone,Copy,Debug)]
@@ -268,7 +266,7 @@ impl ChannelState<'_> {
                 self.multi_retrig_volume = param & 0xf;
             }
         } else {
-            if self.multi_retrig_count != 0 && (tick % param as u32 == 0) {
+            if self.multi_retrig_count != 0 && (tick % self.multi_retrig_count as u32 == 0) {
 
                 let mut vol = self.voice.volume.volume;
                 match self.multi_retrig_volume
@@ -303,26 +301,24 @@ impl ChannelState<'_> {
             }
         }
 
-        let mut tremorPos = self.tremor_count;
+        let mut tremor_sign = self.tremor_count & 0x80;
+        let mut tremor_data = (self.tremor_count & 0x7F) as i8;
 
-        let mut tremorSign = (self.tremor_count & 0x80);
-        let mut tremorData = (self.tremor_count & 0x7F) as i8;
-
-        tremorData -= 1;
-        if tremorData < 0
+        tremor_data -= 1;
+        if tremor_data < 0
         {
-            if tremorSign == 0x80
+            if tremor_sign == 0x80
             {
-                tremorSign = 0x00;
-                tremorData = (self.tremor & 0xf) as i8;
+                tremor_sign = 0x00;
+                tremor_data = (self.tremor & 0xf) as i8;
             } else {
-                tremorSign = 0x80;
-                tremorData = (self.tremor >> 4) as i8;
+                tremor_sign = 0x80;
+                tremor_data = (self.tremor >> 4) as i8;
             }
         }
 
-        self.tremor_count = tremorSign | tremorData as u32;
-        self.on = tremorSign == 0x80;
+        self.tremor_count = tremor_sign | tremor_data as u32;
+        self.on = tremor_sign == 0x80;
 
         // if tick == 0 {
         //     if param != 0 {

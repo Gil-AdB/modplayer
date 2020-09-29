@@ -10,19 +10,22 @@ use std::sync::mpsc::{Receiver, Sender};
 use crossbeam::thread;
 use getch::Getch;
 
-use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES, PCQHolder};
+use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
+#[cfg(feature="sdl2-feature")]
+use xmplayer::producer_consumer_queue::{PCQHolder};
+#[cfg(feature="sdl2-feature")]
+use sdl2::Error;
+
 use xmplayer::song::{Song, PlaybackCmd, PlayData};
 use xmplayer::module_reader::{SongData, read_module, print_module};
 use std::env;
-use std::sync::atomic::Ordering::Release;
 use std::time::{Duration, SystemTime};
-use std::io::{Read, ErrorKind, Error};
 use std::thread::sleep;
 use std::io::{stdout, Write};
-use xmplayer::TripleBuffer::{TripleBuffer, State};
+use xmplayer::triple_buffer::{TripleBuffer};
 #[cfg(feature="sdl2-feature")] use sdl2::audio::{AudioSpecDesired, AudioCallback};
 
-use xmplayer::TripleBuffer::State::STATE_NO_CHANGE;
+use xmplayer::triple_buffer::State::StateNoChange;
 
 #[cfg(feature="portaudio-feature")] extern crate portaudio;
 #[cfg(feature="portaudio-feature")] use portaudio as pa;
@@ -34,13 +37,16 @@ mod display;
 
 fn main() {
     if env::args().len() < 2 {return;}
+
+	dbg!(env::args());
+
     let path = env::args().nth(1).unwrap();
     //let file = File::open(path).expect("failed to open the file");
 
     let data = read_module(path.as_str()).unwrap();
 
     if env::args().len() > 2 {
-        print_module(&data);
+        print_module(&data, env::args().skip(2));
     } else {
         run(data).unwrap();
     }
@@ -73,7 +79,7 @@ fn run(song_data : SongData) -> Result<(), ErrorType> {
     const NUM_SECONDS: i32 = 500;
     const SAMPLE_RATE: f32 = 48_000.0;
 
-    let (mut triple_buffer_reader, mut triple_buffer_writer) = TripleBuffer::<PlayData>::new();
+    let (mut triple_buffer_reader, triple_buffer_writer) = TripleBuffer::<PlayData>::new();
 
     let mut song = Song::new(&song_data, triple_buffer_writer, SAMPLE_RATE);
     let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
@@ -88,7 +94,7 @@ fn run(song_data : SongData) -> Result<(), ErrorType> {
     #[cfg(feature="portaudio-feature")]
     let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
     #[cfg(feature="portaudio-feature")]
-    let pa = match pa_result {
+    let _pa = match pa_result {
         Ok(p) => p,
         Err(e) => return Err(e),
     };
@@ -161,7 +167,7 @@ fn run(song_data : SongData) -> Result<(), ErrorType> {
                     }
                     sleep(Duration::from_millis(30));
                     let (play_data, state) = triple_buffer_reader.read();
-                    if STATE_NO_CHANGE == state { continue; }
+                    if StateNoChange == state { continue; }
                     if play_data.tick != song_tick || play_data.row != song_row {
                         Display::display(play_data, 0);
                         song_row = play_data.row;

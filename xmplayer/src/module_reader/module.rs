@@ -1,21 +1,16 @@
 pub(crate) mod module {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
     use std::fs::File;
-    use std::io::{BufReader, Read, Seek, SeekFrom, Error, ErrorKind};
+    use std::io::{BufReader, Read, Seek, SeekFrom};
     use crate::io_helpers::{read_string, read_bytes};
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
-    use crate::envelope::Envelope;
     use crate::io_helpers as fio;
     use crate::channel_state::channel_state::{clamp};
-    use crate::song::TableType::AmigaFrequency;
-    use crate::song::PlaybackCmd::AmigaTable;
     use crate::tables::AMIGA_PERIOD;
     use simple_error::{SimpleError, SimpleResult};
     use std::io;
-    use byteorder::ReadBytesExt;
-    use std::cmp::max;
 
     pub fn read_mod(path: &str) -> SimpleResult<SongData> {
         let f = File::open(path).expect("failed to open the file");
@@ -33,11 +28,14 @@ pub(crate) mod module {
         song_data
     }
 
-    fn read_mod_header<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData>
+    fn read_mod_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     {
-        let mut num_channels = 0;
+        let num_channels;
 
-        file.seek(SeekFrom::Start(1080));
+        match file.seek(SeekFrom::Start(1080)) {
+            Ok(..) => {}
+            Err(e) => return Err(SimpleError::from(e))
+        }
 
         let id = read_bytes(file, 4);
 
@@ -56,7 +54,10 @@ pub(crate) mod module {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Not a mod file")));
         }
 
-        file.seek(SeekFrom::Start(0));
+        match file.seek(SeekFrom::Start(0)) {
+            Ok(_) => {}
+            Err(e) => return Err(SimpleError::from(e))
+        }
 
         let name = read_string(file, 20);
 
@@ -129,12 +130,12 @@ pub(crate) mod module {
         patterns.reserve_exact(pattern_count as usize);
 
         for _pattern_idx in 0..pattern_count {
-            let ROW_COUNT = 64;
+            let row_count = 64;
 
             let mut rows: Vec<Row> = vec![];
-            rows.reserve_exact(ROW_COUNT as usize);
+            rows.reserve_exact(row_count as usize);
 
-            for _row_idx in 0..ROW_COUNT {
+            for _row_idx in 0..row_count {
                 let mut channels: Vec<Pattern> = vec![];
                 channels.reserve_exact(channel_count);
 
@@ -216,7 +217,7 @@ pub(crate) mod module {
 
     fn read_sample<R: Read>(file: &mut R) -> Sample {
         let name = fio::read_string(file, 22);
-        let mut length = fio::read_u16_be(file) * 2;
+        let length = fio::read_u16_be(file) * 2;
         let ft = fio::read_u8(file) & 0xf;
         let sign = ((ft >> 3) * 0xF0) as i8;
         let mut finetune= ft as i8 | sign;
@@ -269,14 +270,14 @@ pub(crate) mod module {
 
     fn read_instruments<R: Read + Seek>(file: &mut R) -> Vec<Instrument> {
         let mut instruments: Vec<Instrument> = vec![];
-        let INSTRUMENT_COUNT = 31;
+        let instrument_count = 31;
 
         // Instruments are one based, go figure. We'll add an empty instrument as sample 0.
-        instruments.reserve_exact(INSTRUMENT_COUNT + 1 as usize);
+        instruments.reserve_exact(instrument_count + 1 as usize);
 
         instruments.push(Instrument::new());
 
-        for instrument_idx in 1..INSTRUMENT_COUNT+1 {
+        for instrument_idx in 1..instrument_count +1 {
             let mut instrument = Instrument::new();
             let sample = read_sample(file);
             instrument.name = sample.name.clone();

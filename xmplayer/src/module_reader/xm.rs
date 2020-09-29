@@ -1,6 +1,5 @@
 pub(crate) mod xm {
     use std::io::{Read, Seek, SeekFrom, BufReader};
-    use std::error::Error;
     use core::result::Result::{Err, Ok};
     use crate::module_reader::{Patterns, Row, SongData, SongType, FrequencyType};
     use crate::io_helpers;
@@ -279,7 +278,7 @@ pub(crate) mod xm {
 
         let bpm = io_helpers::read_u16(file);
         dbg!(bpm);
-        let mut stream_position = 0;
+        let stream_position;
         if let Ok(pos) = file.stream_position() { stream_position = pos; } else { stream_position = 20 }
 
         let mut pattern_order = io_helpers::read_bytes(file, (60 + header_size - stream_position as u32) as usize);

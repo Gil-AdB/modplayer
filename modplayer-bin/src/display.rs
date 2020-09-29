@@ -6,16 +6,16 @@ use std::cmp::max;
 
 #[derive(Copy, Clone)]
 struct RGB {
-    R: u8,
-    G: u8,
-    B: u8,
+    r: u8,
+    g: u8,
+    b: u8,
 }
 
 pub(crate) struct Display {}
 
 impl Display {
     fn color(color: RGB, str: &str) -> String {
-        format!("\x1b[38;2;{};{};{}m{}", color.R, color.G, color.B, str)
+        format!("\x1b[38;2;{};{};{}m{}", color.r, color.g, color.b, str)
     }
 
     fn range(pos: u32, start: u32, end: u32, width: usize) -> String {
@@ -24,11 +24,11 @@ impl Display {
         if indicator_pos > width {
             indicator_pos = width;
         }
-        for i in 0..indicator_pos {
+        for _ in 0..indicator_pos {
             result += "-";
         }
         result += "=";
-        for i in indicator_pos + 1..(width + 1) as usize {
+        for _ in indicator_pos + 1..(width + 1) as usize {
             result += "-";
         }
         result
@@ -37,7 +37,7 @@ impl Display {
     fn range_with_color(pos: u32, start: u32, end: u32, width: usize, colors: &[RGB]) -> String {
         let mut result: String = String::from("");
         if pos == 0 {
-            for i in 0..width + 1 {
+            for _ in 0..width + 1 {
                 result += " ";
             }
             return result;
@@ -51,7 +51,7 @@ impl Display {
             result += &*Self::color(colors[i], "=");
         }
         result += &*Self::color(colors[indicator_pos], "=");
-        for i in indicator_pos + 1..(width + 1) as usize {
+        for _ in indicator_pos + 1..(width + 1) as usize {
             result += " "; //&*Self::color(colors[i], "-");
         }
         result += "\x1b[0m";
@@ -59,22 +59,22 @@ impl Display {
     }
 
 
-    pub(crate) fn display(play_data: &PlayData, cur_tick: usize) {
+    pub(crate) fn display(play_data: &PlayData, _cur_tick: usize) {
         let colors: [RGB; 12] = [
-            RGB { R: 0, G: 120, B: 0 },
-            RGB { R: 0, G: 140, B: 0 },
-            RGB { R: 0, G: 160, B: 0 },
-            RGB { R: 0, G: 180, B: 0 },
-            RGB { R: 180, G: 180, B: 0 },
-            RGB { R: 195, G: 195, B: 0 },
-            RGB { R: 210, G: 210, B: 0 },
-            RGB { R: 225, G: 225, B: 0 },
-            RGB { R: 225, G: 64, B: 0 },
-            RGB { R: 225, G: 64, B: 0 },
-            RGB { R: 225, G: 64, B: 0 },
-            RGB { R: 225, G: 64, B: 0 },
+            RGB { r: 0, g: 120, b: 0 },
+            RGB { r: 0, g: 140, b: 0 },
+            RGB { r: 0, g: 160, b: 0 },
+            RGB { r: 0, g: 180, b: 0 },
+            RGB { r: 180, g: 180, b: 0 },
+            RGB { r: 195, g: 195, b: 0 },
+            RGB { r: 210, g: 210, b: 0 },
+            RGB { r: 225, g: 225, b: 0 },
+            RGB { r: 225, g: 64, b: 0 },
+            RGB { r: 225, g: 64, b: 0 },
+            RGB { r: 225, g: 64, b: 0 },
+            RGB { r: 225, g: 64, b: 0 },
         ];
-        let first_tick = play_data.tick == 0;
+        // let first_tick = play_data.tick == 0;
         if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0,0)) {}
         println!("duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}",
                  play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,

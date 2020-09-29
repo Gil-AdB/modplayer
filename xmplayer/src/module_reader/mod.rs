@@ -1,19 +1,15 @@
+use std::fmt;
+use simple_error::SimpleResult;
+use crate::instrument::{Instrument};
+use crate::module_reader::module::module::read_mod;
+use crate::module_reader::s3m::s3m::read_s3m;
+use crate::module_reader::xm::xm::read_xm;
+use crate::pattern::Pattern;
+use std::path::Iter;
+
 mod xm;
 mod module;
 mod s3m;
-
-use std::fmt;
-use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom, Error, ErrorKind};
-use std::iter::FromIterator;
-use crate::module_reader::xm::xm::read_xm;
-use crate::module_reader::module::module::read_mod;
-use crate::envelope::{Envelope, EnvelopePoint, EnvelopePoints};
-use crate::instrument::{Instrument, LoopType, Sample};
-use crate::io_helpers as fio;
-use crate::pattern::Pattern;
-use simple_error::SimpleResult;
-use crate::module_reader::s3m::s3m::read_s3m;
 
 #[derive(Debug)]
 enum SongType {
@@ -100,6 +96,7 @@ pub struct SongData {
 
 
 pub fn read_module(path: &str) -> SimpleResult<SongData> {
+
     match read_xm(path) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
@@ -113,10 +110,12 @@ pub fn read_module(path: &str) -> SimpleResult<SongData> {
     read_s3m(path)
 }
 
-pub fn print_module(data: &SongData) {
-    dbg!(&data.patterns[data.pattern_order[0] as usize]);
+pub fn print_module(_data: &SongData, patterns: impl Iterator<Item = String>) {
+    for pattern in patterns {
+        dbg!(&_data.patterns[_data.pattern_order[pattern.parse::<usize>().unwrap()] as usize]);
+    }
     // println!("=====================================================================");
-    dbg!(&data.patterns[data.pattern_order[1] as usize]);
+    // dbg!(&data.patterns[data.pattern_order[1] as usize]);
 }
 
 
