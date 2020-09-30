@@ -155,14 +155,17 @@ impl ChannelState<'_> {
     }
 
     pub(crate) fn key_off(&mut self, is_note_delay: bool) -> bool {
-        if self.voice.instrument.volume_envelope.on && self.volume_envelope_state.frame >= self.voice.instrument.volume_envelope.points[self.volume_envelope_state.idx].frame {
-            if self.volume_envelope_state.idx > 0 {
-                self.volume_envelope_state.frame = self.voice.instrument.volume_envelope.points[self.volume_envelope_state.idx].frame - 1;
-                self.volume_envelope_state.idx -= 1;
-            }
-            self.volume_envelope_state.sustained = false;
-        }
+        // if self.voice.instrument.volume_envelope.on && self.voice.instrument.volume_envelope.
+        //     self.volume_envelope_state.frame >= self.voice.instrument.volume_envelope.points[self.volume_envelope_state.idx].frame {
+        //     if self.volume_envelope_state.idx > 0 {
+        //         self.volume_envelope_state.frame = self.voice.instrument.volume_envelope.points[self.volume_envelope_state.idx].frame - 1;
+        //         self.volume_envelope_state.idx -= 1;
+        //     }
+        //     self.volume_envelope_state.sustained = false;
+        // }
 
+        self.volume_envelope_state.key_off(&self.voice.instrument.volume_envelope);
+        self.panning_envelope_state.key_off(&self.voice.instrument.panning_envelope);
         self.voice.key_off(is_note_delay)
     }
 
@@ -370,7 +373,7 @@ impl ChannelState<'_> {
             if speed != 0 {
                 self.last_fine_volume_slide_up = speed;
             }
-            self.volume_slide(first_tick, self.last_fine_volume_slide_up as i8);
+            self.fine_volume_slide(first_tick, self.last_fine_volume_slide_up as i8);
         }
     }
 
@@ -379,7 +382,7 @@ impl ChannelState<'_> {
             if speed != 0 {
                 self.last_fine_volume_slide_down = speed;
             }
-            self.volume_slide(first_tick, -(self.last_fine_volume_slide_down as i8));
+            self.fine_volume_slide(first_tick, -(self.last_fine_volume_slide_down as i8));
         }
     }
 
@@ -441,8 +444,8 @@ impl ChannelState<'_> {
             }
         } else {
             self.note.period -= self.last_porta_up as i16;
-            if self.note.period < 1 {
-                self.note.period = 1;
+            if self.note.period < 0 {
+                self.note.period = 0;
             }
             self.update_frequency(rate, false, use_amiga);
         }

@@ -5,6 +5,7 @@ use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 
 pub trait BinaryReader {
     fn read_string  (&mut self, size: usize) -> String;
+    fn read_byte    (&mut self) -> u8;
     fn read_u8      (&mut self) -> u8;
     fn read_i8      (&mut self) -> i8;
     fn read_u16     (&mut self) -> u16;
@@ -24,6 +25,10 @@ impl<R: Read> BinaryReader for R {
     }
 
     fn read_u8(&mut self) -> u8 {
+        read_u8(self)
+    }
+
+    fn read_byte(&mut self) -> u8 {
         read_u8(self)
     }
 

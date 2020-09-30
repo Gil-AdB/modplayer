@@ -5,17 +5,20 @@ use crate::module_reader::module::module::read_mod;
 use crate::module_reader::s3m::s3m::read_s3m;
 use crate::module_reader::xm::xm::read_xm;
 use crate::pattern::Pattern;
-use std::path::Iter;
+use crate::channel_state::channel_state::clamp;
+use crate::module_reader::stm::stm::read_stm;
 
 mod xm;
 mod module;
 mod s3m;
+mod stm;
 
 #[derive(Debug)]
 enum SongType {
     XM,
     MOD,
-    S3M
+    S3M,
+    STM
 }
 
 #[derive(Debug)]
@@ -78,7 +81,7 @@ impl Patterns {
 #[derive(Debug)]
 pub struct SongData {
                     id:                 String,
-                    name:               String,
+                    pub(crate) name:               String,
                     song_type:          SongType,
                     tracker_name:       String,
     pub(crate)      song_length:        u16,
@@ -107,6 +110,11 @@ pub fn read_module(path: &str) -> SimpleResult<SongData> {
         Err(_) => {},
     }
 
+    match read_stm(path) {
+        Ok(module) => {return Ok(module)},
+        Err(_) => {},
+    }
+
     read_s3m(path)
 }
 
@@ -119,3 +127,16 @@ pub fn print_module(_data: &SongData, patterns: impl Iterator<Item = String>) {
 }
 
 
+fn c2spd_to_finetune_relnote(c2spd: u32) -> (i8, i8) {
+    let finetune;
+    let mut relative_note;
+
+    let d_freq = (c2spd as f64 / 8363.0).log2() * (12.0 * 128.0);
+    let linear_freq = (d_freq + 0.5) as i32; // rounded
+    finetune = (((linear_freq + 128) & 255) - 128) as i8;
+
+    relative_note = ((linear_freq - finetune as i32) >> 7) as i8;
+    relative_note = clamp(relative_note, -48, 71);
+
+    (finetune, relative_note)
+}

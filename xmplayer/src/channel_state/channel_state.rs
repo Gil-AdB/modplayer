@@ -185,6 +185,13 @@ impl EnvelopeState {
         EnvelopeState { frame: 0, sustained: false, idx: 0 }
     }
 
+    pub(crate) fn key_off(&mut self, env: &Envelope) {
+        if env.sustain && env.has_loop && env.loop_end_point == env.sustain_point {
+            self.idx = env.loop_start_point as usize;
+            self.frame = env.points[self.idx].frame;
+        }
+    }
+
     pub(crate) fn handle(&mut self, env: &Envelope, channel_sustained: bool, default: u16, sticky_sustain: bool) -> u16 {
         if !env.on || env.size < 1 { return default * 256;} // bail out
 
@@ -192,7 +199,6 @@ impl EnvelopeState {
             return env.points[0].value * 256
         }
 
-//        && (!env.sustain || channel_sustained)
         // loop
         if  (!env.sustain || channel_sustained) && env.has_loop && self.frame == env.points[env.loop_end_point as usize].frame {
             // self.looped = true;

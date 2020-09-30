@@ -159,6 +159,7 @@ pub struct ChannelStatus<'a> {
 
 #[derive(Clone)]
 pub struct PlayData<'a> {
+    pub name:                               String,
     pub tick_duration_in_frames:            usize,
     pub tick_duration_in_ms:                f32,
     pub tick:                               u32,
@@ -175,6 +176,7 @@ pub struct PlayData<'a> {
 impl Init for PlayData<'_> {
     fn new() -> Self {
         Self{
+            name: "".to_string(),
             tick_duration_in_frames: 0,
             tick_duration_in_ms: 0.0,
             tick: 0,
@@ -192,6 +194,7 @@ impl Init for PlayData<'_> {
 
 // const BUFFER_SIZE: usize = 4096;
 pub struct Song<'a> {
+    name:                       String,
     song_position:              usize,
     row:                        usize,
     tick:                       u32,
@@ -230,6 +233,7 @@ impl<'a> Song<'a> {
 
     pub fn new(song_data: &'a SongData, triple_buffer_writer: TripleBufferWriter<PlayData<'a>>, sample_rate: f32) -> Song<'a> {
         Song {
+            name: song_data.name.clone(),
             song_position: 0,
             row: 0,
             tick: 0,
@@ -301,6 +305,7 @@ impl<'a> Song<'a> {
     fn queue_display(&mut self) {
         let play_data = self.triple_buffer_writer.write();
 
+        play_data.name                      = self.name.clone();
         play_data.tick_duration_in_frames   = self.bpm.tick_duration_in_frames;
         play_data.tick_duration_in_ms       = self.bpm.tick_duration_in_ms;
         play_data.tick                      = self.tick;
@@ -687,25 +692,8 @@ impl<'a> Song<'a> {
 
 
 
-            // let mut ves = channel.volume_envelope_state;
-
-
             let envelope_volume = channel.volume_envelope_state.handle(&channel.voice.instrument.volume_envelope, channel.voice.sustained, 64, false);
 
-            // if i == 7 && self.song_position == 8 && channel.volume_envelope_state.sustained == false {
-            //     let _test = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
-            //     let _banana = 1;
-            // }
-            //
-            // if self.song_position == 8 && i == 7 && envelope_volume == 0 {
-            //     let _test = ves.handle(&channel.instrument.volume_envelope, channel.sustained, 64);
-            //     let _banana = 1;
-            // }
-
-            // let envelope_volume1 = ves.handle1(&channel.instrument.volume_envelope, channel.sustained, 64);
-            // if envelope_volume != envelope_volume1 {
-            //     let banana = 1;
-            // }
             let mut envelope_panning = channel.panning_envelope_state.handle(&channel.voice.instrument.panning_envelope, channel.voice.sustained, 32, true);
             // let scale = 0.9;
             envelope_panning = clamp(envelope_panning, 0, 64 * 256);

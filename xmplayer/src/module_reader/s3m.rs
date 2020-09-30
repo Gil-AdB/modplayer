@@ -6,9 +6,9 @@ pub(crate) mod s3m {
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
-    use crate::channel_state::channel_state::{clamp};
     use simple_error::{SimpleError, SimpleResult};
     use std::io;
+    use crate::module_reader;
 
     pub fn read_s3m(path: &str) -> SimpleResult<SongData> {
         let f = File::open(path).expect("failed to open the file");
@@ -71,11 +71,11 @@ pub(crate) mod s3m {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - patterns"))); // Simple how exactly?
         }
 
-        let flags = file.read_u16();
+        let _flags = file.read_u16();
 
-        let cwtv = file.read_u16();
+        let _cwtv = file.read_u16();
 
-        let signed_samples = file.read_u16();
+        let _signed_samples = file.read_u16();
 
         let signature = file.read_string(4);
 
@@ -83,17 +83,17 @@ pub(crate) mod s3m {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - signature"))); // Simple how exactly?
         }
 
-        let global_volume = file.read_u8();
+        let _global_volume = file.read_u8();
 
         let speed = file.read_u8();
 
         let bpm = file.read_u8();
 
-        let master_volume = file.read_u8();
+        let _master_volume = file.read_u8();
 
         let _ = file.read_u8();
 
-        let default_panning = file.read_u8();
+        let _default_panning = file.read_u8();
 
         file.seek(SeekFrom::Current(10)).unwrap();
 
@@ -459,8 +459,8 @@ pub(crate) mod s3m {
         for (instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
             let mut instrument = Instrument::new();
             file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16)).unwrap();
-            let type_ = read_u8(file);
-            let dos_name = read_string(file,12);
+            let _type_ = read_u8(file);
+            let _dos_name = read_string(file,12);
             let sample_ptr = read_u24(file);
             let sample_len = read_u32(file) & 0xFFFF;
             let sample_loop_start = read_u32(file) & 0xFFFF;
@@ -480,7 +480,7 @@ pub(crate) mod s3m {
 //                panic!("unknown sample format!");
             }
 
-            let (finetune, relative_note) = c2spd_to_finetune_relnote(c2spd);
+            let (finetune, relative_note) = module_reader::c2spd_to_finetune_relnote(c2spd);
 
             let mut sample = Sample{
                 length: sample_len,
@@ -503,19 +503,5 @@ pub(crate) mod s3m {
             instruments.push(instrument);
         }
         instruments
-    }
-
-    fn c2spd_to_finetune_relnote(c2spd: u32) -> (i8, i8) {
-        let finetune;
-        let mut relative_note;
-
-        let d_freq = (c2spd as f64 / 8363.0).log2() * (12.0 * 128.0);
-        let linear_freq = (d_freq + 0.5) as i32; // rounded
-        finetune = (((linear_freq + 128) & 255) - 128) as i8;
-
-        relative_note = ((linear_freq - finetune as i32) >> 7) as i8;
-        relative_note = clamp(relative_note, -48, 71);
-
-        (finetune, relative_note)
     }
 }

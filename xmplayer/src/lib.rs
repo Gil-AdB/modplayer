@@ -1,5 +1,4 @@
 #![feature(generators, generator_trait)]
-#![feature(vec_drain_as_slice)]
 #![feature(slice_fill)]
 #![feature(const_fn)]
 #![feature(seek_convenience)]

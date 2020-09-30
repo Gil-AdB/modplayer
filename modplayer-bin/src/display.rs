@@ -76,7 +76,7 @@ impl Display {
         ];
         // let first_tick = play_data.tick == 0;
         if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0,0)) {}
-        println!("duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}",
+        println!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
                  play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
                  play_data.pattern_len - 1,
                  play_data.bpm, play_data.speed,
