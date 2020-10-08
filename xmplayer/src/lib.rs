@@ -3,6 +3,7 @@
 #![feature(const_fn)]
 #![feature(seek_convenience)]
 #![feature(box_syntax)]
+#![feature(in_band_lifetimes)]
 #[macro_use]
 extern crate lazy_static;
 extern crate simple_error;

@@ -24,6 +24,7 @@ use xmplayer::triple_buffer::{TripleBuffer};
 
 use xmplayer::triple_buffer::State::StateNoChange;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::__rt::std::sync::Mutex;
 
 #[wasm_bindgen]
 pub fn main() {
@@ -114,20 +115,25 @@ impl AudioCallback for AudioCB {
 // #[cfg(feature="portaudio-feature")] type ErrorType = pa::Error;
 // #[cfg(feature="sdl2-feature")] type ErrorType = Error;
 
+fn unbox<T>(value: Box<T>) -> T {
+    *value
+}
+
 fn run(song_data : SongData) -> Result<(), Error> {
     // const CHANNELS: i32 = 2;
     const NUM_SECONDS: i32 = 500;
     const SAMPLE_RATE: f32 = 48_000.0;
 
-    let (mut triple_buffer_reader, triple_buffer_writer) = TripleBuffer::<PlayData>::new();
+    let triple_buffer= TripleBuffer::<PlayData>::new();
+    let (mut triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
 
-    let mut song = Song::new(&song_data, triple_buffer_writer, SAMPLE_RATE);
+    let mut song = Song::new(song_data, triple_buffer_writer, SAMPLE_RATE);
     let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
 
 
     let mut temp_buf = [0.0f32; AUDIO_BUF_SIZE];
     let buf_ref = Arc::new(AtomicPtr::new(&mut temp_buf as *mut [f32; AUDIO_BUF_SIZE]));
-    let mut generator = song.get_next_tick_callback(buf_ref.clone(), rx);
+    let mut generator = song.get_next_tick_callback(buf_ref.clone(), Arc::new(Mutex::new(rx)));
 
     let q = ProducerConsumerQueue::new();
 

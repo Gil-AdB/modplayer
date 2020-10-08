@@ -1,7 +1,7 @@
 use std::fmt;
 use std::string::ToString;
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub(crate) struct Pattern {
     pub(crate) note: u8,
     pub(crate) instrument: u8,

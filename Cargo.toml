@@ -1,5 +1,5 @@
 [workspace]
-members = ["xmplayer", "modplayer-bin", "modplayer-wasm"]
+members = ["xmplayer", "modplayer-bin"]
 
 # uncomment for termux
 #[patch.crates-io]
