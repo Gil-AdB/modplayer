@@ -7,7 +7,6 @@ use std::thread::sleep;
 
 pub(crate) mod channel_state;
 
-
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct SplineData {
     p0: f32,

@@ -33,7 +33,7 @@ pub struct SongState {
     stopped:                            Arc<AtomicBool>,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
     song_data:                          SongData,
-    song:                               Arc<Mutex<Song>>,
+    pub song:                               Arc<Mutex<Song>>,
     tx:                                 Sender<PlaybackCmd>,
     rx:                                 Arc<Mutex<Receiver<PlaybackCmd>>>,
     q:                                  PCQHolder,

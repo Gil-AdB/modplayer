@@ -11,11 +11,6 @@ use std::sync::mpsc::{Receiver, Sender};
 use crossbeam::thread;
 use getch::Getch;
 
-use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
-// #[cfg(feature="sdl2-feature")]
-use xmplayer::producer_consumer_queue::{PCQHolder};
-
-
 use xmplayer::song::{Song, PlaybackCmd, PlayData, CallbackState};
 use xmplayer::module_reader::{SongData, read_module, print_module};
 use std::env;

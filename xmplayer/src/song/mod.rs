@@ -416,6 +416,59 @@ impl Song {
         }
     }
 
+    pub fn get_next_tick_slice(&mut self, buf: &mut [f32], rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
+        buf.fill(0.0);
+        self.bpm.update(self.bpm.bpm, self.rate);
+        // let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
+        loop { // loop1
+            match self.tick_state.state {
+                BufferState::Start => {
+                    if !self.handle_commands(rx) { return CallbackState::Complete; }
+
+                    if self.pause {
+                        //let temp_buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
+
+
+                        self.tick_state.current_buf_position = 0;
+                        return CallbackState::Ok;
+                    }
+
+                    self.process_tick();
+
+                    if self.display {
+                        self.queue_display();
+                    }
+
+                    self.tick_state.current_tick_position = 0usize;
+                    self.tick_state.state = BufferState::FillBuffer
+                }
+                BufferState::FillBuffer => {
+                    while self.tick_state.current_tick_position < self.bpm.tick_duration_in_frames {
+                        let ticks_to_generate = min(self.bpm.tick_duration_in_frames - self.tick_state.current_tick_position,
+                                                    AUDIO_BUF_FRAMES - self.tick_state.current_buf_position);
+
+                        // if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
+                        self.output_channels_slice(self.tick_state.current_buf_position, buf, ticks_to_generate);
+                        self.tick_state.current_tick_position += ticks_to_generate;
+                        self.tick_state.current_buf_position += ticks_to_generate;
+                        // println!("tick: {}, buf: {}, row: {}", self.tick, current_buf_position, self.row);
+                        if self.tick_state.current_buf_position == AUDIO_BUF_FRAMES {
+                            self.tick_state.current_buf_position = 0;
+                            return CallbackState::Ok;
+                        } else {
+                            // We finished current with the current tick, but buffer is still not full...
+                        }
+                    }
+                    self.tick_state.state = BufferState::NextTick
+                }
+                BufferState::NextTick => {
+                    if !self.next_tick() { return CallbackState::Complete; }
+                    self.tick_state.state = BufferState::Start
+                }
+            }
+        }
+    }
+
     fn handle_commands(&mut self, rx: & Receiver<PlaybackCmd>) -> bool {
         loop {
             if let Ok(cmd) = rx.try_recv() {
@@ -837,4 +890,88 @@ impl Song {
             }
         }
     }
+
+    fn output_channels_slice(&mut self, current_buf_position: usize, buf: &mut [f32], ticks_to_generate: usize) {
+        // let mut  idx: u32 = 0;
+
+        // let onecc = 1.0f32;// / cc as f32;
+        // FT2 quirk: global volume is used at channel volume calculation time, not at mixing time
+        //let global_volume = self.volume as f32 / 64.0 ;
+        // println!("position: {:3}, row: {:3}", self.song_position, self.row);
+
+
+        for channel in &mut self.channels {
+
+            // idx = idx + 1;
+//            if idx != 1  {continue;}
+            if !channel.on || channel.force_off {
+                continue;
+            }
+
+            // print!("channel_state: {}, instrument: {}, frequency: {}, volume: {}\n", idx, channel_state.instrument.name, channel_state.frequency, channel_state.volume);
+
+            let sample = self.song_data.get_sample(channel);
+
+            let vol_right = PANNING_TAB[      channel.panning.final_panning as usize] as f32 / 65536.0;
+            let vol_left  = PANNING_TAB[256 - channel.panning.final_panning as usize] as f32 / 65536.0;
+            for i in 0..ticks_to_generate as usize {
+
+                if channel.voice.sample_position as u32 >= sample.length { // we could have this after set sample position
+                    channel.on = false;
+                    break;
+                }
+
+                let sample_data = sample.data[channel.voice.sample_position as usize];
+                let out_sample: f32 = if self.filter {
+                    Self::lerp(channel.voice.sample_position, sample_data, sample.data[channel.voice.sample_position as usize + 1])
+                } else {
+                    sample_data
+                };
+                // channel.last_sample = sample_data;
+                // channel.last_sample_pos = channel.sample_position;
+
+                buf[(current_buf_position + i) * 2 + 0] +=  vol_left * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
+                buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
+
+                // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
+                if sample.loop_type == LoopType::PingPongLoop && !channel.voice.ping {
+                    channel.voice.sample_position -= channel.voice.du;
+                } else {
+                    channel.voice.sample_position += channel.voice.du;
+                }
+
+                if channel.voice.sample_position as u32 >= sample.length ||
+                    (sample.loop_type != LoopType::NoLoop && channel.voice.sample_position >= sample.loop_end as f32) {
+                    channel.voice.loop_started = true;
+                    match sample.loop_type {
+                        LoopType::PingPongLoop => {
+                            channel.voice.sample_position = (sample.loop_end - 1) as f32 - (channel.voice.sample_position - sample.loop_end as f32);
+                            channel.voice.ping = false;
+                            // channel_state.sample_position = (channel_state.sample.loop_end - 1) as f32;
+                            // channel_state.du = -channel_state.du;
+                        }
+                        LoopType::NoLoop => {
+                            channel.on = false;
+                            channel.voice.volume.set_volume(0);
+                            break;
+                        }
+                        LoopType::ForwardLoop => {
+                            channel.voice.sample_position = (channel.voice.sample_position - sample.loop_end as f32) + sample.loop_start as f32;
+                        }
+                    }
+                }
+
+                if channel.voice.loop_started && channel.voice.sample_position < sample.loop_start as f32 {
+                    match sample.loop_type {
+                        LoopType::PingPongLoop => {
+                            channel.voice.ping = true;
+                        }
+                        _ => {}
+                    }
+                    channel.voice.sample_position = sample.loop_start as f32 + (sample.loop_start as f32 - channel.voice.sample_position) as f32;
+                }
+            }
+        }
+    }
+
 }
