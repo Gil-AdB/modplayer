@@ -39,14 +39,14 @@ pub fn main() {
     let audio = sdl_context.audio().unwrap();
 
     let desired_spec = AudioSpecDesired {
-        freq: Some(44100 as i32),
+        freq: Some(48000 as i32),
         channels: Some(2),
         samples: Some(1024 as u16)
     };
 
     println!("1");
 
-    let mut song = SongState::new("/modplayer-wasm/src/static/thraddash.mod".to_string());
+    let mut song = SongState::new("/modplayer-wasm/src/static/gateways_part_ii.xm".to_string());
     println!("2");
 
     // let handle = song.get().start(44100.0, |data| {
