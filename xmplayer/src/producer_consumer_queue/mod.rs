@@ -76,7 +76,7 @@ impl ProducerConsumerQueue {
         self.full_count.signal();
     }
 
-    pub fn produce<F: FnMut(&mut[f32; AUDIO_BUF_SIZE]) -> bool>(&mut self, mut f: F) -> bool {
+    pub fn produce<F: FnMut(&mut[f32]) -> bool>(&mut self, mut f: F) -> bool {
         loop {
             self.empty_count.wait();
             if self.stopped.load(Acquire) == true {
@@ -89,7 +89,7 @@ impl ProducerConsumerQueue {
         }
     }
 
-    pub fn consume<F: FnMut(&[f32; AUDIO_BUF_SIZE])>(&mut self, mut f: F) -> bool {
+    pub fn consume<F: FnMut(&[f32])>(&mut self, mut f: F) -> bool {
         self.full_count.wait();
         if self.stopped.load(Acquire) == true {
             return false;

@@ -1,7 +1,7 @@
-mod emscripten_boilerplate;
 extern crate sdl2;
 extern crate xmplayer;
 
+mod emscripten_boilerplate;
 
 use emscripten_boilerplate::{setup_mainloop, emscripten_cancel_main_loop};
 use sdl2::pixels::Color;
@@ -24,13 +24,10 @@ impl AudioCallback for AudioCB {
     type Channel = f32;
 
     fn callback(&mut self, out: &mut [f32]) {
-        // if out.len() != AUDIO_BUF_SIZE {panic!("unexpected frame size: {}", out.len());}
         let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
         let mut song = self.q.get().song.lock().unwrap();
 
-        song.get_next_tick_slice(out, &mut rx);
-
-        // self.q.get().get_queue().get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { out.clone_from_slice(buf); });
+        song.get_next_tick(out, &mut rx);
     }
 }
 

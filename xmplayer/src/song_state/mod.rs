@@ -75,7 +75,7 @@ impl SongState {
     fn callback(&mut self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();
-        self.q.get().produce(|buf: &mut [f32; AUDIO_BUF_SIZE]| -> bool {
+        self.q.get().produce(|buf: &mut [f32]| -> bool {
             if let CallbackState::Complete = song.get_next_tick(buf, rx.deref_mut()) { return false; }
             true
         });
