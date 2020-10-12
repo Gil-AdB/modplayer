@@ -416,6 +416,11 @@ impl Song {
     //     }
     // }
 
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.rate = sample_rate;
+    }
+
+
     pub fn get_next_tick(&mut self, buf: &mut [f32], rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
         buf.fill(0.0);
         self.bpm.update(self.bpm.bpm, self.rate);
