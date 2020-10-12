@@ -14,7 +14,7 @@ impl EnvelopePoint {
 
 pub type EnvelopePoints = [EnvelopePoint;12];
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Envelope {
     pub(crate) points:             EnvelopePoints,
     pub(crate) size:               u8,

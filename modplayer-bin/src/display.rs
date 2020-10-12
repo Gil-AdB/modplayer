@@ -100,10 +100,10 @@ impl Display {
                         (channel.fadeout_volume / 65536.0);
 
                 println!("{:3}| {:7} | {:32} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
-                         if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.idx.to_string() + ": " + channel.instrument.name.trim(),
+                         if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument.to_string() + ": " + "", //channel.instrument.name.trim(),
                          if channel.on { (channel.frequency) as u32 } else { 0 },
                          Self::range_with_color((final_vol * 12.0).ceil() as u32, 0, 12, 11, &colors),
-                         Self::range(channel.sample_position as u32, 0, max(channel.sample.length, 1) - 1, 14),
+                         Self::range(channel.sample_position as u32, 0, max(/*channel.sample.length*/1, 1) - 1, 14),
                          channel.note, channel.period,
                          Self::range_with_color(channel.volume as u32, 0, 64, 11, &colors),
                          Self::range_with_color(channel.envelope_volume as u32, 0, 16384, 11, &colors),
