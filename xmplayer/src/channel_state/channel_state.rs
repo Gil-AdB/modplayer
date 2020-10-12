@@ -1,6 +1,7 @@
 use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
 use crate::tables::{LINEAR_PERIODS, AMIGA_PERIODS, TableType, LINEAR_TABLES, AMIGA_TABLES};
+use std::num::Wrapping;
 
 
 /// A value bounded by a minimum and a maximum
@@ -348,9 +349,9 @@ impl EnvelopeState {
 
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct Note {
-    note:       u8,
-    finetune:   i8,
-    pub(crate) period:     i16
+               note:       u8,
+               finetune:   i8,
+    pub(crate) period:     u16
 }
 
 impl Note {
@@ -425,7 +426,7 @@ impl Note {
     // }
 
     // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
-    fn relocate_ton(&self, period: u16, arp_note: u8, use_amiga: TableType) -> i16 {
+    fn relocate_ton(&self, period: u16, arp_note: u8, use_amiga: TableType) -> u16 {
         // int32_t fine_tune, lo_period, hi_period, tmp_period, tableIndex;
         let fine_tune: u32 = (((self.finetune >> 3) + 16) << 1) as u32;
         let mut hi_period: u32 = (8 * 12 * 16) * 2;
@@ -464,14 +465,14 @@ impl Note {
     }
 
     #[cfg(test)]
-    fn nearest_semi_tone_test(&self, period: u16, added_note: u8, use_amiga: TableType) -> (i16, u32) {
+    fn nearest_semi_tone_test(&self, period: u16, added_note: u8, use_amiga: TableType) -> (u16, u32) {
 
         let note2period = match use_amiga {
             TableType::LinearFrequency => {&LINEAR_PERIODS},
             TableType::AmigaFrequency => {&AMIGA_PERIODS},
         };
 
-        let mut needed_period = period as i16;
+        let mut needed_period = period as u16;
         // needed_period = clamp(needed_period, 0, 1935);
         if needed_period < note2period[8 * 12 * 16] {needed_period = note2period[8 * 12 * 16];}
         if needed_period > note2period[0] {needed_period = note2period[0];}
@@ -493,7 +494,7 @@ impl Note {
 
     // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
     #[cfg(test)]
-    fn relocate_ton_test(&self, period: u16, arp_note: u8, use_amiga: TableType) -> (i16, u32) {
+    fn relocate_ton_test(&self, period: u16, arp_note: u8, use_amiga: TableType) -> (u16, u32) {
         // int32_t fine_tune, lo_period, hi_period, tmp_period, tableIndex;
         let fine_tune: u32 = (((self.finetune >> 3) + 16) << 1) as u32;
         let mut hi_period: u32 = (8 * 12 * 16) * 2;
@@ -537,19 +538,16 @@ impl Note {
     pub(crate) fn frequency(&self, period_shift: i16, semitone: bool, use_amiga: TableType) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
-        let mut period:i16;
+        let period:u16;
         if semitone {
             period = self.relocate_ton(self.period as u16, period_shift as u8, use_amiga);
             // period = self.nearest_semi_tone(self.period as u16, period_shift as u8, use_amiga);
         } else {
-            period = self.period as i16 - (period_shift * 16 * 4) as i16;
-        }
-        if period < 0 {
-            println!("{}, {}", self.period, period_shift);
+            period = (Wrapping(self.period) - Wrapping((period_shift * 16 * 4) as u16)).0;
         }
         // }
 
-        period = clamp(period, 0, 31999);
+        //period = clamp(period, 0, 65535);
 
         return match use_amiga {
             TableType::LinearFrequency => {LINEAR_TABLES.d_period2hz_tab[period as usize] as f32},

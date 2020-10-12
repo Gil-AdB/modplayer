@@ -36,13 +36,20 @@ pub struct TripleBufferReader<T> where T: Clone + Init {
 }
 
 impl <T> TripleBufferReader<T> where T: Clone + Init {
-    pub fn get(&mut self) -> &mut TripleBuffer<T> {
+    fn load(&mut self) -> &mut TripleBuffer<T> {
         unsafe{&mut *self.triple_buffer.load(Ordering::Acquire)}
+    }
+
+    pub fn get(&mut self) -> TripleBufferReader<T> {
+        let tb = unsafe{&mut *self.triple_buffer.load(Ordering::Acquire)};
+        TripleBufferReader {
+            triple_buffer: Arc::new(AtomicPtr::new(tb))
+        }
     }
 
     // read() -> (&T, dirty?)
     pub fn read(&mut self) -> (&T, State) {
-        let tb = self.get();
+        let tb = self.load();
         loop {
             let current_indexes = tb.indexes.load(Acquire);
             if !TripleBuffer::<T>::get_dirty(current_indexes) {
@@ -92,14 +99,16 @@ impl <T> TripleBufferWriter<T> where T: Clone + Init {
 
 impl<T> TripleBuffer<T> where T: Clone + Init {
 
-    pub fn new() -> (TripleBufferReader<T>, TripleBufferWriter<T>) {
-        let triple_buffer =
+    pub fn new() -> Box<Self> {//
             Box::new(
                 TripleBuffer {
                     buffer: array_init(|_| T::new()),//[; 3],
                     indexes: AtomicU32::from(0x24)
-                });
-        let tpp = Box::into_raw(triple_buffer) as *mut TripleBuffer<T>;
+                })
+    }
+
+    pub fn split(self: Box<Self>) -> (TripleBufferReader<T>, TripleBufferWriter<T>) {
+        let tpp = Box::into_raw(self) as *mut TripleBuffer<T>;
         return (
             TripleBufferReader {
                 triple_buffer: Arc::new(AtomicPtr::new(tpp))
@@ -108,6 +117,7 @@ impl<T> TripleBuffer<T> where T: Clone + Init {
                 triple_buffer: Arc::new(AtomicPtr::new(tpp))
             }
         )
+
     }
 
     fn get_reader(indexes: u32) -> u32 {

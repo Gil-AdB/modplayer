@@ -132,7 +132,7 @@ impl Sample {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Instrument {
     pub name: String,
     pub idx: u8,
@@ -165,3 +165,5 @@ impl Instrument {
         }
     }
 }
+
+pub (crate) type Instruments = Vec<Instrument>;

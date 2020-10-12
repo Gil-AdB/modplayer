@@ -1,10 +1,11 @@
 use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume};
-use crate::instrument::{Instrument, Sample};
+use crate::instrument::{Instrument, Sample, Instruments};
 use crate::tables::{TableType};
 use crate::module_reader::{is_note_valid, SongData};
+use std::num::Wrapping;
+use std::thread::sleep;
 
 pub(crate) mod channel_state;
-
 
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct SplineData {
@@ -46,9 +47,9 @@ impl SplineData {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Voice<'a> {
-    pub(crate) instrument:                     &'a Instrument,
-    pub(crate) sample:                         &'a Sample,
+pub(crate) struct Voice {
+    pub(crate) instrument:                     usize,
+    pub(crate) sample:                         usize,
     pub(crate) frequency:                      f32,
     pub(crate) du:                             f32,
     pub(crate) volume:                         Volume,
@@ -59,11 +60,11 @@ pub(crate) struct Voice<'a> {
     pub(crate) spline_data:                    SplineData,
 }
 
-impl<'a> Voice<'a> {
-    pub fn new(song_data: &'a SongData) -> Self {
+impl Voice {
+    pub fn new() -> Self {
         Self {
-            instrument: &song_data.instruments[0],
-            sample: &song_data.instruments[0].samples[0],
+            instrument: 0,
+            sample: 0,
             frequency: 0.0,
             du: 0.0,
             volume: Volume::new(),
@@ -76,14 +77,15 @@ impl<'a> Voice<'a> {
     }
 
 
-    pub(crate) fn key_off(&mut self, is_note_delay: bool) -> bool {
+    pub(crate) fn key_off(&mut self, instruments: &Instruments, is_note_delay: bool) -> bool {
+        let instrument = &instruments[self.instrument];
         self.sustained = false;
-        if !self.instrument.volume_envelope.on {
+        if !instrument.volume_envelope.on {
             // self.on = false;
             self.volume.retrig(0);
 
             if !is_note_delay {
-                self.volume.fadeout_speed = self.instrument.volume_fadeout as i32;
+                self.volume.fadeout_speed = instrument.volume_fadeout as i32;
             }
 
             if self.volume.fadeout_speed == 0 {
@@ -93,7 +95,7 @@ impl<'a> Voice<'a> {
 
             return false;
         }
-        self.volume.fadeout_speed = self.instrument.volume_fadeout as i32;
+        self.volume.fadeout_speed = instrument.volume_fadeout as i32;
         return true;
     }
 
@@ -111,8 +113,8 @@ impl<'a> Voice<'a> {
 
 }
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct ChannelState<'a> {
-    pub(crate) voice:                          Voice<'a>,
+pub(crate) struct ChannelState {
+    pub(crate) voice:                          Voice,
     pub(crate) note:                           Note,
     pub(crate) frequency:                      f32,
     pub(crate) volume_envelope_state:          EnvelopeState,
@@ -146,7 +148,7 @@ pub(crate) struct ChannelState<'a> {
     pub(crate) last_played_note:               u8,
 }
 
-impl ChannelState<'_> {
+impl ChannelState {
     fn set_note(&mut self, note: u8, fine_tune: i8, use_amiga: TableType) {
         self.note.set_note(note, fine_tune, use_amiga);
         self.frequency_shift = 0.0;
@@ -154,7 +156,7 @@ impl ChannelState<'_> {
         self.frequency = self.note.frequency(self.period_shift, false, use_amiga);
     }
 
-    pub(crate) fn key_off(&mut self, is_note_delay: bool) -> bool {
+    pub(crate) fn key_off(&mut self, instruments: &Instruments, is_note_delay: bool) -> bool {
         // if self.voice.instrument.volume_envelope.on && self.voice.instrument.volume_envelope.
         //     self.volume_envelope_state.frame >= self.voice.instrument.volume_envelope.points[self.volume_envelope_state.idx].frame {
         //     if self.volume_envelope_state.idx > 0 {
@@ -164,9 +166,10 @@ impl ChannelState<'_> {
         //     self.volume_envelope_state.sustained = false;
         // }
 
-        self.volume_envelope_state.key_off(&self.voice.instrument.volume_envelope);
-        self.panning_envelope_state.key_off(&self.voice.instrument.panning_envelope);
-        self.voice.key_off(is_note_delay)
+        let instrument = &instruments[self.voice.instrument];
+        self.volume_envelope_state.key_off(&instrument.volume_envelope);
+        self.panning_envelope_state.key_off(&instrument.panning_envelope);
+        self.voice.key_off(instruments, is_note_delay)
     }
 
     pub(crate) fn update_frequency(&mut self, rate: f32, semitone: bool, use_amiga: TableType) {
@@ -176,20 +179,23 @@ impl ChannelState<'_> {
         self.voice.set_frequency(self.note.frequency(self.period_shift, semitone, use_amiga) + self.frequency_shift, rate)
     }
 
-    pub(crate) fn reset_envelopes(&mut self) {
+    pub(crate) fn reset_envelopes(&mut self, instruments: &Instruments) {
+        let instrument = &instruments[self.voice.instrument];
         self.voice.volume.fadeout_vol = 65536;
         self.voice.volume.fadeout_speed = 0;//self.instrument.volume_fadeout as i32;
-        self.volume_envelope_state.reset(0, &self.voice.instrument.volume_envelope);
-        self.panning_envelope_state.reset(0, &self.voice.instrument.panning_envelope);
+        self.volume_envelope_state.reset(0, &instrument.volume_envelope);
+        self.panning_envelope_state.reset(0, &instrument.panning_envelope);
         if self.vibrato_control & 0x4 != 4 { self.vibrato_state.set_pos(0); }
         if self.tremolo_control & 0x4 != 4 { self.tremolo_state.set_pos(0); }
     }
 
 
-    pub(crate) fn trigger_note(&mut self, note: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn trigger_note(&mut self, instruments: &Instruments, note: u8, rate: f32, use_amiga: TableType) {
         if note >= 1 && note < 97 { // trigger note
+            let instrument = &instruments[self.voice.instrument];
+            let sample = &instrument.samples[self.voice.sample];
 
-            let tone = match Note::get_tone(note, self.voice.sample.relative_note) {
+            let tone = match Note::get_tone(note, sample.relative_note) {
                 Ok(p) => p,
                 Err(_e) => return,
             };
@@ -204,10 +210,10 @@ impl ChannelState<'_> {
 
             // println!("channel_state: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, self.sample.relative_note, pattern.note as i8 + self.sample.relative_note, self.volume);
 
-            self.set_note(tone, self.voice.sample.finetune, use_amiga);
+            self.set_note(tone, sample.finetune, use_amiga);
             self.update_frequency(rate, false, use_amiga);
             // self.voice.sustained = true;
-            self.reset_envelopes();
+            self.reset_envelopes(instruments);
         }
     }
 
@@ -255,13 +261,13 @@ impl ChannelState<'_> {
         }
     }
 
-    pub(crate) fn retrig_note(&mut self, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn retrig_note(&mut self, instruments: &Instruments, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, use_amiga: TableType) {
         if !first_tick && param != 0 && (tick % param as u32 == 0) {
-            self.trigger_note(note, rate, use_amiga);
+            self.trigger_note(instruments, note, rate, use_amiga);
         }
     }
 
-    pub(crate) fn multi_retrig(&mut self, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn multi_retrig(&mut self, instruments: &Instruments, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, use_amiga: TableType) {
         // still need to bring volume column and add checks based on it
         if first_tick {
             if param != 0 {
@@ -292,7 +298,7 @@ impl ChannelState<'_> {
                     _ => {}
                 }
                 self.voice.volume.set_volume(vol as i32);
-                self.trigger_note(note, rate, use_amiga);
+                self.trigger_note(instruments, note, rate, use_amiga);
             }
         }
     }
@@ -400,7 +406,7 @@ impl ChannelState<'_> {
         self.voice.volume.set_volume(new_volume);
     }
 
-    pub(crate) fn porta_to_note(&mut self, first_tick: bool, speed: u8, note: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn porta_to_note(&mut self, instruments: &Instruments, first_tick: bool, speed: u8, note: u8, rate: f32, use_amiga: TableType) {
         // let speed = pattern.effect_param;
 
         if first_tick {
@@ -409,15 +415,16 @@ impl ChannelState<'_> {
             }
 
             if is_note_valid(note) {
-                self.porta_to_note.target_note.set_note(clamp(note as i16 + self.voice.sample.relative_note as i16, 0, 119) as u8, self.voice.sample.finetune, use_amiga);
+                let sample = &instruments[self.voice.instrument].samples[self.voice.sample];
+                self.porta_to_note.target_note.set_note(clamp(note as i16 + sample.relative_note as i16, 0, 119) as u8, sample.finetune, use_amiga);
             }
         } else {
             let mut up = true;
             if self.note.period < self.porta_to_note.target_note.period {
-                self.note.period += self.porta_to_note.speed as i16 * 4;
+                self.note.period = (Wrapping(self.note.period) + Wrapping(self.porta_to_note.speed as u16 * 4)).0;
                 up = true;
             } else if self.note.period > self.porta_to_note.target_note.period {
-                self.note.period -= self.porta_to_note.speed as i16 * 4;
+                self.note.period = (Wrapping(self.note.period) - Wrapping(self.porta_to_note.speed as u16 * 4)).0;
                 up = false;
             }
 
@@ -443,9 +450,9 @@ impl ChannelState<'_> {
                 self.last_porta_up = (amount as u16) * 4;
             }
         } else {
-            self.note.period -= self.last_porta_up as i16;
-            if self.note.period < 0 {
-                self.note.period = 0;
+            self.note.period = (Wrapping(self.note.period) - Wrapping(self.last_porta_up)).0;
+            if (self.note.period as i16) < 1 {
+                self.note.period = 1;
             }
             self.update_frequency(rate, false, use_amiga);
         }
@@ -457,8 +464,8 @@ impl ChannelState<'_> {
                 self.last_porta_down = (amount as u16) * 4;
             }
         } else {
-            self.note.period += self.last_porta_down as i16;
-            if self.note.period > 31999 {
+            self.note.period += self.last_porta_down;
+            if (self.note.period as i16) > 31999 { // FT2 bug
                 self.note.period = 31999;
             }
             self.update_frequency(rate, false, use_amiga);
@@ -470,10 +477,7 @@ impl ChannelState<'_> {
             if amount != 0 {
                 self.last_fine_porta_up = (amount as u16) * 4;
             }
-            self.note.period -= self.last_fine_porta_up as i16;
-            if self.note.period < 1 {
-                self.note.period = 1;
-            }
+            self.note.period = (Wrapping(self.note.period) - Wrapping(self.last_fine_porta_up)).0;
             self.update_frequency(rate, false, use_amiga);
         }
     }
@@ -483,7 +487,7 @@ impl ChannelState<'_> {
             if amount != 0 {
                 self.last_fine_porta_down = (amount as u16) * 4;
             }
-            self.note.period += self.last_fine_porta_down as i16;
+            self.note.period += self.last_fine_porta_down;
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }

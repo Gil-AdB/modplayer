@@ -1,19 +1,20 @@
 use std::fmt;
 use simple_error::SimpleResult;
-use crate::instrument::{Instrument};
+use crate::instrument::{Instrument, Sample};
 use crate::module_reader::module::module::read_mod;
 use crate::module_reader::s3m::s3m::read_s3m;
 use crate::module_reader::xm::xm::read_xm;
 use crate::pattern::Pattern;
 use crate::channel_state::channel_state::clamp;
 use crate::module_reader::stm::stm::read_stm;
+use crate::channel_state::ChannelState;
 
 mod xm;
 mod module;
 mod s3m;
 mod stm;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum SongType {
     XM,
     MOD,
@@ -21,7 +22,7 @@ enum SongType {
     STM
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum FrequencyType {
     AMIGA,
     LINEAR
@@ -64,7 +65,7 @@ impl fmt::Display for Row {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Patterns {
     pub(crate) rows: Vec<Row>
 }
@@ -78,10 +79,10 @@ impl Patterns {
 
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SongData {
                     id:                 String,
-                    pub(crate) name:               String,
+   pub(crate)       name:               String,
                     song_type:          SongType,
                     tracker_name:       String,
     pub(crate)      song_length:        u16,
@@ -95,6 +96,16 @@ pub struct SongData {
     pub(crate)      pattern_order:      Vec<u8>,
     pub(crate)      instruments:        Vec<Instrument>,
     pub(crate)      use_amiga:          bool,
+}
+
+impl SongData {
+    pub(crate) fn get_sample<>(&self, channel: &ChannelState) -> &Sample {
+        &self.get_instrument(channel).samples[channel.voice.sample]
+    }
+
+    pub(crate) fn get_instrument(&self, channel: &ChannelState) -> &Instrument {
+        &self.instruments[channel.voice.instrument]
+    }
 }
 
 

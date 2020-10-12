@@ -6,7 +6,7 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["portaudio-feature"] # "portaudio-feature"/"sdl2-feature"
+default = ["sdl2-feature"] # "portaudio-feature"/"sdl2-feature"
 portaudio-feature = ["portaudio"]
 sdl2-feature = ["sdl2"]
 #sdl2 = [package.metadata.vcpkg]
