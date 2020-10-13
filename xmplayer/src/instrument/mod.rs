@@ -132,7 +132,7 @@ impl Sample {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Instrument {
     pub name: String,
     pub idx: u8,
@@ -145,7 +145,7 @@ pub struct Instrument {
     pub vibrato_rate: u8,
     pub volume_fadeout: u16,
 
-    pub(crate) samples: Vec<Sample>,
+    pub samples: Vec<Sample>,
 }
 
 impl Instrument {
@@ -165,3 +165,5 @@ impl Instrument {
         }
     }
 }
+
+pub (crate) type Instruments = Vec<Instrument>;

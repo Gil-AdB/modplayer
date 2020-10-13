@@ -3,6 +3,7 @@
 #![feature(const_fn)]
 #![feature(seek_convenience)]
 #![feature(box_syntax)]
+#![feature(in_band_lifetimes)]
 #[macro_use]
 extern crate lazy_static;
 extern crate simple_error;
@@ -17,6 +18,7 @@ pub mod producer_consumer_queue;
 pub mod song;
 pub mod tables;
 pub mod triple_buffer;
+pub mod song_state;
 
 
 #[cfg(test)]
