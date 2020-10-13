@@ -1,7 +1,8 @@
+[workspace]
+
 [package]
-name = "modplayer-wasm"
-version = "0.1.0"
-authors = ["gilad.benor@gmail.com"]
+name = "rust-sdl-modplayer"
+version = "1.0.0"
 edition = "2018"
 
 
@@ -9,6 +10,7 @@ edition = "2018"
 crossbeam = "0.7"
 xmplayer = {path="../xmplayer"}
 lazy_static = "1.4.0"
+sdl2 = { version = "0.34.3", default-features = false }
 
 [profile.release]
 lto = true

@@ -70,9 +70,18 @@ impl ProducerConsumerQueue {
         PCQHolder{q: Arc::new(AtomicPtr::new(Box::into_raw(q) as *mut ProducerConsumerQueue))}
     }
 
-    pub fn produce<F: FnMut(&mut[f32; AUDIO_BUF_SIZE]) -> bool>(&mut self, mut f: F) -> bool {
+    pub fn quit(&mut self) {
+        self.stopped.store(true, Ordering::Release);
+        self.empty_count.signal();
+        self.full_count.signal();
+    }
+
+    pub fn produce<F: FnMut(&mut[f32]) -> bool>(&mut self, mut f: F) -> bool {
         loop {
             self.empty_count.wait();
+            if self.stopped.load(Acquire) == true {
+                return false;
+            }
             let my_buf = &mut self.buf[self.front];
             self.front = (self.front + 1) % AUDIO_NUM_BUFFERS;
             if !f(my_buf) { self.stopped.store(true, Release);self.full_count.signal(); return false; }
@@ -80,7 +89,7 @@ impl ProducerConsumerQueue {
         }
     }
 
-    pub fn consume<F: FnMut(&[f32; AUDIO_BUF_SIZE])>(&mut self, mut f: F) -> bool {
+    pub fn consume<F: FnMut(&[f32])>(&mut self, mut f: F) -> bool {
         self.full_count.wait();
         if self.stopped.load(Acquire) == true {
             return false;
