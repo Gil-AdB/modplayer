@@ -27,7 +27,7 @@ impl Display {
     }
 
     fn move_to(x: usize, y:usize) -> String {
-        format!("\x1b[{};{}H", x + 1, y + 1)
+        format!("\x1b[{};{}H", x, y)
     }
 
     fn range(pos: u32, start: u32, end: u32, width: usize) -> String {
@@ -87,14 +87,15 @@ impl Display {
             RGB { r: 225, g: 64, b: 0 },
         ];
         // let first_tick = play_data.tick == 0;
-        display([Self::hide(), Self::move_to(0, 0)].concat());
-        println!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
+        display(Self::hide());
+        display(Self::move_to(0, 0));
+        display(format!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
                  play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
                  play_data.pattern_len,
                  play_data.bpm, play_data.speed,
                  play_data.filter
-        );
-        display(Self::move_to(0, 1));
+        ));
+        // display(Self::move_to(0, 2));
 
         display("on |channel|            instrument            |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |".to_string());
 
@@ -110,20 +111,20 @@ impl Display {
                         (channel.fadeout_volume / 65536.0);
 
                 display(format!("{:3}| {:5} | {:2}: {:28} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
-                                if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument, instruments[channel.instrument].name.trim(),
-                                if channel.on { (channel.frequency) as u32 } else { 0 },
-                                Self::range_with_color((final_vol * 12.0).ceil() as u32, 0, 12, 11, &colors),
-                                Self::range(channel.sample_position as u32, 0, max(instruments[channel.instrument].samples[channel.sample].length, 1) - 1, 14),
-                                channel.note, channel.period,
-                                Self::range_with_color(channel.volume as u32, 0, 64, 11, &colors),
-                                Self::range_with_color(channel.envelope_volume as u32, 0, 16384, 11, &colors),
-                                Self::range_with_color(channel.global_volume as u32, 0, 64, 11, &colors),
-                                Self::range_with_color(channel.fadeout_volume as u32, 0, 65536, 11, &colors),
-                                Self::range(channel.final_panning as u32, 0, 255, 8),
+                         if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument, instruments[channel.instrument].name.trim(),
+                         if channel.on { (channel.frequency) as u32 } else { 0 },
+                         Self::range_with_color((final_vol * 12.0).ceil() as u32, 0, 12, 11, &colors),
+                         Self::range(channel.sample_position as u32, 0, max(instruments[channel.instrument].samples[channel.sample].length, 1) - 1, 14),
+                         channel.note, channel.period,
+                         Self::range_with_color(channel.volume as u32, 0, 64, 11, &colors),
+                         Self::range_with_color(channel.envelope_volume as u32, 0, 16384, 11, &colors),
+                         Self::range_with_color(channel.global_volume as u32, 0, 64, 11, &colors),
+                         Self::range_with_color(channel.fadeout_volume as u32, 0, 65536, 11, &colors),
+                         Self::range(channel.final_panning as u32, 0, 255, 8),
                 ));
             } else {
                 display(format!("{:3}| {:5} | {:32} |  {:<6} |{:12}| {:14}| {:5}| {:7}|{:12}|{:12}|{:12}|{:12}| {:8}|      ", "off", idx, "", "", "",
-                                "", "", "", "", "", "", "", ""));
+                         "", "", "", "", "", "", "", ""));
             }
         }
         display(Self::show());

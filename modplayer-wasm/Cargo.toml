@@ -1,4 +1,4 @@
-[workspace]
+#[workspace]
 
 [package]
 name = "rust-sdl-modplayer"
@@ -11,6 +11,7 @@ crossbeam = "0.7"
 xmplayer = {path="../xmplayer"}
 lazy_static = "1.4.0"
 sdl2 = { version = "0.34.3", default-features = false }
+#crossterm = "0.17.5"
 
 [profile.release]
 lto = true
