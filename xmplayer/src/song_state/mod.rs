@@ -34,7 +34,7 @@ pub struct SongState {
     stopped:                            Arc<AtomicBool>,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
     song_data:                          SongData,
-    pub song:                               Arc<Mutex<Song>>,
+    pub song:                           Arc<Mutex<Song>>,
     tx:                                 Sender<PlaybackCmd>,
     rx:                                 Arc<Mutex<Receiver<PlaybackCmd>>>,
     q:                                  PCQHolder,
@@ -82,7 +82,6 @@ impl SongState {
         });
         self.stopped.store(true, Ordering::Release);
     }
-
 
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
@@ -132,6 +131,10 @@ impl SongState {
 
     pub fn get_sender(&mut self) -> &mut Sender<PlaybackCmd> {
         return &mut self.tx;
+    }
+
+    pub fn get_triple_buffer_reader(&self) -> Arc<Mutex<TripleBufferReader<PlayData>>> {
+        return self.triple_buffer_reader.clone();
     }
 
     pub fn close(&mut self, handle: (Option<JoinHandle<()>>, Option<JoinHandle<()>>)) {

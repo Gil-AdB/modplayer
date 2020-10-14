@@ -81,7 +81,9 @@ fn run(song_data: &mut SongHandle) {
     let mut audio = AudioOutput::new(song_data, SAMPLE_RATE);
 
     let handle = song_data.get().start(|data, instruments| {
-        Display::display(data, instruments);
+        Display::display(data, instruments, &mut|str| {
+            println!("{}", str);
+        });
     });
 
     audio.start_audio_output();

@@ -3,7 +3,7 @@ use std::sync::mpsc::Receiver;
 
 use crate::channel_state::{ChannelState, Voice};
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp};
-use crate::instrument::LoopType;
+use crate::instrument::{LoopType, Instruments, Instrument};
 use crate::producer_consumer_queue::AUDIO_BUF_FRAMES;
 use crate::module_reader::{SongData, is_note_valid};
 use crate::tables::{PANNING_TAB, TableType};
@@ -415,6 +415,10 @@ impl Song {
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.rate = sample_rate;
+    }
+
+    pub fn get_instruments(&self) -> Vec<Instrument>{
+        self.song_data.instruments.clone()
     }
 
 
