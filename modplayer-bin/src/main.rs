@@ -38,6 +38,7 @@ mod display;
 #[cfg(feature="portaudio-feature")] mod portaudio_audio;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
 use xmplayer::instrument::Instrument;
+use crossterm::cursor::MoveToNextLine;
 
 
 // impl <T> Drop for StructHolder<T> {
@@ -66,40 +67,59 @@ fn main() {
 
     let mut song = SongState::new(path);
     if env::args().len() > 2 {
-        // print_module(&song.song_data, env::args().skip(2));
+        print_module(&song, env::args().skip(2));
     } else {
         run(&mut song);
     }
 }
 
+struct TerminalModeSetter {
+}
+
+impl TerminalModeSetter {
+    fn new() -> Self {
+        if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
+        crossterm::terminal::enable_raw_mode();
+        TerminalModeSetter {}
+    }
+}
+
+impl Drop for TerminalModeSetter {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+
 fn run(song_data: &mut SongHandle) {
     const CHANNELS: i32 = 2;
     const SAMPLE_RATE: f32 = 48_000.0;
 
-    if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
+    let _mode_setter = TerminalModeSetter::new();
 
     let mut audio = AudioOutput::new(song_data, SAMPLE_RATE);
 
-    let handle = song_data.get().start(|data, instruments| {
+    let handle = song_data.get_mut().start(|data, instruments| {
         Display::display(data, instruments, &mut|str| {
-            println!("{}", str);
+            write!(stdout(), "{}", str);
+            if let Err(_e) = crossterm::execute!(stdout(), MoveToNextLine(1)) {}
         });
     });
 
     audio.start_audio_output();
-    mainloop(song_data.get());
+    mainloop(song_data.get_mut());
 
-    song_data.get().close(handle);
-    if let Err(_e) = crossterm::execute!(stdout(), LeaveAlternateScreen) {}
+    song_data.get_mut().close(handle);
     audio.close();
+    if let Err(_e) = crossterm::execute!(stdout(), LeaveAlternateScreen) {}
 }
 
 fn is_num (ch: char) -> bool {
     ch >= '0' && ch <= '9'
 }
 
-fn mainloop(song_data: &mut SongState) -> std::result::Result<bool, crossterm::ErrorKind> {
 
+fn mainloop(song_data: &mut SongState) -> std::result::Result<bool, crossterm::ErrorKind> {
     let mut last_time = SystemTime::now();
     let mut last_char= '\0';
 
@@ -108,17 +128,19 @@ fn mainloop(song_data: &mut SongState) -> std::result::Result<bool, crossterm::E
 
         // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
         let input;
-        if crossterm::event::poll(Duration::from_millis(100))? {
+        if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
+        if crossterm::event::poll(Duration::from_millis(100)).is_ok() {
             // It's guaranteed that the `read()` won't block when the `poll()`
             // function returns `true`
-            match crossterm::event::read()? {
-                crossterm::event::Event::Key(event) => input = event,
-                _ => {continue;}
+            match crossterm::event::read() {
+                Ok(crossterm::event::Event::Key(event)) => input = event,
+                _ => {
+                    continue;
+                }
             }
         } else {
             continue;
         }
-
 
         if SystemTime::now() > last_time + Duration::from_secs(1) {
             last_char = '\0';

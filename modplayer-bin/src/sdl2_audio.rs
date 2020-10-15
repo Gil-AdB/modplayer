@@ -14,7 +14,7 @@ impl AudioCallback for AudioCB {
    fn callback(&mut self, out: &mut [f32]) {
        if out.len() != AUDIO_BUF_SIZE {panic!("unexpected frame size: {}", out.len());}
 
-       self.q.get().get_queue().get().consume(|buf: &[f32]| { out.clone_from_slice(buf); });
+       self.q.get_mut().get_queue().get().consume(|buf: &[f32]| { out.clone_from_slice(buf); });
    }
 }
 

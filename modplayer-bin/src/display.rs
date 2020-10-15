@@ -27,7 +27,7 @@ impl Display {
     }
 
     fn move_to(x: usize, y:usize) -> String {
-        format!("\x1b[{};{}H", x + 1, y + 1)
+        format!("\x1b[{};{}H", x+1, y+1)
     }
 
     fn range(pos: u32, start: u32, end: u32, width: usize) -> String {
@@ -87,14 +87,15 @@ impl Display {
             RGB { r: 225, g: 64, b: 0 },
         ];
         // let first_tick = play_data.tick == 0;
-        display([Self::hide(), Self::move_to(0, 0)].concat());
-        println!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
-                 play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
-                 play_data.pattern_len,
-                 play_data.bpm, play_data.speed,
-                 play_data.filter
-        );
-        display(Self::move_to(0, 1));
+        display(Self::hide());
+        display(Self::move_to(0, 0));
+        display(format!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
+                        play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
+                        play_data.pattern_len,
+                        play_data.bpm, play_data.speed,
+                        play_data.filter
+        ));
+        // display(Self::move_to(0, 2));
 
         display("on |channel|            instrument            |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |".to_string());
 
