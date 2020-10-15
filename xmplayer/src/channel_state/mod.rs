@@ -3,6 +3,7 @@ use crate::instrument::Instruments;
 use crate::tables::{TableType};
 use crate::module_reader::is_note_valid;
 use std::num::Wrapping;
+use std::cmp::{min, max};
 
 pub(crate) mod channel_state;
 
@@ -420,20 +421,20 @@ impl ChannelState {
         } else {
             let mut up = true;
             if self.note.period < self.porta_to_note.target_note.period {
-                self.note.period = (Wrapping(self.note.period) + Wrapping(self.porta_to_note.speed as u16 * 4)).0;
+                self.note.period = min(self.porta_to_note.target_note.period as u32,(Wrapping(self.note.period as u32) + Wrapping(self.porta_to_note.speed as u32 * 4)).0) as u16;
                 up = true;
             } else if self.note.period > self.porta_to_note.target_note.period {
-                self.note.period = (Wrapping(self.note.period) - Wrapping(self.porta_to_note.speed as u16 * 4)).0;
+                self.note.period = max(self.porta_to_note.target_note.period as i32, (Wrapping(self.note.period as i32) - Wrapping(self.porta_to_note.speed as i32 * 4)).0) as u16;
                 up = false;
             }
 
             if up {
-                if self.note.period > self.porta_to_note.target_note.period {
+                if self.note.period >= self.porta_to_note.target_note.period {
                     self.note = self.porta_to_note.target_note;
                     self.period_shift = 0;
                     self.frequency_shift = 0.0;
                 }
-            } else if self.note.period < self.porta_to_note.target_note.period {
+            } else if self.note.period <= self.porta_to_note.target_note.period {
                 self.note = self.porta_to_note.target_note;
                 self.period_shift = 0;
                 self.frequency_shift = 0.0;

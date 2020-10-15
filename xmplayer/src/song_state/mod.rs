@@ -24,16 +24,22 @@ impl <T> StructHolder<T> {
         Self { t: Arc::new(AtomicPtr::new(Box::into_raw(Box::new(arg)))) }
     }
 
-    pub fn get(&mut self) -> &mut T {
+    pub fn get_mut(&mut self) -> &mut T {
         unsafe { &mut *self.t.load(Ordering::Acquire) }
     }
+
+    pub fn get(&self) -> &T {
+        unsafe { &*self.t.load(Ordering::Acquire) }
+    }
+
+
 }
 
 #[derive(Clone)]
 pub struct SongState {
     stopped:                            Arc<AtomicBool>,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
-    song_data:                          SongData,
+    pub song_data:                          SongData,
     pub song:                           Arc<Mutex<Song>>,
     tx:                                 Sender<PlaybackCmd>,
     rx:                                 Arc<Mutex<Receiver<PlaybackCmd>>>,
@@ -69,7 +75,7 @@ impl SongState {
             self_ref: None
         });
 
-        sh.get().self_ref = Option::from(sh.clone());
+        sh.get_mut().self_ref = Option::from(sh.clone());
         sh
     }
 
@@ -94,13 +100,13 @@ impl SongState {
         let mut s1 = self.self_ref.as_mut().unwrap().clone();
         // let mut play_thread: Option<JoinHandle<()>> = None;
         let mut display_thread: Option<JoinHandle<()>> = None;
-        let play_thread = Option::from(spawn(move || Self::callback(s1.get())));
+        let play_thread = Option::from(spawn(move || Self::callback(s1.get_mut())));
 
         let mut s2 = self.self_ref.as_mut().unwrap().clone();
 
         if self.display_cb.is_some() {
             display_thread = Option::from(spawn(move || {
-                let s = s2.get();
+                let s = s2.get_mut();
                 let tb_guard = s.triple_buffer_reader.clone();
                 let mut triple_buffer_reader = tb_guard.lock().unwrap().get();
                 //         let mut triple_buffer_reader = triple_buffer_reader.lock().unwrap();

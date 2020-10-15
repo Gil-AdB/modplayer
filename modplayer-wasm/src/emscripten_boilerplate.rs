@@ -2,8 +2,6 @@ use crate::leak;
 
 use std::os::raw::{c_int, c_void, c_char};
 
-#[allow(non_camel_case_types)]
-type em_callback_func = unsafe extern "C" fn(context: *mut c_void);
 
 struct Env {
     func:   *mut c_void,
@@ -19,6 +17,13 @@ impl Env {
     }
 }
 
+
+
+#[cfg(target_os = "emscripten")]
+#[allow(non_camel_case_types)]
+type em_callback_func = unsafe extern "C" fn(context: *mut c_void);
+
+#[cfg(target_os = "emscripten")]
 extern "C" {
     pub fn emscripten_set_main_loop_arg(
         func: em_callback_func,
@@ -28,10 +33,10 @@ extern "C" {
     );
 
     pub fn emscripten_cancel_main_loop();
-
     pub fn emscripten_run_script(code: *const c_char);
 }
 
+#[cfg(target_os = "emscripten")]
 pub fn setup_mainloop<A, F: FnMut(*mut c_void) + 'static>(
     fps: c_int,
     simulate_infinite_loop: c_int,
@@ -56,4 +61,33 @@ pub fn setup_mainloop<A, F: FnMut(*mut c_void) + 'static>(
 
         f(capture.arg)
     }
+}
+
+
+#[cfg(not(target_os = "emscripten"))]
+#[allow(non_camel_case_types)]
+type em_callback_func = unsafe extern "C" fn(context: *mut c_void);
+
+#[cfg(not(target_os = "emscripten"))]
+pub fn emscripten_set_main_loop_arg(
+        func: em_callback_func,
+        arg: *mut c_void,
+        fps: c_int,
+        simulate_infinite_loop: c_int,
+    ) {}
+
+#[cfg(not(target_os = "emscripten"))]
+pub fn emscripten_cancel_main_loop() {}
+
+
+#[cfg(not(target_os = "emscripten"))]
+pub fn emscripten_run_script(code: *const c_char) {}
+
+#[cfg(not(target_os = "emscripten"))]
+pub fn setup_mainloop<A, F: FnMut(*mut c_void) + 'static>(
+    fps: c_int,
+    simulate_infinite_loop: c_int,
+    arg: A,
+    callback: F,
+) {
 }

@@ -14,9 +14,8 @@
     <input id="file" type="file" onchange="loadFileInput(this);" style="display: none"/>
     <input type="button" id="load" value="Load" onclick="document.getElementById('file').click();" />
     <input type="button" id="stop" value="Stop" onclick="Modplayer_Stop()" />
-    <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
-
     <div id="terminal"></div>
+    <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
 
     <!--    Based on sample source from https://gitlab.com/ThibaultLemaire/rust-sdl-canvas-wasm provided by Thibault Lemaire-->
 
@@ -29,13 +28,13 @@
         var term;
         var playing = false;
         Module['onRuntimeInitialized'] = (function () {
-            // Object.defineProperty(Module, 'canvas', {
-            //     get: function () {
-            //         return document.getElementById('canvas');
-            //     }
-            // });
             term = new Terminal({cols: 200, rows: 50});
             term.open(document.getElementById('terminal'));
+            Object.defineProperty(Module, 'canvas', {
+                get: function () {
+                    return document.getElementById('canvas');
+                }
+            });
         })
 
 

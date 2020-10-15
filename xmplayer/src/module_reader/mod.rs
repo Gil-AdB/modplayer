@@ -8,6 +8,7 @@ use crate::pattern::Pattern;
 use crate::channel_state::channel_state::clamp;
 use crate::module_reader::stm::stm::read_stm;
 use crate::channel_state::ChannelState;
+use crate::song_state::SongHandle;
 
 mod xm;
 mod module;
@@ -129,7 +130,9 @@ pub fn read_module(path: &str) -> SimpleResult<SongData> {
     read_s3m(path)
 }
 
-pub fn print_module(_data: &SongData, patterns: impl Iterator<Item = String>) {
+pub fn print_module(handle: &SongHandle, patterns: impl Iterator<Item = String>) {
+    let _data = &handle.get().song_data;
+
     for pattern in patterns {
         dbg!(&_data.patterns[_data.pattern_order[pattern.parse::<usize>().unwrap()] as usize]);
     }

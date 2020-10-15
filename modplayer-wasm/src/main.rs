@@ -58,7 +58,7 @@ impl AudioCallback for AudioCB {
     type Channel = f32;
 
     fn callback(&mut self, out: &mut [f32]) {
-        let mut song = self.q.get().song.lock().unwrap();
+        let mut song = self.q.get_mut().song.lock().unwrap();
         let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
 
         // Oh, Well...
@@ -146,7 +146,7 @@ impl App {
             .window("Mod Player", 0, 0)
             .build()
             .unwrap();
-        // let mut canvas = window.into_canvas().build().unwrap();
+        let mut canvas = window.into_canvas().build().unwrap();
 
         let mut event_pump = leak!(sdl_context.event_pump().unwrap());
 
@@ -190,11 +190,11 @@ impl App {
                         };
 
                         let mut song = SongState::new("/file".to_string());
-                        instruments = song.get().song.lock().unwrap().get_instruments();
+                        instruments = song.get_mut().song.lock().unwrap().get_instruments();
 
-                        triple_buffer_reader =  Option::from(song.get().get_triple_buffer_reader());
+                        triple_buffer_reader =  Option::from(song.get_mut().get_triple_buffer_reader());
                         audio_output = leak!(audio.open_playback(None, &desired_spec, |spec| {
-                            song.get().song.lock().unwrap().set_sample_rate(spec.freq as f32);
+                            song.get_mut().song.lock().unwrap().set_sample_rate(spec.freq as f32);
                             let audio_cb = AudioCB { q: song.clone()};
                             audio_cb
                         }).unwrap());

@@ -25,7 +25,7 @@ impl AudioOutput {
         let settings =
             pa.default_output_stream_settings(CHANNELS, sample_rate as f64, AUDIO_BUF_FRAMES as u32).unwrap();
 
-        let mut qclone = song_handle.get().get_queue();
+        let mut qclone = song_handle.get_mut().get_queue();
 
         // This routine will be called by the PortAudio engine when audio is needed. It may called at
         // interrupt level on some machines so don't do anything that could mess up the system like
