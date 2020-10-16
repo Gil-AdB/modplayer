@@ -25,7 +25,7 @@ use std::ptr::{replace, null, null_mut};
 use std::sync::Mutex;
 use sdl2::{Sdl, AudioSubsystem, EventPump};
 use std::ffi::c_void;
-use crate::emscripten_boilerplate::emscripten_run_script;
+use crate::emscripten_boilerplate::{emscripten_run_script, term_writeln};
 use std::ffi::CString;
 use std::collections::VecDeque;
 use std::time::{SystemTime, Duration};
@@ -128,8 +128,9 @@ impl App {
         if play_data.tick != self.song_tick || play_data.row != self.song_row {
             Display::display(play_data, instruments, &mut|str| {
                 let out = str.replace("\"", "\\\"");
-                let display_string = format!("term.writeln(\"{}\");", out);
-                unsafe { emscripten_run_script(CString::new(display_string).unwrap().as_ptr()); }
+                // let display_string = format!("term.writeln(\"{}\");", out);
+                // unsafe { emscripten_run_script(CString::new(display_string).unwrap().as_ptr()); }
+                unsafe { term_writeln(CString::new(out).unwrap().as_ptr()); }
             });
             self.song_row = play_data.row;
             self.song_tick = play_data.tick;
@@ -150,7 +151,7 @@ impl App {
 
         let mut event_pump = leak!(sdl_context.event_pump().unwrap());
 
-        let fps = 10; // call the function as fast as the browser wants to render (typically 60fps)
+        let fps = -1; // call the function as fast as the browser wants to render (typically 60fps)
         let simulate_infinite_loop = 1; // call the function repeatedly
 
         let leaked_self = leak!(self);
