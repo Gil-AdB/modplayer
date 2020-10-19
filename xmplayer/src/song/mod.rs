@@ -3,7 +3,7 @@ use std::sync::mpsc::Receiver;
 
 use crate::channel_state::{ChannelState, Voice};
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp};
-use crate::instrument::{LoopType, Instruments, Instrument};
+use crate::instrument::{LoopType, Instrument};
 use crate::producer_consumer_queue::AUDIO_BUF_FRAMES;
 use crate::module_reader::{SongData, is_note_valid};
 use crate::tables::{PANNING_TAB, TableType};
@@ -68,6 +68,20 @@ impl PatternChange {
         self.row = 0;
     }
 }
+
+pub fn fill<T>(arr: &mut [T], value: T)
+    where
+        T: Clone,
+{
+    if let Some((last, elems)) = arr.split_last_mut() {
+        for el in elems {
+            el.clone_from(&value);
+        }
+
+        *last = value
+    }
+}
+
 
 
 struct GlobalVolume {
@@ -423,7 +437,7 @@ impl Song {
 
 
     pub fn get_next_tick(&mut self, buf: &mut [f32], rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
-        buf.fill(0.0);
+        fill(buf, 0.0);
         self.bpm.update(self.bpm.bpm, self.rate);
         loop { // loop1
             match self.tick_state.state {
