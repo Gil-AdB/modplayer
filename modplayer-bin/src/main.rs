@@ -1,8 +1,5 @@
-#![feature(generators, generator_trait)]
-#![feature(async_closure)]
-#![feature(box_syntax)]
 
-use std::ops::{Generator, GeneratorState, Deref, DerefMut};
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::sync::{Arc, mpsc, Mutex};
 use std::sync::atomic::{AtomicPtr, Ordering, AtomicBool};

@@ -427,7 +427,7 @@ fn log(i: usize) -> f64 {
 }
 
 fn log_table() -> Box<[f64; 768]> {
-    let mut result = box [0.0f64; 768];
+    let mut result = Box::new([0.0f64; 768]);
     for i in 0..768 {
         result[i] = log(i);
     }
@@ -452,7 +452,7 @@ pub struct AudioTables {
 impl AudioTables {
     fn calc_tables_linear() -> Box<AudioTables> // taken directly from ft2clone
     {
-        let mut result = box Self { periods: LINEAR_PERIODS, d_period2hz_tab: [0.0f64; 65536] };
+        let mut result = Box::new(Self { periods: LINEAR_PERIODS, d_period2hz_tab: [0.0f64; 65536] });
         result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
         // linear periods
         for i in 1..65536 {
@@ -468,7 +468,7 @@ impl AudioTables {
 
     fn calc_tables_amiga() -> Box<AudioTables> // taken directly from ft2clone
     {
-        let mut result = box Self { periods: AMIGA_PERIODS, d_period2hz_tab: [0.0f64; 65536] };
+        let mut result = Box::new(Self { periods: AMIGA_PERIODS, d_period2hz_tab: [0.0f64; 65536] });
         result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
         // Amiga periods
         for i in 1..65536 {

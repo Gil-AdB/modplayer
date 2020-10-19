@@ -63,7 +63,7 @@ impl SongState {
         let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
         let stopped = Arc::new(AtomicBool::from(false));
 
-        let mut sh = StructHolder::new( box Self {
+        let mut sh = StructHolder::new( Box::new( Self {
             stopped,
             triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader)),
             song_data,
@@ -73,7 +73,7 @@ impl SongState {
             q: ProducerConsumerQueue::new(),
             display_cb: None,
             self_ref: None
-        });
+        }));
 
         sh.get_mut().self_ref = Option::from(sh.clone());
         sh

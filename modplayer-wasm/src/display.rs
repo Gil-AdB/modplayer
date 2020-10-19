@@ -11,6 +11,60 @@ struct RGB {
     b: u8,
 }
 
+struct Line {
+    data:   String,
+    index:  Vec<usize>
+}
+
+
+impl Line {
+    fn new(data: String) -> Self {
+        let mut index = vec![0usize];
+        let mut index_pos = 0;
+        let mut inside_escape = false;
+
+        // Minimal heuristic to detect RGB color escape sequence.
+        // Other escape sequences are not supported currently...
+        for (i, c) in data.chars().enumerate() {
+            if !inside_escape {
+                if c == '\x1b' {
+                    inside_escape = true;
+                    continue;
+                }
+            } else {
+                if c == 'm' {
+                    inside_escape = false;
+                    continue;
+                }
+
+            }
+            index.push(index_pos);
+            index_pos += 1;
+        }
+        Self { data, index }
+    }
+
+
+}
+
+struct VirtualScreen {
+    lines:      Vec<Line>,
+}
+
+
+impl VirtualScreen {
+    fn new() -> Self {
+        VirtualScreen {
+            lines: vec![],
+        }
+    }
+
+    fn add_line(&mut self, data: String) {
+        self.lines.push(Line::new(data));
+    }
+}
+
+
 pub(crate) struct Display {}
 
 impl Display {
@@ -72,6 +126,9 @@ impl Display {
 
 
     pub(crate) fn display(play_data: &PlayData, instruments: &Vec<Instrument>, display: &mut dyn FnMut(String)) {
+
+        let mut screen = VirtualScreen::new();
+
         let colors: [RGB; 12] = [
             RGB { r: 0, g: 120, b: 0 },
             RGB { r: 0, g: 140, b: 0 },
@@ -87,9 +144,9 @@ impl Display {
             RGB { r: 225, g: 64, b: 0 },
         ];
         // let first_tick = play_data.tick == 0;
-        display(Self::hide());
-        display(Self::move_to(0, 0));
-        display(format!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
+        // display(Self::hide());
+        // display(Self::move_to(0, 0));
+        screen.add_line(format!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
                  play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
                  play_data.pattern_len,
                  play_data.bpm, play_data.speed,
@@ -97,7 +154,7 @@ impl Display {
         ));
         // display(Self::move_to(0, 2));
 
-        display("on |channel|            instrument            |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |".to_string());
+        screen.add_line("on |channel|            instrument            |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |".to_string());
 
         let mut idx = 0u32;
         for channel in &play_data.channel_status {
@@ -110,7 +167,7 @@ impl Display {
                         (channel.global_volume / 64.0) *
                         (channel.fadeout_volume / 65536.0);
 
-                display(format!("{:3}| {:5} | {:2}: {:28} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
+                screen.add_line(format!("{:3}| {:5} | {:2}: {:28} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
                          if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument, instruments[channel.instrument].name.trim(),
                          if channel.on { (channel.frequency) as u32 } else { 0 },
                          Self::range_with_color((final_vol * 12.0).ceil() as u32, 0, 12, 11, &colors),
@@ -123,10 +180,10 @@ impl Display {
                          Self::range(channel.final_panning as u32, 0, 255, 8),
                 ));
             } else {
-                display(format!("{:3}| {:5} | {:32} |  {:<6} |{:12}| {:14}| {:5}| {:7}|{:12}|{:12}|{:12}|{:12}| {:8}|      ", "off", idx, "", "", "",
+                screen.add_line(format!("{:3}| {:5} | {:32} |  {:<6} |{:12}| {:14}| {:5}| {:7}|{:12}|{:12}|{:12}|{:12}| {:8}|      ", "off", idx, "", "", "",
                          "", "", "", "", "", "", "", ""));
             }
         }
-        display(Self::show());
+        // display(Self::show());
     }
 }

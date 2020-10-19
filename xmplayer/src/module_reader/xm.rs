@@ -279,7 +279,7 @@ pub(crate) mod xm {
         let bpm = io_helpers::read_u16(file);
         dbg!(bpm);
         let stream_position;
-        if let Ok(pos) = file.stream_position() { stream_position = pos; } else { stream_position = 20 }
+        if let Ok(pos) = file.seek(SeekFrom::Current(0)) { stream_position = pos; } else { stream_position = 20 }
 
         let mut pattern_order = io_helpers::read_bytes(file, (60 + header_size - stream_position as u32) as usize);
 
