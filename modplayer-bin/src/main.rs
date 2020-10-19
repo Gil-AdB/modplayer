@@ -19,7 +19,6 @@ use xmplayer::triple_buffer::State::StateNoChange;
 
 use crossterm::terminal::ClearType::All;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use crate::display::Display;
 use std::borrow::BorrowMut;
 use std::marker::PhantomData;
 use std::rc::Rc;
@@ -29,28 +28,15 @@ use xmplayer::song::PlaybackCmd::Quit;
 use xmplayer::song_state::{SongState, SongHandle};
 use std::error::Error;
 
-mod display;
 #[cfg(feature="sdl2-feature")] mod sdl2_audio;
 #[cfg(feature="sdl2-feature")] use sdl2_audio::AudioOutput;
 #[cfg(feature="portaudio-feature")] mod portaudio_audio;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
 use xmplayer::instrument::Instrument;
 use crossterm::cursor::MoveToNextLine;
-
-
-// impl <T> Drop for StructHolder<T> {
-//     fn drop(&mut self) {
-//         std::mem::drop(self.t);
-//     }
-// }
-
-// impl Drop for SongState {
-//     fn drop(&mut self) {
-//         // self.self_ref = None;
-//     }
-// }
-
-
+use crossterm::terminal::{Clear, ClearType};
+use display::display::Display;
+use display::ViewPort;
 
 fn main() {
     if env::args().len() < 2 {return;}
@@ -97,8 +83,20 @@ fn run(song_data: &mut SongHandle) {
     let mut audio = AudioOutput::new(song_data, SAMPLE_RATE);
 
     let handle = song_data.get_mut().start(|data, instruments| {
-        Display::display(data, instruments, &mut|str| {
+
+        let mut view_port = ViewPort {
+            x1: 0,
+            y1: 0,
+            x2: 1,
+            y2: 1
+        };
+
+        if let Ok(size) = crossterm::terminal::size() {view_port.x2 = (size.0 + 1) as usize; view_port.y2 = (size.1 + 1) as usize; }
+
+        dbg!(&view_port);
+        Display::display(data, instruments, view_port, &mut|str| {
             write!(stdout(), "{}", str);
+            if let Err(_e) = crossterm::execute!(stdout(), Clear(ClearType::UntilNewLine)) {}
             if let Err(_e) = crossterm::execute!(stdout(), MoveToNextLine(1)) {}
         });
     });

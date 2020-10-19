@@ -194,6 +194,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "display"
+version = "0.1.0"
+dependencies = [
+ "xmplayer",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -368,6 +375,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam",
  "crossterm",
+ "display",
  "getch",
  "portaudio",
  "sdl2",
@@ -497,6 +505,7 @@ name = "rust-sdl-modplayer"
 version = "1.0.0"
 dependencies = [
  "crossbeam",
+ "display",
  "lazy_static",
  "sdl2",
  "xmplayer",

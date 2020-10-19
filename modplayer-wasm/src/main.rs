@@ -8,7 +8,6 @@ extern crate xmplayer;
 
 mod emscripten_boilerplate;
 mod leak;
-mod display;
 
 use emscripten_boilerplate::{setup_mainloop, emscripten_cancel_main_loop};
 use sdl2::pixels::Color;
@@ -36,7 +35,8 @@ use xmplayer::triple_buffer::TripleBufferReader;
 use std::ops::{Deref, DerefMut};
 use xmplayer::triple_buffer::State::StateNoChange;
 use xmplayer::instrument::Instrument;
-use display::Display;
+use display::display::Display;
+use display::ViewPort;
 
 pub enum PlayerCmd {
     Stop,
@@ -118,19 +118,27 @@ impl App {
     fn close_audio(audio: *mut c_void) {
         let leaked_pointer = audio as *mut AudioDevice<AudioCB>;
         let audio = unsafe { &mut *leaked_pointer };
-        let audio_unboxed = unsafe { Box::from_raw(audio)};
-        audio_unboxed.close_and_get_callback();
+        let audio_boxed = unsafe { Box::from_raw(audio)};
+        audio_boxed.close_and_get_callback();
     }
 
     fn handle_display(&mut self, triple_buffer_reader: &mut TripleBufferReader<PlayData>, instruments: &Vec<Instrument>) {
         let (play_data, state) = triple_buffer_reader.read();
         if StateNoChange == state { return; }
         if play_data.tick != self.song_tick || play_data.row != self.song_row {
-            Display::display(play_data, instruments, &mut|str| {
-                let out = str.replace("\"", "\\\"");
+
+            let mut view_port = ViewPort {
+                x1: 1,
+                y1: 1,
+                x2: 200,
+                y2: 35
+            };
+
+            Display::display(play_data, instruments, view_port, &mut|str| {
+                // let out = str.replace("\"", "\\\"");
                 // let display_string = format!("term.writeln(\"{}\");", out);
                 // unsafe { emscripten_run_script(CString::new(display_string).unwrap().as_ptr()); }
-                unsafe { term_writeln(CString::new(out).unwrap().as_ptr()); }
+                unsafe { term_writeln(CString::new(str).unwrap().as_ptr()); }
             });
             self.song_row = play_data.row;
             self.song_tick = play_data.tick;
@@ -157,7 +165,6 @@ impl App {
         let leaked_self = leak!(self);
 
         let mut audio_output: *mut c_void = 0 as *mut c_void;
-        let mut started = false;
         let mut triple_buffer_reader: Option<Arc<Mutex<TripleBufferReader<PlayData>>>> = None;
         let mut instruments: Vec<Instrument> = vec![];
 
@@ -175,14 +182,12 @@ impl App {
                 match cmd.unwrap() {
                     PlayerCmd::Stop => {
                         dbg!("Stop");
-                        if started {
-                            triple_buffer_reader = None;
-                            Self::close_audio(audio_output);
-                            started = false;
-                        }
+                        App::stop_audio(audio_output, &mut triple_buffer_reader)
                     }
                     PlayerCmd::NewSong => {
                         dbg!("Start");
+
+                        App::stop_audio(audio_output, &mut triple_buffer_reader);
 
                         let desired_spec = AudioSpecDesired {
                             freq: Some(48000 as i32),
@@ -200,8 +205,6 @@ impl App {
                             audio_cb
                         }).unwrap());
 
-                        started = true;
-
                         Self::resume(audio_output);
                     }
                 }
@@ -211,6 +214,13 @@ impl App {
             if handle_input(event_pump) {self_.stop();}
         });
 
+    }
+
+    fn stop_audio(mut audio_output: *mut c_void, mut triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
+        if audio_output != 0 as *mut c_void {
+            *triple_buffer_reader = None;
+            Self::close_audio(audio_output);
+        }
     }
 }
 
