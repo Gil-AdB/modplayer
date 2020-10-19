@@ -1,7 +1,7 @@
 use xmplayer::song::PlayData;
-use std::io::{stdout, Write};
-use std::cmp::max;
+use std::cmp::{max, min};
 use xmplayer::instrument::Instrument;
+use crate::ViewPort;
 
 
 #[derive(Copy, Clone)]
@@ -20,7 +20,6 @@ struct Line {
 impl Line {
     fn new(data: String) -> Self {
         let mut index = vec![0usize];
-        let mut index_pos = 0;
         let mut inside_escape = false;
 
         // Minimal heuristic to detect RGB color escape sequence.
@@ -31,16 +30,15 @@ impl Line {
                     inside_escape = true;
                     continue;
                 }
+                index.push(i);
             } else {
                 if c == 'm' {
                     inside_escape = false;
-                    continue;
                 }
-
+                continue;
             }
-            index.push(index_pos);
-            index_pos += 1;
         }
+        index.push(data.len());
         Self { data, index }
     }
 
@@ -65,7 +63,7 @@ impl VirtualScreen {
 }
 
 
-pub(crate) struct Display {}
+pub struct Display {}
 
 impl Display {
     fn color(color: RGB, str: &str) -> String {
@@ -125,7 +123,7 @@ impl Display {
     }
 
 
-    pub(crate) fn display(play_data: &PlayData, instruments: &Vec<Instrument>, display: &mut dyn FnMut(String)) {
+    pub fn display(play_data: &PlayData, instruments: &Vec<Instrument>, view_port: ViewPort, display: &mut dyn FnMut(String)) {
 
         let mut screen = VirtualScreen::new();
 
@@ -144,8 +142,6 @@ impl Display {
             RGB { r: 225, g: 64, b: 0 },
         ];
         // let first_tick = play_data.tick == 0;
-        // display(Self::hide());
-        // display(Self::move_to(0, 0));
         screen.add_line(format!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
                  play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
                  play_data.pattern_len,
@@ -184,6 +180,19 @@ impl Display {
                          "", "", "", "", "", "", "", ""));
             }
         }
-        // display(Self::show());
+        display(Self::hide());
+        display(Self::move_to(0, 0));
+
+        for y in view_port.y1..view_port.y2 {
+            if y >= screen.lines.len() {
+                break;
+            }
+            let line = &screen.lines[y];
+            if view_port.x1 >= line.index.len() {display("".to_string()); continue;}
+            let x2 = min(view_port.x2, line.index.len() - 1);
+            let range = line.index[view_port.x1]..line.index[x2];
+            display(String::from(&line.data[range]) + "\x1b[0m");
+        }
+        display(Self::show());
     }
 }

@@ -1,0 +1,9 @@
+[package]
+name = "display"
+version = "0.1.0"
+authors = ["gilad.benor@gmail.com"]
+edition = "2018"
+
+[dependencies]
+xmplayer = {path="../xmplayer"}
+

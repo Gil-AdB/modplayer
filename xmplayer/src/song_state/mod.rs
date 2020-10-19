@@ -31,15 +31,13 @@ impl <T> StructHolder<T> {
     pub fn get(&self) -> &T {
         unsafe { &*self.t.load(Ordering::Acquire) }
     }
-
-
 }
 
 #[derive(Clone)]
 pub struct SongState {
     stopped:                            Arc<AtomicBool>,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
-    pub song_data:                          SongData,
+    pub song_data:                      SongData,
     pub song:                           Arc<Mutex<Song>>,
     tx:                                 Sender<PlaybackCmd>,
     rx:                                 Arc<Mutex<Receiver<PlaybackCmd>>>,
