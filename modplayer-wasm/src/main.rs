@@ -185,14 +185,12 @@ impl App {
                 match cmd.unwrap() {
                     PlayerCmd::Stop => {
                         dbg!("Stop");
-                        App::stop_audio(audio_output, &mut triple_buffer_reader);
-                        audio_output = 0 as *mut c_void;
+                        App::stop_audio(&mut audio_output, &mut triple_buffer_reader);
                     }
                     PlayerCmd::NewSong => {
                         dbg!("Start");
 
-                        App::stop_audio(audio_output, &mut triple_buffer_reader);
-                        audio_output = 0 as *mut c_void;
+                        App::stop_audio(&mut audio_output, &mut triple_buffer_reader);
 
                         let desired_spec = AudioSpecDesired {
                             freq: Some(48000 as i32),
@@ -221,11 +219,11 @@ impl App {
 
     }
 
-    fn stop_audio(mut audio_output: *mut c_void, mut triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
-        if audio_output != 0 as *mut c_void {
+    fn stop_audio(mut audio_output: &mut *mut c_void, mut triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
+        if *audio_output != 0 as *mut c_void {
             *triple_buffer_reader = None;
-            Self::close_audio(audio_output);
-            // audio_output = 0 as *mut c_void;
+            Self::close_audio(*audio_output);
+            *audio_output = 0 as *mut c_void;
         }
     }
 }
