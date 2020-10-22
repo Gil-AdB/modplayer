@@ -19,7 +19,7 @@ struct Line {
 
 impl Line {
     fn new(data: String) -> Self {
-        let mut index = vec![0usize];
+        let mut index = vec![];
         let mut inside_escape = false;
 
         // Minimal heuristic to detect RGB color escape sequence.
@@ -71,15 +71,15 @@ impl Display {
         format!("\x1b[38;2;{};{};{}m{}", color.r, color.g, color.b, str)
     }
 
-    fn hide() -> String {
+    pub fn hide() -> String {
         "\x1b[?25l".to_string()
     }
 
-    fn show() -> String {
+    pub fn show() -> String {
         "\x1b[?25h".to_string()
     }
 
-    fn move_to(x: usize, y:usize) -> String {
+    pub fn move_to(x: usize, y:usize) -> String {
         format!("\x1b[{};{}H", x, y)
     }
 
@@ -181,6 +181,8 @@ impl Display {
                          "", "", "", "", "", "", "", ""));
             }
         }
+
+        // screen.add_line(format!("{:?}", view_port));
         // display(Self::hide());
         // display(Self::move_to(0, 0));
 
