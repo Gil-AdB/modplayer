@@ -63,7 +63,8 @@ impl VirtualScreen {
 }
 
 
-pub struct Display {}
+pub struct Display {
+}
 
 impl Display {
     fn color(color: RGB, str: &str) -> String {
@@ -180,19 +181,25 @@ impl Display {
                          "", "", "", "", "", "", "", ""));
             }
         }
-        display(Self::hide());
-        display(Self::move_to(0, 0));
+        // display(Self::hide());
+        // display(Self::move_to(0, 0));
 
-        for y in view_port.y1..view_port.y2 {
-            if y >= screen.lines.len() {
-                break;
+        for y in view_port.y1..(view_port.y1+view_port.height as isize) {
+            if y < 0 || y as usize >= screen.lines.len(){
+                display("".to_string());
+                continue;
             }
-            let line = &screen.lines[y];
-            if view_port.x1 >= line.index.len() {display("".to_string()); continue;}
-            let x2 = min(view_port.x2, line.index.len() - 1);
-            let range = line.index[view_port.x1]..line.index[x2];
-            display(String::from(&line.data[range]) + "\x1b[0m");
+
+            let line = &screen.lines[y as usize];
+            let len = line.index.len() - 1;
+            // let width = min(view_port.width, len);
+            if view_port.x1.abs() as usize > len {display("".to_string()); continue;}
+            let start = max(view_port.x1, 0);
+            let mut preamble: String = "".to_string();
+            if view_port.x1 <= 0 { for i in 0..(view_port.x1.abs() as usize) {preamble.push(' ');}};
+            let end = min(len, (view_port.x1 + (view_port.width as isize)) as usize);
+            let range = line.index[start as usize]..line.index[end];
+            display(String::from(preamble + &line.data[range]) + "\x1b[0m");
         }
-        display(Self::show());
     }
 }
