@@ -130,8 +130,8 @@ impl App {
             let mut view_port = ViewPort {
                 x1: 1,
                 y1: 1,
-                x2: 200,
-                y2: 35
+                width: 200,
+                height: 35
             };
 
             Display::display(play_data, instruments, view_port, &mut|str| {

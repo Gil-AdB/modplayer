@@ -8,6 +8,9 @@ use crate::producer_consumer_queue::AUDIO_BUF_FRAMES;
 use crate::module_reader::{SongData, is_note_valid};
 use crate::tables::{PANNING_TAB, TableType};
 use crate::triple_buffer::{TripleBufferWriter, Init};
+use std::collections::HashMap;
+use std::num::Wrapping;
+use std::iter::Map;
 
 struct BPM {
     pub bpm:                    u32,
@@ -148,6 +151,14 @@ pub enum PlaybackCmd {
     FilterToggle,
     DisplayToggle,
     ChannelToggle(u8),
+    SetUserData(String, UserData),
+    ModifyUserDataAddUSize(String, usize),
+    ModifyUserDataSubUSize(String, usize),
+    ModifyUserDataAddISize(String, isize),
+    ModifyUserDataSubISize(String, isize),
+    SpeedUp,
+    SpeedDown,
+    SpeedReset,
 }
 
 
@@ -182,6 +193,7 @@ pub struct PlayData {
     pub speed:                              u32,
     pub channel_status:                     Vec<ChannelStatus>,
     pub filter:                             bool,
+    pub user_data:                          HashMap<String, UserData>,
 }
 
 impl Init for PlayData {
@@ -198,7 +210,8 @@ impl Init for PlayData {
             bpm: 0,
             speed: 0,
             channel_status: vec![],
-            filter: false
+            filter: false,
+            user_data: Default::default()
         }
     }
 }
@@ -220,6 +233,12 @@ pub enum CallbackState {
     Complete
 }
 
+#[derive(Clone, Debug)]
+pub enum UserData {
+    String(String),
+    ISize(isize),
+    USize(usize)
+}
 
 // const BUFFER_SIZE: usize = 4096;
 pub struct Song {
@@ -228,6 +247,7 @@ pub struct Song {
     row:                        usize,
     tick:                       u32,
     rate:                       f32,
+    original_rate:              f32,
     speed:                      u32,
     global_volume:              GlobalVolume,
     song_data:                  SongData,
@@ -241,6 +261,7 @@ pub struct Song {
     use_amiga:                  TableType,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
     tick_state:                 TickState,
+    user_data:                  HashMap<String, UserData>,
 }
 
 impl Song {
@@ -268,7 +289,8 @@ impl Song {
             song_position: 0,
             row: 0,
             tick: 0,
-            rate: sample_rate * 1.0,
+            rate: sample_rate,
+            original_rate: sample_rate,
             speed: song_data.tempo as u32,
             bpm: BPM::new(song_data.bpm as u32, sample_rate as f32),
             global_volume: GlobalVolume::new(),
@@ -326,7 +348,8 @@ impl Song {
                 state: BufferState::Start,
                 current_buf_position: 0,
                 current_tick_position: 0
-            }
+            },
+            user_data: HashMap::new()
         }
     }
 
@@ -353,6 +376,7 @@ impl Song {
         play_data.speed                     = self.speed;
         play_data.channel_status.clear();
         play_data.filter                    = self.filter;
+        play_data.user_data                 = self.user_data.clone();
 
         for channel in &self.channels {
             play_data.channel_status.push(ChannelStatus {
@@ -429,6 +453,7 @@ impl Song {
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.rate = sample_rate;
+        self.original_rate = sample_rate;
     }
 
     pub fn get_instruments(&self) -> Vec<Instrument>{
@@ -519,6 +544,42 @@ impl Song {
                     PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
                     PlaybackCmd::AmigaTable => {self.use_amiga = TableType::AmigaFrequency;}
                     PlaybackCmd::LinearTable => {self.use_amiga = TableType::LinearFrequency;}
+                    PlaybackCmd::SetUserData(key, value) => {self.user_data.insert(key, value);}
+                    PlaybackCmd::ModifyUserDataAddUSize(key, value) => {
+                        let mut entry = self.user_data.entry(key).or_insert(UserData::USize(0));
+                        if let UserData::USize(x) = entry {
+                            *x = (Wrapping(*x) + Wrapping(value)).0;
+                        }
+                    }
+                    PlaybackCmd::ModifyUserDataSubUSize(key, value) => {
+                        let mut entry = self.user_data.entry(key).or_insert(UserData::USize(0));
+                        if let UserData::USize(x) = entry {
+                            *x = (Wrapping(*x) - Wrapping(value)).0;
+                        }
+                    }
+                    PlaybackCmd::ModifyUserDataAddISize(key, value) => {
+                        let entry = self.user_data.entry(key).or_insert(UserData::ISize(0));
+                        if let UserData::ISize(x) = entry {
+                            let res = (Wrapping(*x) + Wrapping(value)).0;
+                            *entry = UserData::ISize(res);
+                        }
+                    }
+                    PlaybackCmd::ModifyUserDataSubISize(key, value) => {
+                        let entry = self.user_data.entry(key).or_insert(UserData::ISize(0));
+                        if let UserData::ISize(x) = entry {
+                            let res = (Wrapping(*x) - Wrapping(value)).0;
+                            *entry = UserData::ISize(res);
+                        }
+                    }
+                    PlaybackCmd::SpeedUp => {
+                        self.rate /= 1.1;
+                    }
+                    PlaybackCmd::SpeedDown => {
+                        self.rate *= 1.1;
+                    }
+                    PlaybackCmd::SpeedReset => {
+                        self.rate = self.original_rate;
+                    }
                 }
             }
             else
