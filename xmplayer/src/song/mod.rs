@@ -10,7 +10,6 @@ use crate::tables::{PANNING_TAB, TableType};
 use crate::triple_buffer::{TripleBufferWriter, Init};
 use std::collections::HashMap;
 use std::num::Wrapping;
-use std::iter::Map;
 
 struct BPM {
     pub bpm:                    u32,

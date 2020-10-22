@@ -11,10 +11,10 @@
 <body>
 
     Module: <label id="filename"></label>
-    <input id="file" type="file" onchange="loadFileInput(this);" style="display: none"/>
+    <input id="file" type="file" onchange="loadFilesInput(this);" style="display: none"/>
     <input type="button" id="load" value="Load" onclick="document.getElementById('file').click();" />
     <input type="button" id="stop" value="Stop" onclick="Modplayer_Stop()" />
-    <div id="terminal"></div>
+    <div id="terminal" ondrop="dropHandler(event);" ondragover="dragOverHandler(event);"></div>
     <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>
 
     <!--    Based on sample source from https://gitlab.com/ThibaultLemaire/rust-sdl-canvas-wasm provided by Thibault Lemaire-->
@@ -72,21 +72,59 @@
         // }
 
 
-        function loadFileInput(fileInput) {
-            if (fileInput.files.length == 0) {
-                return;
-            }
-            var file = fileInput.files[0];
+        function loadFileInput(file) {
 
             var fr = new FileReader();
             fr.onload = function () {
                 var dataarr = new Uint8Array(fr.result);
-                fileInput.value = '';
                 document.getElementById('filename').innerText = file.name;
                 Module.loadModule(dataarr);
             };
             fr.readAsArrayBuffer(file);
         }
+
+        function loadFilesInput(fileInput) {
+            if (fileInput.files.length == 0) {
+                return;
+            }
+            var file = fileInput.files[0];
+            loadFileInput(file)
+        }
+
+        function dropHandler(ev) {
+            console.log('File(s) dropped');
+
+            // Prevent default behavior (Prevent file from being opened)
+            ev.preventDefault();
+
+            if (ev.dataTransfer.items) {
+                // Use DataTransferItemList interface to access the file(s)
+                for (var i = 0; i < ev.dataTransfer.items.length; i++) {
+                    // If dropped items aren't files, reject them
+                    if (ev.dataTransfer.items[i].kind === 'file') {
+                        var file = ev.dataTransfer.items[i].getAsFile();
+                        console.log('... file[' + i + '].name = ' + file.name);
+                        loadFileInput(file);
+                        break;
+                    }
+                }
+            } else {
+                // Use DataTransfer interface to access the file(s)
+                for (var i = 0; i < ev.dataTransfer.files.length; i++) {
+                    console.log('... file[' + i + '].name = ' + ev.dataTransfer.files[i].name);
+                    loadFileInput(file);
+                    break;
+                }
+            }
+        }
+
+        function dragOverHandler(ev) {
+            console.log('File(s) in drop zone');
+
+            // Prevent default behavior (Prevent file from being opened)
+            ev.preventDefault();
+        }
+
 
     </script>
 

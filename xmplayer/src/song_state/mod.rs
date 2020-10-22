@@ -13,7 +13,6 @@ use crate::triple_buffer::{TripleBufferReader, TripleBuffer};
 use std::sync::mpsc::{Sender, Receiver};
 use std::ops::DerefMut;
 use crate::instrument::Instrument;
-use std::fmt::Display;
 
 #[derive(Clone)]
 pub struct StructHolder<T> {
