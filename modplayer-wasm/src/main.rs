@@ -128,11 +128,14 @@ impl App {
         if play_data.tick != self.song_tick || play_data.row != self.song_row {
 
             let mut view_port = ViewPort {
-                x1: 1,
-                y1: 1,
+                x1: 0,
+                y1: 0,
                 width: 200,
                 height: 35
             };
+
+
+            unsafe { term_writeln(CString::new(Display::move_to(1, 1)).unwrap().as_ptr()); }
 
             Display::display(play_data, instruments, view_port, &mut|str| {
                 // let out = str.replace("\"", "\\\"");
@@ -182,12 +185,14 @@ impl App {
                 match cmd.unwrap() {
                     PlayerCmd::Stop => {
                         dbg!("Stop");
-                        App::stop_audio(audio_output, &mut triple_buffer_reader)
+                        App::stop_audio(audio_output, &mut triple_buffer_reader);
+                        audio_output = 0 as *mut c_void;
                     }
                     PlayerCmd::NewSong => {
                         dbg!("Start");
 
                         App::stop_audio(audio_output, &mut triple_buffer_reader);
+                        audio_output = 0 as *mut c_void;
 
                         let desired_spec = AudioSpecDesired {
                             freq: Some(48000 as i32),
@@ -220,6 +225,7 @@ impl App {
         if audio_output != 0 as *mut c_void {
             *triple_buffer_reader = None;
             Self::close_audio(audio_output);
+            // audio_output = 0 as *mut c_void;
         }
     }
 }
