@@ -9,20 +9,14 @@ extern crate xmplayer;
 mod emscripten_boilerplate;
 mod leak;
 
-use emscripten_boilerplate::{setup_mainloop, emscripten_cancel_main_loop};
-use sdl2::pixels::Color;
-use sdl2::rect::Rect;
+use emscripten_boilerplate::{setup_mainloop};
 use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioDevice};
-use xmplayer::producer_consumer_queue::{AUDIO_BUF_SIZE, ProducerConsumerQueue, AUDIO_BUF_FRAMES};
-use xmplayer::producer_consumer_queue::{PCQHolder};
-use xmplayer::song::{Song, PlaybackCmd, PlayData, CallbackState};
-use xmplayer::module_reader::{SongData, read_module, print_module};
+use xmplayer::song::{PlaybackCmd, PlayData};
 use xmplayer::song_state::{SongState, SongHandle};
 use std::sync::{mpsc, Arc};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::ptr::{replace, null, null_mut};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
-use sdl2::{Sdl, AudioSubsystem, EventPump};
+use sdl2::{EventPump};
 use std::ffi::c_void;
 use crate::emscripten_boilerplate::{emscripten_run_script, term_writeln};
 use std::ffi::CString;
@@ -30,13 +24,13 @@ use std::collections::VecDeque;
 use std::time::{SystemTime, Duration};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use xmplayer::song_state::StructHolder;
 use xmplayer::triple_buffer::TripleBufferReader;
-use std::ops::{Deref, DerefMut};
 use xmplayer::triple_buffer::State::StateNoChange;
 use xmplayer::instrument::Instrument;
 use display::display::Display;
 use display::ViewPort;
+use std::ops::DerefMut;
+use xmplayer::producer_consumer_queue::{AUDIO_BUF_FRAMES};
 
 pub enum PlayerCmd {
     Stop,
@@ -65,17 +59,12 @@ impl AudioCallback for AudioCB {
         let mut cmds = PLAYBACK_CMDS.lock().unwrap();
         while cmds.len() > 0 {
             let cmd = cmds.pop_front().unwrap();
-            tx.send(cmd);
+            let _ = tx.send(cmd);
         }
 
 
         song.get_next_tick(out, &mut rx);
     }
-}
-
-
-fn unbox<T>(value: Box<T>) -> T {
-    *value
 }
 
 struct App {
@@ -127,7 +116,7 @@ impl App {
         if StateNoChange == state { return; }
         if play_data.tick != self.song_tick || play_data.row != self.song_row {
 
-            let mut view_port = ViewPort {
+            let view_port = ViewPort {
                 x1: 0,
                 y1: 0,
                 width: 200,
@@ -138,9 +127,6 @@ impl App {
             unsafe { term_writeln(CString::new(Display::move_to(1, 1)).unwrap().as_ptr()); }
 
             Display::display(play_data, instruments, view_port, &mut|str| {
-                // let out = str.replace("\"", "\\\"");
-                // let display_string = format!("term.writeln(\"{}\");", out);
-                // unsafe { emscripten_run_script(CString::new(display_string).unwrap().as_ptr()); }
                 unsafe { term_writeln(CString::new(str).unwrap().as_ptr()); }
             });
             self.song_row = play_data.row;
@@ -158,9 +144,9 @@ impl App {
             .window("Mod Player", 0, 0)
             .build()
             .unwrap();
-        let mut canvas = window.into_canvas().build().unwrap();
+        let _canvas = window.into_canvas().build().unwrap();
 
-        let mut event_pump = leak!(sdl_context.event_pump().unwrap());
+        let event_pump = leak!(sdl_context.event_pump().unwrap());
 
         let fps = -1; // call the function as fast as the browser wants to render (typically 60fps)
         let simulate_infinite_loop = 1; // call the function repeatedly
@@ -173,7 +159,7 @@ impl App {
 
         setup_mainloop(fps, simulate_infinite_loop, leaked_self, move |self_| unsafe {
             let leaked_pointer = leaked_self as *mut Self;
-            let self_ = unsafe { &mut *leaked_pointer };
+            let self_ = &mut *leaked_pointer;
 
             if triple_buffer_reader.is_some() {
                 self_.handle_display(&mut triple_buffer_reader.as_ref().unwrap().lock().unwrap().deref_mut(), &instruments);
@@ -195,7 +181,7 @@ impl App {
                         let desired_spec = AudioSpecDesired {
                             freq: Some(48000 as i32),
                             channels: Some(2),
-                            samples: Some(1024 as u16)
+                            samples: Some(AUDIO_BUF_FRAMES as u16)
                         };
 
                         let mut song = SongState::new("/file".to_string());
@@ -213,13 +199,13 @@ impl App {
                 }
             }
             let leaked_event_pump = event_pump as *mut EventPump;
-            let event_pump = unsafe { &mut *leaked_event_pump };
+            let event_pump = &mut *leaked_event_pump;
             if handle_input(event_pump) {self_.stop();}
         });
 
     }
 
-    fn stop_audio(mut audio_output: &mut *mut c_void, mut triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
+    fn stop_audio(audio_output: &mut *mut c_void, triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
         if *audio_output != 0 as *mut c_void {
             *triple_buffer_reader = None;
             Self::close_audio(*audio_output);

@@ -1,6 +1,4 @@
 
-use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
 use std::sync::{Arc, mpsc, Mutex};
 use std::sync::atomic::{AtomicPtr, Ordering, AtomicBool};
 use std::sync::mpsc::{Receiver, Sender, channel};

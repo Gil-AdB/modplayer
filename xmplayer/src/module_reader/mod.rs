@@ -88,7 +88,7 @@ pub struct SongData {
                     tracker_name:       String,
     pub(crate)      song_length:        u16,
     pub(crate)      restart_position:   u16,
-                    channel_count:      u16,
+    pub(crate)      channel_count:      u16,
     pub(crate)      patterns:           Vec<Patterns>,
                     instrument_count:   u16,
                     frequency_type:     FrequencyType,

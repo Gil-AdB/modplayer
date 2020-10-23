@@ -114,7 +114,7 @@ pub(crate) mod s3m {
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize);
 
         // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
-        let instruments = read_instruments(file, &instrument_ptrs);
+        let instruments = read_instruments(file, &instrument_ptrs)?;
         let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map);
 
 
@@ -447,7 +447,7 @@ pub(crate) mod s3m {
         }
     }
 
-    fn read_instruments<R: Read + Seek>(file: &mut R, instrument_ptrs: &Vec<u16>) -> Vec<Instrument> {
+    fn read_instruments<R: Read + Seek>(file: &mut R, instrument_ptrs: &Vec<u16>) -> SimpleResult<Vec<Instrument>> {
         let mut instruments: Vec<Instrument> = vec![];
         let instrument_count = instrument_ptrs.len();
 
@@ -469,7 +469,7 @@ pub(crate) mod s3m {
             let _ = read_u8(file);
             let sample_packing = read_u8(file);
             if sample_packing != 0 {
-                panic!("Unknown file format");
+                return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other,"Unknown file format")));
             }
             let sample_flags = read_u8(file);
             let c2spd = read_u32(file) & 0xFFFF;
@@ -502,6 +502,6 @@ pub(crate) mod s3m {
             instrument.samples = vec![sample];
             instruments.push(instrument);
         }
-        instruments
+        Ok(instruments)
     }
 }
