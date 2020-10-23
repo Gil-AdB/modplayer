@@ -250,7 +250,7 @@ pub struct Song {
     speed:                      u32,
     global_volume:              GlobalVolume,
     song_data:                  SongData,
-    channels:                   [ChannelState;32],
+    channels:                   Vec<ChannelState>,
     pattern_change:             PatternChange,
     bpm:                        BPM,
     loop_pattern:               bool,
@@ -294,7 +294,7 @@ impl Song {
             bpm: BPM::new(song_data.bpm as u32, sample_rate as f32),
             global_volume: GlobalVolume::new(),
             song_data: song_data.clone(),
-            channels: [ChannelState {
+            channels: vec![ChannelState {
                 // instrument: &song_data.instruments[0],
                 // sample: &song_data.instruments[0].samples[0],
                 voice: Voice::new(),
@@ -335,7 +335,7 @@ impl Song {
                 multi_retrig_count: 0,
                 multi_retrig_volume: 0,
                 last_played_note: 0
-            }; 32],
+            }; song_data.channel_count as usize],
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
@@ -545,13 +545,13 @@ impl Song {
                     PlaybackCmd::LinearTable => {self.use_amiga = TableType::LinearFrequency;}
                     PlaybackCmd::SetUserData(key, value) => {self.user_data.insert(key, value);}
                     PlaybackCmd::ModifyUserDataAddUSize(key, value) => {
-                        let mut entry = self.user_data.entry(key).or_insert(UserData::USize(0));
+                        let entry = self.user_data.entry(key).or_insert(UserData::USize(0));
                         if let UserData::USize(x) = entry {
                             *x = (Wrapping(*x) + Wrapping(value)).0;
                         }
                     }
                     PlaybackCmd::ModifyUserDataSubUSize(key, value) => {
-                        let mut entry = self.user_data.entry(key).or_insert(UserData::USize(0));
+                        let entry = self.user_data.entry(key).or_insert(UserData::USize(0));
                         if let UserData::USize(x) = entry {
                             *x = (Wrapping(*x) - Wrapping(value)).0;
                         }

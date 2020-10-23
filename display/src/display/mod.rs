@@ -164,7 +164,7 @@ impl Display {
                         (channel.global_volume / 64.0) *
                         (channel.fadeout_volume / 65536.0);
 
-                screen.add_line(format!("{:3}| {:5} | {:2}: {:28} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
+                screen.add_line(format!("{:3}| {:5} |{:3}: {:28} |  {:<6} |{:11}|{:14}| {:4} | {:7}|{:11}|{:11}|{:11}|{:11}|{:8}|      ",
                          if channel.force_off { " x" } else if channel.on { "on" } else { "off" }, idx, channel.instrument, instruments[channel.instrument].name.trim(),
                          if channel.on { (channel.frequency) as u32 } else { 0 },
                          Self::range_with_color((final_vol * 12.0).ceil() as u32, 0, 12, 11, &colors),
@@ -198,7 +198,7 @@ impl Display {
             if view_port.x1.abs() as usize > len {display("".to_string()); continue;}
             let start = max(view_port.x1, 0);
             let mut preamble: String = "".to_string();
-            if view_port.x1 <= 0 { for i in 0..(view_port.x1.abs() as usize) {preamble.push(' ');}};
+            if view_port.x1 <= 0 { for _ in 0..(view_port.x1.abs() as usize) {preamble.push(' ');}};
             let end = min(len, (view_port.x1 + (view_port.width as isize)) as usize);
             let range = line.index[start as usize]..line.index[end];
             display(String::from(preamble + &line.data[range]) + "\x1b[0m");
