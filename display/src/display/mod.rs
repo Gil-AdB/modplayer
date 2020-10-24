@@ -83,6 +83,10 @@ impl Display {
         format!("\x1b[{};{}H", x, y)
     }
 
+    pub fn clear() -> String {
+        format!("\x1b[2J")
+    }
+
     fn range(pos: u32, start: u32, end: u32, width: usize) -> String {
         let mut result: String = String::from("");
         let mut indicator_pos = ((pos - start) as f32 / (end - start) as f32 * (width) as f32) as usize;
