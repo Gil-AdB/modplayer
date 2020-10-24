@@ -11,10 +11,17 @@ pub(crate) mod s3m {
     use crate::module_reader;
 
     pub fn read_s3m(path: &str) -> SimpleResult<SongData> {
-        let f = File::open(path).expect("failed to open the file");
-        let file_len = f.metadata().expect("Can't read file metadata").len();
-        let mut file = BufReader::new(f);
+        let f = match File::open(path) {
+            Ok(f) => {f}
+            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "failed to open the file")));}
+        };
 
+        let file_len = match f.metadata(){
+            Ok(m) => {m.len()}
+            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
+        };
+
+        let mut file = BufReader::new(f);
 
         // println!("file length: {}", file_len);
         if file_len < 1084 {

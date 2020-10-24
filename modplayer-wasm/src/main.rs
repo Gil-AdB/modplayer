@@ -11,14 +11,14 @@ mod leak;
 
 use emscripten_boilerplate::{setup_mainloop};
 use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioDevice};
-use xmplayer::song::{PlaybackCmd, PlayData};
-use xmplayer::song_state::{SongState, SongHandle};
+use xmplayer::song::{PlaybackCmd, PlayData, CallbackState};
+use xmplayer::song_state::{SongState, SongHandle, StructHolder};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 use sdl2::{EventPump};
 use std::ffi::c_void;
-use crate::emscripten_boilerplate::{emscripten_run_script, term_writeln};
+use crate::emscripten_boilerplate::{emscripten_run_script, term_writeln, on_module_stop};
 use std::ffi::CString;
 use std::collections::VecDeque;
 use std::time::{SystemTime, Duration};
@@ -31,10 +31,11 @@ use display::display::Display;
 use display::ViewPort;
 use std::ops::DerefMut;
 use xmplayer::producer_consumer_queue::{AUDIO_BUF_FRAMES};
+use std::sync::atomic::Ordering;
 
 pub enum PlayerCmd {
     Stop,
-    NewSong
+    NewSong(String)
 }
 
 
@@ -52,7 +53,8 @@ impl AudioCallback for AudioCB {
     type Channel = f32;
 
     fn callback(&mut self, out: &mut [f32]) {
-        let mut song = self.q.get_mut().song.lock().unwrap();
+        let song_state = self.q.get_mut();
+        let mut song = song_state.song.lock().unwrap();
         let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
 
         // Oh, Well...
@@ -62,8 +64,10 @@ impl AudioCallback for AudioCB {
             let _ = tx.send(cmd);
         }
 
-
-        song.get_next_tick(out, &mut rx);
+        if let CallbackState::Complete = song.get_next_tick(out, &mut rx) {
+            song_state.stopped.store(true, Ordering::Release);
+            App::stop();
+        }
     }
 }
 
@@ -87,12 +91,12 @@ impl App {
         leak!(app)
     }
 
-    pub(crate) fn start(&self) {
+    pub(crate) fn start(cb: String) {
         dbg!("Sending New");
-        CMDS.lock().unwrap().push_back(PlayerCmd::NewSong);
+        CMDS.lock().unwrap().push_back(PlayerCmd::NewSong(cb));
     }
 
-    pub(crate) fn stop(&self) {
+    pub(crate) fn stop() {
         dbg!("Sending Stop");
         CMDS.lock().unwrap().push_back(PlayerCmd::Stop);
     }
@@ -173,7 +177,7 @@ impl App {
                         dbg!("Stop");
                         App::stop_audio(&mut audio_output, &mut triple_buffer_reader);
                     }
-                    PlayerCmd::NewSong => {
+                    PlayerCmd::NewSong(cb) => {
                         dbg!("Start");
 
                         App::stop_audio(&mut audio_output, &mut triple_buffer_reader);
@@ -186,7 +190,10 @@ impl App {
                             samples: Some(AUDIO_BUF_FRAMES as u16)
                         };
 
-                        let mut song = SongState::new("/file".to_string());
+                        let mut song = match SongState::new("/file".to_string()) {
+                            Ok(s) => {s}
+                            Err(_) => {return;}
+                        };
                         instruments = song.get_mut().song.lock().unwrap().get_instruments();
 
                         triple_buffer_reader =  Option::from(song.get_mut().get_triple_buffer_reader());
@@ -202,16 +209,17 @@ impl App {
             }
             let leaked_event_pump = event_pump as *mut EventPump;
             let event_pump = &mut *leaked_event_pump;
-            if handle_input(event_pump) {self_.stop();}
+            if handle_input(event_pump) {Self::stop();}
         });
 
     }
 
-    fn stop_audio(audio_output: &mut *mut c_void, triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
+    unsafe fn stop_audio(audio_output: &mut *mut c_void, triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
         if *audio_output != 0 as *mut c_void {
             *triple_buffer_reader = None;
             Self::close_audio(*audio_output);
             *audio_output = 0 as *mut c_void;
+            on_module_stop();
         }
     }
 }
@@ -311,15 +319,15 @@ fn handle_input(event_pump: &mut EventPump) -> bool {
 extern fn Modplayer_Stop(app_ptr: *mut c_void) {
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
-    self_.stop();
+    App::stop();
 }
 
 #[no_mangle]
-extern fn Modplayer_Start(app_ptr: *mut c_void) {
+extern fn Modplayer_Start(app_ptr: *mut c_void, cb: String) {
     dbg!("Modplayer_Start");
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
-    self_.start();
+    App::start(cb);
 }
 
 pub fn main() {
