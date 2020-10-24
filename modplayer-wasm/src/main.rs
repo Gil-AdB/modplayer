@@ -178,6 +178,8 @@ impl App {
 
                         App::stop_audio(&mut audio_output, &mut triple_buffer_reader);
 
+                        term_writeln(CString::new(Display::clear()).unwrap().as_ptr());
+
                         let desired_spec = AudioSpecDesired {
                             freq: Some(48000 as i32),
                             channels: Some(2),
