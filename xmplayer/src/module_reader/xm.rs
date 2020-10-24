@@ -1,5 +1,5 @@
 pub(crate) mod xm {
-    use std::io::{Read, Seek, SeekFrom, BufReader};
+    use std::io::{Read, Seek, SeekFrom, BufReader, Error};
     use core::result::Result::{Err, Ok};
     use crate::module_reader::{Patterns, Row, SongData, SongType, FrequencyType};
     use crate::io_helpers;
@@ -7,7 +7,7 @@ pub(crate) mod xm {
     use crate::envelope::{EnvelopePoints, EnvelopePoint, Envelope};
     use crate::instrument::{Sample, LoopType, Instrument};
     use std::iter::FromIterator;
-    use std::fs::File;
+    use std::fs::{File, Metadata};
     use crate::simple_error::SimpleResult;
     use simple_error::SimpleError;
     use std::io;
@@ -331,8 +331,16 @@ pub(crate) mod xm {
     }
 
     pub fn read_xm(path: &str) -> SimpleResult<SongData> {
-        let f = File::open(path).expect("failed to open the file");
-        let file_len = f.metadata().expect("Can't read file metadata").len();
+        let f = match File::open(path) {
+            Ok(f) => {f}
+            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "failed to open the file")));}
+        };
+
+        let file_len = match f.metadata(){
+            Ok(m) => {m.len()}
+            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
+        };
+
         let mut file = BufReader::new(f);
 
 
@@ -342,9 +350,6 @@ pub(crate) mod xm {
         }
 
         let song_data = read_xm_header(&mut file);
-        //   dbg!(song_data);
-
-        //  dbg!(file.seek(SeekFrom::Current(0)));
 
         song_data
     }

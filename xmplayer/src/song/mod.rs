@@ -597,7 +597,11 @@ impl Song {
                 if !self.pattern_change.pattern_jump {
                     self.next_pattern();
                 } else {
-                    self.song_position = self.pattern_change.pattern as usize;
+                    if self.song_position >= self.pattern_change.pattern as usize {
+                        return false;
+                    } else {
+                        self.song_position = self.pattern_change.pattern as usize;
+                    }
                 }
                 self.row = self.pattern_change.row as usize;
             } else {
@@ -607,7 +611,7 @@ impl Song {
                     self.next_pattern();
                 }
             }
-            if self.song_position >= self.song_data.song_length as usize { self.song_position = self.song_data.restart_position as usize; }
+            // if self.song_position >= self.song_data.song_length as usize { self.song_position = self.song_data.restart_position as usize; }
             if self.song_position >= self.song_data.song_length as usize { return false; }
             self.tick = 0;
             self.pattern_change.reset();

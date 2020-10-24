@@ -13,6 +13,7 @@ use crate::triple_buffer::{TripleBufferReader, TripleBuffer};
 use std::sync::mpsc::{Sender, Receiver};
 use std::ops::DerefMut;
 use crate::instrument::Instrument;
+use simple_error::{SimpleError, SimpleResult};
 
 #[derive(Clone)]
 pub struct StructHolder<T> {
@@ -35,7 +36,7 @@ impl <T> StructHolder<T> {
 
 #[derive(Clone)]
 pub struct SongState {
-    stopped:                            Arc<AtomicBool>,
+    pub stopped:                        Arc<AtomicBool>,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
     pub song_data:                      SongData,
     pub song:                           Arc<Mutex<Song>>,
@@ -52,8 +53,8 @@ pub type SongHandle = StructHolder<SongState>;
 
 impl SongState {
 
-    pub fn new(path: String) -> SongHandle {
-        let song_data = read_module(path.as_str()).unwrap();
+    pub fn new(path: String) -> SimpleResult<SongHandle> {
+        let song_data = read_module(path.as_str())?;
 
         let triple_buffer = TripleBuffer::<PlayData>::new();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
@@ -74,7 +75,7 @@ impl SongState {
         }));
 
         sh.get_mut().self_ref = Option::from(sh.clone());
-        sh
+        Ok(sh)
     }
 
     fn callback(&mut self) {

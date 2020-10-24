@@ -23,7 +23,7 @@ use std::rc::Rc;
 use crossterm::event::{Event, KeyEvent, KeyCode};
 use crossterm::event::Event::Key;
 use xmplayer::song::PlaybackCmd::Quit;
-use xmplayer::song_state::{SongState, SongHandle};
+use xmplayer::song_state::{SongState, SongHandle, StructHolder};
 use std::error::Error;
 
 #[cfg(feature="sdl2-feature")] mod sdl2_audio;
@@ -47,7 +47,11 @@ fn main() {
 
    // let data = read_module(path.as_str()).unwrap();
 
-    let mut song = SongState::new(path);
+    let mut song = match SongState::new(path) {
+        Ok(s) => {s}
+        Err(_) => {return;}
+    };
+
     if env::args().len() > 2 {
         print_module(&song, env::args().skip(2));
     } else {

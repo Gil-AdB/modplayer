@@ -37,6 +37,9 @@ extern "C" {
     // pub fn emscripten_cancel_main_loop();
     pub fn emscripten_run_script(code: *const c_char);
     pub fn term_writeln(str: *const c_char);
+
+    pub fn on_module_stop();
+
 }
 
 #[cfg(target_os = "emscripten")]
@@ -67,7 +70,7 @@ pub fn setup_mainloop<A, F: FnMut(*mut c_void) + 'static>(
 }
 
 #[cfg(not(target_os = "emscripten"))]
-pub fn emscripten_run_script(code: *const c_char) {}
+pub unsafe fn emscripten_run_script(code: *const c_char) {}
 
 #[cfg(not(target_os = "emscripten"))]
 pub fn setup_mainloop<A, F: FnMut(*mut c_void) + 'static>(
@@ -79,4 +82,8 @@ pub fn setup_mainloop<A, F: FnMut(*mut c_void) + 'static>(
 }
 
 #[cfg(not(target_os = "emscripten"))]
-pub fn term_writeln(str: *const c_char) {}
+pub unsafe fn term_writeln(str: *const c_char) {}
+
+#[cfg(not(target_os = "emscripten"))]
+pub unsafe fn on_module_stop() {}
+
