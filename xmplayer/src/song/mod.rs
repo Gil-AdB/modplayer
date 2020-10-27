@@ -591,16 +591,19 @@ impl Song {
     }
 
     fn next_tick(&mut self) -> bool {
+        if self.song_position >= self.song_data.song_length as usize {
+            return false;
+        }
+
         self.tick += 1;
         if self.tick >= self.speed {
             if self.pattern_change.pattern_break || self.pattern_change.pattern_jump {
                 if !self.pattern_change.pattern_jump {
                     self.next_pattern();
                 } else {
-                    if self.song_position >= self.pattern_change.pattern as usize {
+                    self.song_position = self.pattern_change.pattern as usize;
+                    if self.song_position >=  self.song_data.song_length as usize {
                         return false;
-                    } else {
-                        self.song_position = self.pattern_change.pattern as usize;
                     }
                 }
                 self.row = self.pattern_change.row as usize;
