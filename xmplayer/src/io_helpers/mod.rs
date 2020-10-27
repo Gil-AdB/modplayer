@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Error};
 
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 
@@ -76,7 +76,10 @@ impl<R: Read> BinaryReader for R {
 
 pub(crate) fn read_string<R: Read>(file: &mut R, size: usize) -> String {
     let mut buf = vec!(0u8; size);
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     for c in &mut buf {
         if *c < 32 || *c > 127 {
             *c = 32;
@@ -87,56 +90,83 @@ pub(crate) fn read_string<R: Read>(file: &mut R, size: usize) -> String {
 
 pub(crate) fn read_u8<R: Read>(file: &mut R) -> u8 {
     let mut buf = [0u8;1];
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     buf[0]
 }
 
 pub(crate) fn read_i8<R: Read>(file: &mut R) -> i8 {
     let mut buf = [0u8;1];
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     buf[0] as i8
 }
 
 pub(crate) fn read_u16<R: Read>(file: &mut R) -> u16 {
     let mut buf = [0u8;2];
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     u16::from_le_bytes(buf)
 }
 
 pub(crate) fn read_u16_be<R: Read>(file: &mut R) -> u16 {
     let mut buf = [0u8;2];
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     u16::from_be_bytes(buf)
 }
 
 pub(crate) fn read_u24<R: Read>(file: &mut R) -> u32 {
     let mut buf = [0u8;3];
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     (((buf[0] as u32) << 16) | ((buf[2] as u32) << 8) | (buf[1] as u32)) as u32
 }
 
 pub(crate) fn read_u32<R: Read>(file: &mut R) -> u32 {
     let mut buf = [0u8;4];
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     u32::from_le_bytes(buf)
 }
 
 pub(crate) fn read_u32_be<R: Read>(file: &mut R) -> u32 {
     let mut buf = [0u8;4];
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     u32::from_be_bytes(buf)
 }
 
 pub(crate) fn read_bytes<R: Read>(file: &mut R, size: usize) -> Vec<u8> {
     let mut buf = vec!(0u8; size);
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
     buf
 }
 
 pub(crate) fn read_i16_vec<R: Read>(file: &mut R, size: usize) -> Vec<i16> {
     let mut result = vec!(0i16; size);
     let mut buf = vec!(0u8; size * 2);
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
 
     LittleEndian::read_i16_into(buf.as_slice(), result.as_mut_slice());
     result
@@ -145,7 +175,10 @@ pub(crate) fn read_i16_vec<R: Read>(file: &mut R, size: usize) -> Vec<i16> {
 pub(crate) fn read_u16_vec<R: Read>(file: &mut R, size: usize) -> Vec<u16> {
     let mut result = vec!(0u16; size);
     let mut buf = vec!(0u8; size * 2);
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
 
     LittleEndian::read_u16_into(buf.as_slice(), result.as_mut_slice());
     result
@@ -154,7 +187,10 @@ pub(crate) fn read_u16_vec<R: Read>(file: &mut R, size: usize) -> Vec<u16> {
 pub(crate) fn read_i8_vec<R: Read>(file: &mut R, size: usize) -> Vec<i8> {
     let mut result = vec!(0i8; size);
     let mut buf = vec!(0u8; size);
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
 
     let mut rdr = Cursor::new(buf);
     rdr.read_i8_into(result.as_mut_slice()).unwrap();
@@ -163,7 +199,10 @@ pub(crate) fn read_i8_vec<R: Read>(file: &mut R, size: usize) -> Vec<i8> {
 
 pub(crate) fn read_u8_vec<R: Read>(file: &mut R, size: usize) -> Vec<u8> {
     let mut buf = vec!(0u8; size);
-    file.read_exact(&mut buf).unwrap();
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
 
     buf
 }
