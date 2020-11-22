@@ -239,7 +239,7 @@ pub(crate) mod s3m {
                     channel.volume = volume;
                     channel.effect = effect;
                     channel.effect_param = effect_param;
-                    
+
                     if pattern_data & 128 == 128 {
                         fix_effects(
                             channel,
@@ -248,6 +248,15 @@ pub(crate) mod s3m {
                             &mut last_vibrato_param[channel_id],
                             &mut last_instrument[channel_id]
                         );
+                    }
+
+                    if channel.instrument != 0 && channel.effect != 0x3 {
+                        last_instrument[channel_id] = channel.instrument;
+                    }
+
+                    if channel.effect > 35 {
+                        channel.effect = 0;
+                        channel.effect_param = 0;
                     }
                 }
             }
@@ -284,6 +293,7 @@ pub(crate) mod s3m {
                 }
             }
         }
+
         if pattern.effect > 0 {
             *last_effect = pattern.effect;
         }
@@ -442,15 +452,6 @@ pub(crate) mod s3m {
                 pattern.effect = 0;
                 pattern.effect_param = 0;
             }
-        }
-
-        if pattern.instrument != 0 && pattern.effect != 0x3 {
-            *last_instrument = pattern.instrument;
-        }
-
-        if pattern.effect > 35 {
-            pattern.effect = 0;
-            pattern.effect_param = 0;
         }
     }
 
