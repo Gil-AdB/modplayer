@@ -35,5 +35,3 @@ dwarf-debug-info = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-
-
