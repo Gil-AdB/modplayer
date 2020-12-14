@@ -1,5 +1,10 @@
 [workspace]
-members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm"]
+members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm", "modplayer-bindgen", "modplayer-lib"]
+
+
+#[profile.release]
+#lto = true
+#panic = 'abort'
 
 # uncomment for termux
 #[patch.crates-io]

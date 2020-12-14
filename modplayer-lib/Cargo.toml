@@ -1,8 +1,15 @@
 [package]
-name = "modplayer-bin"
+name = "modplayer-lib"
 version = "0.1.0"
 authors = ["gilad.benor@gmail.com"]
 edition = "2018"
+
+[lib]
+name = "modplayer"
+crate-type = ["staticlib"]
+
+#[target.i686-pc-windows-msvc]
+#rustflags = ["-C", "target-feature=+crt-static", "-C", "-target-cpu=mycpu"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
@@ -14,27 +21,18 @@ sdl2-feature = ["sdl2"]
 [dependencies]
 portaudio = {version = "0.7", optional = true}
 crossbeam = "0.7"
-getch = "0.2.1"
+simple-error = "0.2.2"
 xmplayer = {path="../xmplayer"}
-display = {path="../display"}
-#tokio = { version = "0.2", features = ["full"] }
-#memmap = { git = "https://github.com/danburkert/memmap-rs" }
-#async-scoped = "0.4.1"
-crossterm = "0.17.5"
-
-
-# uncomment for termux
-#[target.'cfg(os = "android")'.patch.crates-io]
-#termios = { path = "../vendor/termios-0.2.2" }
 
 [dependencies.sdl2]
 version = "0.34.3"
 optional = true
-#features = ["static-link"]
-features = ["bundled","static-link","use-vcpkg"]
+default-features = false
+features = ["static-link"]
+#features = ["bundled","static-link","use-vcpkg"]
 
 [package.metadata.vcpkg]
-dependencies = ["sdl2", "sdl2-image[libjpeg-turbo,tiff,libwebp]", "sdl2-ttf", "sdl2-gfx", "sdl2-mixer"]
+dependencies = ["sdl2"]
 git = "https://github.com/microsoft/vcpkg"
 rev = "a0518036077baa4"
 optional = true
@@ -42,5 +40,3 @@ optional = true
 [profile.release]
 lto = true
 panic = 'abort'
-
-

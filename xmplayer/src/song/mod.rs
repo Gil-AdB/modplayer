@@ -2,7 +2,7 @@ use std::cmp::min;
 use std::sync::mpsc::Receiver;
 
 use crate::channel_state::{ChannelState, Voice};
-use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp};
+use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp, VibratoEnvelopeState};
 use crate::instrument::{LoopType, Instrument};
 use crate::producer_consumer_queue::AUDIO_BUF_FRAMES;
 use crate::module_reader::{SongData, is_note_valid};
@@ -158,6 +158,7 @@ pub enum PlaybackCmd {
     SpeedUp,
     SpeedDown,
     SpeedReset,
+    SetPosition(u32),
 }
 
 
@@ -308,6 +309,7 @@ impl Song {
                 volume_envelope_state: EnvelopeState::new(),
                 panning_envelope_state: EnvelopeState::new(),
                 // sustained: false,
+                vibrato_envelope_state: VibratoEnvelopeState::new(),
                 vibrato_state: VibratoState::new(),
                 tremolo_state: TremoloState::new(),
                 frequency_shift: 0.0,
@@ -578,6 +580,12 @@ impl Song {
                     }
                     PlaybackCmd::SpeedReset => {
                         self.rate = self.original_rate;
+                    }
+                    PlaybackCmd::SetPosition(order) => {
+                        self.pattern_change.pattern = order as u8;
+                        self.pattern_change.pattern_jump = true;
+                        self.pattern_change.row = 0;
+                        self.next_tick();
                     }
                 }
             }

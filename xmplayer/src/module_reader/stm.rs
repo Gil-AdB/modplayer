@@ -16,20 +16,14 @@ pub(crate) mod stm {
     const STM_EFFECTS: [u8;16] = [0, 0, 11, 0, 10, 2, 1, 3, 4, 7, 0, 5, 6, 0, 0, 0];
 
 
-    pub fn read_stm(path: &str) -> SimpleResult<SongData> {
-        let f = match File::open(path) {
-            Ok(f) => {f}
-            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "failed to open the file")));}
-        };
+    pub fn read_stm<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
+        file.seek(SeekFrom::Start(0));
 
-        let file_len = match f.metadata(){
-            Ok(m) => {m.len()}
+        let file_len = match file.stream_len() {
+            Ok(m) => {m}
             Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
         };
 
-        let mut file = BufReader::new(f);
-
-        // println!("file length: {}", file_len);
         if file_len < 0x3D0  {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "File is too small!")));
         }

@@ -1,0 +1,6 @@
+#[dependencies]
+#std = {default-features=false, features=["panic_immediate_abort"]}
+#
+#[profile.release]
+#lto = true
+#panic = 'abort'
