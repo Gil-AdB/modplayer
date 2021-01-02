@@ -328,8 +328,11 @@ pub(crate) mod xm {
     }
 
     pub fn read_xm<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
+        dbg!("read_xm");
+        dbg!("seek");
         file.seek(SeekFrom::Start(0));
 
+        dbg!("len");
         let file_len = match file.stream_len() {
             Ok(m) => {m}
             Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
@@ -340,6 +343,7 @@ pub(crate) mod xm {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "File is too small!")));
         }
 
+        dbg!("header");
         let song_data = read_xm_header(&mut file);
 
         song_data

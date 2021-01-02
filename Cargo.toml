@@ -1,6 +1,33 @@
-[workspace]
-members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm", "modplayer-bindgen", "modplayer-lib"]
+cargo-features = ["named-profiles"]
 
+[workspace]
+members = ["xmplayer", "display", "modplayer-bin", "modplayer-emscripten", "modplayer-wasm", "modplayer-lib"]
+
+#[profile.release]
+#debug = true
+#
+#[workspace.metadata.wasm-pack.profile.dev.wasm-bindgen]
+## Should we enable wasm-bindgen's debug assertions in its generated JS glue?
+#debug-js-glue = true
+## Should wasm-bindgen demangle the symbols in the "name" custom section?
+#demangle-name-section = true
+## Should we emit the DWARF debug info custom sections?
+#dwarf-debug-info = true
+#
+## `wasm-opt` is on by default in for the release profile, but it can be
+## disabled by setting it to `false`
+#[workspace.metadata.wasm-pack.profile.release]
+#wasm-opt = false
+#
+#[workspace.metadata.wasm-pack.profile.release.wasm-bindgen]
+#debug-js-glue = true
+#demangle-name-section = true
+#dwarf-debug-info = true
+
+#[profile.custom.release-lto]
+#lto = true
+#panic = 'abort'
+#inherits = "release"
 
 #[profile.release]
 #lto = true

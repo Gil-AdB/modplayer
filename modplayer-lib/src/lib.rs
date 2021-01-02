@@ -13,7 +13,7 @@ mod leak;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
 
 use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioDevice};
-use xmplayer::song::{PlaybackCmd, PlayData, CallbackState};
+use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, InterleavedBufferAdaptar};
 use xmplayer::song_state::{SongState, SongHandle, StructHolder};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver, Sender};
@@ -50,8 +50,9 @@ impl AudioCallback for AudioCB {
         let song_state = self.q.get_mut();
         let mut song = song_state.song.lock().unwrap();
         let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
+        let mut adaptar = InterleavedBufferAdaptar{buf: out};
 
-        if let CallbackState::Complete = song.get_next_tick(out, &mut rx) {
+        if let CallbackState::Complete = song.get_next_tick(&mut adaptar, &mut rx) {
             song_state.stopped.store(true, Ordering::Release);
             // App::stop();
         }
@@ -82,6 +83,7 @@ impl App {
     pub(crate) fn start(&mut self) {
         self.audio_output.start_audio_output();
     }
+
     pub(crate) fn set_order(&mut self, order: u32) {
         self.audio_output.set_order(order);
     }

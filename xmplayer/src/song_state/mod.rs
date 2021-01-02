@@ -18,6 +18,7 @@ use std::sync::mpsc::{Sender, Receiver};
 use std::ops::{DerefMut, Deref};
 use crate::instrument::Instrument;
 use simple_error::{SimpleResult};
+use crate::song::InterleavedBufferAdaptar;
 
 #[derive(Clone)]
 pub struct StructHolder<T> {
@@ -83,6 +84,7 @@ impl SongState {
     }
 
     pub fn set_order(&mut self, order: u32) {
+        self.q.get().drain();
         if let Ok(_) = self.tx.send(PlaybackCmd::SetPosition(order)) {}
     }
 
@@ -90,11 +92,24 @@ impl SongState {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();
         self.q.get().produce(|buf: &mut [f32]| -> bool {
-            if let CallbackState::Complete = song.get_next_tick(buf, rx.deref_mut()) { return false; }
+            let mut adaptar = InterleavedBufferAdaptar{buf};
+            if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { return false; }
             true
         });
         self.stopped.store(true, Ordering::Release);
     }
+
+    // fn callback_planar(&mut self) {
+    //     let mut song = self.song.lock().unwrap();
+    //     let mut rx = self.rx.lock().unwrap();
+    //     self.q.get().produce(|buf: &mut [f32]| -> bool {
+    //         let adaptar = PlanarBufferAdaptar::new(buf);
+    //         if let CallbackState::Complete = song.get_next_tick(adaptar, rx.deref_mut()) { return false; }
+    //         true
+    //     });
+    //     self.stopped.store(true, Ordering::Release);
+    // }
+
 
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::Acquire)

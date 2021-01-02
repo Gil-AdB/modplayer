@@ -1,4 +1,5 @@
 #![feature(seek_convenience)]
+#![feature(slice_fill)]
 #[macro_use]
 extern crate lazy_static;
 pub extern crate simple_error;

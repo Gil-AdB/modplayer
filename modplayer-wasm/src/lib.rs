@@ -5,19 +5,16 @@ extern crate wasm_bindgen;
 // extern crate sdl2;
 extern crate xmplayer;
 
-mod emscripten_boilerplate;
 mod leak;
 
 use wasm_bindgen::prelude::*;
-use emscripten_boilerplate::{setup_mainloop};
-use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song};
+use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song, BufferAdapter};
 use xmplayer::song_state::{SongState, SongHandle, StructHolder};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 // use sdl2::{EventPump};
 use std::ffi::c_void;
-use crate::emscripten_boilerplate::{emscripten_run_script, term_writeln, on_module_stop};
 use std::ffi::CString;
 use std::collections::VecDeque;
 use std::time::{SystemTime, Duration};
@@ -31,12 +28,14 @@ use std::sync::atomic::Ordering;
 use xmplayer::module_reader::{SongData, read_module, open_module};
 use xmplayer::simple_error::{SimpleResult};
 use xmplayer::triple_buffer::{TripleBufferReader, TripleBuffer};
+use xmplayer::song::PlanarBufferAdaptar;
+use wasm_bindgen::__rt::std::os::raw::c_char;
+
 
 pub enum PlayerCmd {
     Stop,
     NewSong(String)
 }
-
 
 // mpsc is just too much hassle. I tried.
 lazy_static!(
@@ -74,28 +73,71 @@ struct AudioCB {
 pub struct SongJs {
     song:                               Song,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
-
+    song_row:       usize,
+    song_tick:      u32,
 }
+
+use js_sys::Array;
 
 #[wasm_bindgen]
 impl SongJs {
-    pub fn new(data: &[u8]) -> Self {
+    pub fn new(sample_rate:f32, data: &[u8]) -> Self {
         let data = open_module(data).unwrap();
         let triple_buffer = TripleBuffer::<PlayData>::new();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
-        let song = Song::new(&data, triple_buffer_writer, 48000.0);
+        let song = Song::new(&data, triple_buffer_writer, sample_rate);
         Self {
             song,
-            triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader))
+            triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader)),
+            song_row: 0,
+            song_tick: 2000
         }
     }
 
-    pub fn get_next_tick(&mut self, buf: &mut [f32]) {
+    pub fn display(&mut self) -> Array {
+        let mut result: Vec<String> = vec!();
+        let mut tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, state) = tbr.read();
+        if StateNoChange == state {
+            return result.into_iter().map(JsValue::from).collect();
+        }
+
+        if play_data.tick != self.song_tick || play_data.row != self.song_row {
+
+            let view_port = ViewPort {
+                x1: 0,
+                y1: 0,
+                width: 200,
+                height: 35
+            };
+
+            let instruments = self.song.get_instruments();
+
+            result.push(Display::move_to(1, 1));
+
+            Display::display(play_data, &instruments, view_port, &mut|str| {
+                { result.push(str); }
+            });
+            self.song_row = play_data.row;
+            self.song_tick = play_data.tick;
+        }
+        result.into_iter().map(JsValue::from).collect()
+    }
+
+
+    // true  - continue playing
+    // false - song finished
+    pub fn get_next_tick(&mut self, left: &mut [f32], right: &mut [f32], sample_rate: f32) -> bool {
         let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
-        self.song.get_next_tick(buf, &mut rx);
+
+        self.song.set_sample_rate(sample_rate);
+        let mut adaptar = PlanarBufferAdaptar{buf:[left, right]};
+        match self.song.get_next_tick(&mut adaptar, &mut rx) {
+            CallbackState::Ok => {true}
+            CallbackState::Complete => {false}
+        }
     }
 }
-
 
 struct App {
     song_row:       usize,
@@ -141,28 +183,28 @@ impl App {
     //     audio_boxed.close_and_get_callback();
     // }
 
-    fn handle_display(&mut self, triple_buffer_reader: &mut TripleBufferReader<PlayData>, instruments: &Vec<Instrument>) {
-        let (play_data, state) = triple_buffer_reader.read();
-        if StateNoChange == state { return; }
-        if play_data.tick != self.song_tick || play_data.row != self.song_row {
-
-            let view_port = ViewPort {
-                x1: 0,
-                y1: 0,
-                width: 200,
-                height: 35
-            };
-
-
-            unsafe { term_writeln(CString::new(Display::move_to(1, 1)).unwrap().as_ptr()); }
-
-            Display::display(play_data, instruments, view_port, &mut|str| {
-                unsafe { term_writeln(CString::new(str).unwrap().as_ptr()); }
-            });
-            self.song_row = play_data.row;
-            self.song_tick = play_data.tick;
-        }
-    }
+    // fn handle_display(&mut self, triple_buffer_reader: &mut TripleBufferReader<PlayData>, instruments: &Vec<Instrument>) {
+    //     let (play_data, state) = triple_buffer_reader.read();
+    //     if StateNoChange == state { return; }
+    //     if play_data.tick != self.song_tick || play_data.row != self.song_row {
+    //
+    //         let view_port = ViewPort {
+    //             x1: 0,
+    //             y1: 0,
+    //             width: 200,
+    //             height: 35
+    //         };
+    //
+    //
+    //         unsafe { term_writeln(CString::new(Display::move_to(1, 1)).unwrap().as_ptr()); }
+    //
+    //         Display::display(play_data, instruments, view_port, &mut|str| {
+    //             unsafe { term_writeln(CString::new(str).unwrap().as_ptr()); }
+    //         });
+    //         self.song_row = play_data.row;
+    //         self.song_tick = play_data.tick;
+    //     }
+    // }
 
     fn run(&self) {
         // let sdl_context = sdl2::init().unwrap();
@@ -240,14 +282,14 @@ impl App {
 
     }
 
-    unsafe fn stop_audio(audio_output: &mut *mut c_void, triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
-        if *audio_output != 0 as *mut c_void {
-            *triple_buffer_reader = None;
-            // Self::close_audio(*audio_output);
-            // *audio_output = 0 as *mut c_void;
-            on_module_stop();
-        }
-    }
+    // unsafe fn stop_audio(audio_output: &mut *mut c_void, triple_buffer_reader: &mut Option<Arc<Mutex<TripleBufferReader<PlayData>>>>) {
+    //     if *audio_output != 0 as *mut c_void {
+    //         *triple_buffer_reader = None;
+    //         // Self::close_audio(*audio_output);
+    //         // *audio_output = 0 as *mut c_void;
+    //         on_module_stop();
+    //     }
+    // }
 }
 
 // fn handle_input(event_pump: &mut EventPump) -> bool {
@@ -365,5 +407,4 @@ impl App {
 //     let self_ = unsafe { &mut *typed_pointer as &mut App };
 //     self_.run()
 // }
-
 

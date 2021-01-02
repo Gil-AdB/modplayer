@@ -1,12 +1,9 @@
-var term;
+let term;
 
-mergeInto(LibraryManager.library, {
-    term_writeln: function (str) {
-        term.writeln(UTF8ToString(str));
-    },
-    on_module_stop: function() {
-        if (OnModuleStop != undefined) {
-            OnModuleStop();
-        }
-    },
-});
+export function set_term(obj) {
+    term = obj;
+}
+
+export function term_writeln(str) {
+    term.writeln(UTF8ToString(str));
+}
