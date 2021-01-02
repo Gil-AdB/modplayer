@@ -21,7 +21,6 @@
 <!--    <canvas id="canvas" oncontextmenu="event.preventDefault()"></canvas>-->
 
     <script type="module">
-        window.intocanv
         let term = new Terminal({cols: 200, rows: 50, disableStdin: true});
         term.open(document.getElementById('terminal'));
 
@@ -136,7 +135,10 @@
             }
 
             Display() {
-                return this.song.display();
+                if (this && this.song) {
+                    return this.song.display();
+                }
+                return [];
             }
 
         }
