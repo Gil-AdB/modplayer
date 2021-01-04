@@ -2,7 +2,7 @@ use std::cmp::min;
 use std::sync::mpsc::Receiver;
 
 use crate::channel_state::{ChannelState, Voice};
-use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp};
+use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp, VibratoEnvelopeState};
 use crate::instrument::{LoopType, Instrument};
 use crate::producer_consumer_queue::AUDIO_BUF_FRAMES;
 use crate::module_reader::{SongData, is_note_valid};
@@ -10,6 +10,7 @@ use crate::tables::{PANNING_TAB, TableType};
 use crate::triple_buffer::{TripleBufferWriter, Init};
 use std::collections::HashMap;
 use std::num::Wrapping;
+use std::any::Any;
 
 struct BPM {
     pub bpm:                    u32,
@@ -158,6 +159,7 @@ pub enum PlaybackCmd {
     SpeedUp,
     SpeedDown,
     SpeedReset,
+    SetPosition(u32),
 }
 
 
@@ -230,6 +232,74 @@ struct TickState {
 pub enum CallbackState {
     Ok,
     Complete
+}
+
+pub trait BufferAdapter {
+    fn mix_sample(&mut self, channel:usize, value: f32, pos: usize);
+    fn clear(&mut self);
+    fn len(&mut self) -> usize;
+    fn num_frames(&mut self) -> usize;
+    fn post_process(&mut self);
+}
+
+pub struct InterleavedBufferAdaptar<'a> {
+    pub buf: &'a mut [f32],
+}
+
+impl BufferAdapter for InterleavedBufferAdaptar<'_> {
+    fn mix_sample(&mut self, channel: usize, value: f32, pos: usize) {
+        self.buf[pos * 2 + channel] += value;
+    }
+
+    fn clear(&mut self) {
+        self.buf.fill(0.0);
+    }
+
+    fn len(&mut self) -> usize {
+        return self.buf.len();
+    }
+
+    fn num_frames(&mut self) -> usize {
+        self.len() / 2
+    }
+
+    fn post_process(&mut self) {}
+}
+
+pub struct PlanarBufferAdaptar<'a> {
+    pub buf: [&'a mut [f32];2],
+}
+
+impl BufferAdapter for PlanarBufferAdaptar<'_> {
+    fn mix_sample(&mut self, channel: usize, value: f32, pos: usize) {
+        self.buf[channel][pos] += value;//(value - 0.5) * 2.0;
+    }
+
+    fn clear(&mut self) {
+        self.buf[0].fill(0.0);
+        self.buf[1].fill(0.0);
+    }
+
+    fn len(&mut self) -> usize {
+        std::cmp::min(self.buf[0].len(), self.buf[1].len())
+    }
+
+    fn num_frames(&mut self) -> usize {
+        self.len()
+    }
+
+    fn post_process(&mut self) {
+        Self::normalize_array(self.buf[0]);
+        Self::normalize_array(self.buf[1]);
+    }
+}
+
+impl<'a> PlanarBufferAdaptar<'a> {
+    fn normalize_array(buf: &mut [f32]) {
+        for element in buf.iter_mut() {
+            *element = (*element - 0.5f32) * 2.0f32;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -308,6 +378,7 @@ impl Song {
                 volume_envelope_state: EnvelopeState::new(),
                 panning_envelope_state: EnvelopeState::new(),
                 // sustained: false,
+                vibrato_envelope_state: VibratoEnvelopeState::new(),
                 vibrato_state: VibratoState::new(),
                 tremolo_state: TremoloState::new(),
                 frequency_shift: 0.0,
@@ -460,8 +531,8 @@ impl Song {
     }
 
 
-    pub fn get_next_tick(&mut self, buf: &mut [f32], rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
-        fill(buf, 0.0);
+    pub fn get_next_tick(&mut self, buf: &mut impl BufferAdapter, rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
+        buf.clear();
         self.bpm.update(self.bpm.bpm, self.rate);
         loop { // loop1
             match self.tick_state.state {
@@ -485,12 +556,12 @@ impl Song {
                 BufferState::FillBuffer => {
                     while self.tick_state.current_tick_position < self.bpm.tick_duration_in_frames {
                         let ticks_to_generate = min(self.bpm.tick_duration_in_frames - self.tick_state.current_tick_position,
-                                                    AUDIO_BUF_FRAMES - self.tick_state.current_buf_position);
+                                                    buf.num_frames() - self.tick_state.current_buf_position);
 
                         self.output_channels(self.tick_state.current_buf_position, buf, ticks_to_generate);
                         self.tick_state.current_tick_position += ticks_to_generate;
                         self.tick_state.current_buf_position += ticks_to_generate;
-                        if self.tick_state.current_buf_position == AUDIO_BUF_FRAMES {
+                        if self.tick_state.current_buf_position == buf.num_frames() {
                             self.tick_state.current_buf_position = 0;
                             return CallbackState::Ok;
                         } else {
@@ -578,6 +649,12 @@ impl Song {
                     }
                     PlaybackCmd::SpeedReset => {
                         self.rate = self.original_rate;
+                    }
+                    PlaybackCmd::SetPosition(order) => {
+                        self.pattern_change.pattern = order as u8;
+                        self.pattern_change.pattern_jump = true;
+                        self.pattern_change.row = 0;
+                        self.next_tick();
                     }
                 }
             }
@@ -972,7 +1049,7 @@ impl Song {
 //         }
 //     }
 
-    fn output_channels(&mut self, current_buf_position: usize, buf: &mut [f32], ticks_to_generate: usize) {
+    fn output_channels(&mut self, current_buf_position: usize, buf: &mut impl BufferAdapter, ticks_to_generate: usize) {
         // let mut  idx: u32 = 0;
 
         // let onecc = 1.0f32;// / cc as f32;
@@ -1011,8 +1088,12 @@ impl Song {
                 // channel.last_sample = sample_data;
                 // channel.last_sample_pos = channel.sample_position;
 
-                buf[(current_buf_position + i) * 2 + 0] +=  vol_left * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
-                buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
+                let final_sample = out_sample / 4.0 * channel.voice.volume.output_volume;
+                buf.mix_sample(0, final_sample * vol_left, current_buf_position + i);
+                buf.mix_sample(1, final_sample * vol_right, current_buf_position + i);
+
+                // buf[(current_buf_position + i) * 2 + 0] +=  vol_left * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
+                // buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
 
                 // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
                 if sample.loop_type == LoopType::PingPongLoop && !channel.voice.ping {

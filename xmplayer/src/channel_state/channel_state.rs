@@ -2,6 +2,7 @@ use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
 use crate::tables::{LINEAR_PERIODS, AMIGA_PERIODS, TableType, LINEAR_TABLES, AMIGA_TABLES};
 use std::num::Wrapping;
+use crate::instrument::VibratoEnvelope;
 
 
 /// A value bounded by a minimum and a maximum
@@ -344,6 +345,60 @@ impl EnvelopeState {
             idx += 1;
         }
         self.idx = idx;
+    }
+}
+
+#[derive(Clone,Copy,Debug)]
+pub(crate) struct VibratoEnvelopeState {
+    vibrato_sweep:  u16,
+    vibrato_amp:    u16,
+    vibrato_pos:    u16,
+}
+
+impl VibratoEnvelopeState {
+    pub(crate) fn new() -> Self {
+        Self{
+            vibrato_sweep: 0,
+            vibrato_amp: 0,
+            vibrato_pos: 0
+        }
+    }
+
+    // This probably makes sense somehow, but I'm too tired to care
+    // taken from ft2-clone
+    pub(crate) fn handle(&mut self, env: &VibratoEnvelope, channel_sustained: bool) -> u16 {
+        let mut auto_vibrato_amp;
+        if env.vibrato_depth > 0 {
+            if self.vibrato_sweep > 0 {
+                auto_vibrato_amp = self.vibrato_sweep;
+                if channel_sustained {
+                    auto_vibrato_amp += self.vibrato_amp;
+                    if (auto_vibrato_amp >> 8) as u8 > env.vibrato_depth {
+                        auto_vibrato_amp = (env.vibrato_depth as u16) << 8;
+                        self.vibrato_sweep = 0;
+                    }
+                    self.vibrato_amp = auto_vibrato_amp;
+                }
+            } else {
+                auto_vibrato_amp = self.vibrato_amp;
+            }
+            self.vibrato_pos += env.vibrato_rate as u16;
+
+            let auto_vibrato_value : i16;
+            if env.vibrato_type == 1 { // square
+                auto_vibrato_value = if self.vibrato_pos > 127 {64} else {-64}
+            } else if env.vibrato_type == 2 { // ramp up
+                auto_vibrato_value = (((self.vibrato_pos >> 1) as i16 + 64) & 127) - 64;
+            } else if env.vibrato_type == 3 { // rampdown
+                auto_vibrato_value = ((-((self.vibrato_pos >> 1) as i16) + 64) & 127) - 64;
+            } else { // sin
+                auto_vibrato_value = tables::VIB_SINE_TAB[self.vibrato_pos as usize] as i16;
+            }
+
+            0
+        } else {
+            0
+        }
     }
 }
 

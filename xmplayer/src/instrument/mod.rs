@@ -133,16 +133,41 @@ impl Sample {
 }
 
 #[derive(Debug, Clone)]
+pub struct VibratoEnvelope {
+    pub vibrato_type: u8,
+    pub vibrato_sweep: u8,
+    pub vibrato_depth: u8,
+    pub vibrato_rate: u8,
+}
+
+impl VibratoEnvelope {
+    pub(crate) fn new() -> Self {
+        Self {
+            vibrato_type: 0,
+            vibrato_sweep: 0,
+            vibrato_depth: 0,
+            vibrato_rate: 0,
+        }
+    }
+
+    pub(crate) fn create(vibrato_type: u8, vibrato_sweep: u8, vibrato_depth: u8, vibrato_rate: u8) -> Self {
+        Self {
+            vibrato_type,
+            vibrato_sweep,
+            vibrato_depth,
+            vibrato_rate,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Instrument {
     pub name: String,
     pub idx: u8,
     pub sample_indexes: Vec<u8>,
     pub volume_envelope: Envelope,
     pub panning_envelope: Envelope,
-    pub vibrato_type: u8,
-    pub vibrato_sweep: u8,
-    pub vibrato_depth: u8,
-    pub vibrato_rate: u8,
+    pub vibrato_envelope: VibratoEnvelope,
     pub volume_fadeout: u16,
 
     pub samples: Vec<Sample>,
@@ -156,10 +181,7 @@ impl Instrument {
             sample_indexes: vec![0u8; 96],
             volume_envelope: Envelope::new(),
             panning_envelope: Envelope::new(),
-            vibrato_type: 0,
-            vibrato_sweep: 0,
-            vibrato_depth: 0,
-            vibrato_rate: 0,
+            vibrato_envelope: VibratoEnvelope::new(),
             volume_fadeout: 0,
             samples: vec![Sample::new(); 1]
         }
