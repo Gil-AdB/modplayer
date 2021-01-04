@@ -31,6 +31,13 @@ use xmplayer::triple_buffer::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
 use wasm_bindgen::__rt::std::os::raw::c_char;
 
+cfg_if::cfg_if! {
+    if #[cfg(feature = "wee_alloc")] {
+        #[global_allocator]
+        static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+    }
+}
+
 
 pub enum PlayerCmd {
     Stop,
@@ -47,37 +54,22 @@ struct AudioCB {
     q: SongHandle,
 }
 
-// impl AudioCallback for AudioCB {
-//     type Channel = f32;
-//
-//     fn callback(&mut self, out: &mut [f32]) {
-//         let song_state = self.q.get_mut();
-//         let mut song = song_state.song.lock().unwrap();
-//         let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
-//
-//         // Oh, Well...
-//         let mut cmds = PLAYBACK_CMDS.lock().unwrap();
-//         while cmds.len() > 0 {
-//             let cmd = cmds.pop_front().unwrap();
-//             let _ = tx.send(cmd);
-//         }
-//
-//         if let CallbackState::Complete = song.get_next_tick(out, &mut rx) {
-//             song_state.stopped.store(true, Ordering::Release);
-//             App::stop();
-//         }
-//     }
-// }
+
 
 #[wasm_bindgen]
 pub struct SongJs {
     song:                               Song,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
-    song_row:       usize,
-    song_tick:      u32,
+    song_row:                           usize,
+    song_tick:                          u32,
 }
 
-use js_sys::Array;
+use js_sys::{Array, JsString};
+
+#[wasm_bindgen(module = "/export.js")]
+extern "C" {
+    pub fn term_writeln(str: String);
+}
 
 #[wasm_bindgen]
 impl SongJs {
@@ -90,16 +82,16 @@ impl SongJs {
             song,
             triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader)),
             song_row: 0,
-            song_tick: 2000
+            song_tick: 2000,
         }
     }
 
-    pub fn display(&mut self) -> Array {
-        let mut result: Vec<String> = vec!();
+    pub fn display(&mut self) /*-> Array*/ {
+//        let mut result: Vec<String> = vec!();
         let mut tbr = self.triple_buffer_reader.lock().unwrap();
         let (play_data, state) = tbr.read();
         if StateNoChange == state {
-            return result.into_iter().map(JsValue::from).collect();
+            return;// result.into_iter().map(JsValue::from).collect();
         }
 
         if play_data.tick != self.song_tick || play_data.row != self.song_row {
@@ -113,15 +105,18 @@ impl SongJs {
 
             let instruments = self.song.get_instruments();
 
-            result.push(Display::move_to(1, 1));
+            unsafe {
+                let s = Display::move_to(1, 1);
+                term_writeln(s);
+            }
 
             Display::display(play_data, &instruments, view_port, &mut|str| {
-                { result.push(str); }
+                //    result.push(str);
+                unsafe { term_writeln(str); }
             });
             self.song_row = play_data.row;
             self.song_tick = play_data.tick;
         }
-        result.into_iter().map(JsValue::from).collect()
     }
 
 

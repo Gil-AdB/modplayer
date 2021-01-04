@@ -1,0 +1,1 @@
+@c:\windows\system32\xcopy.exe pkg\ src\static\pkg\ /y /s

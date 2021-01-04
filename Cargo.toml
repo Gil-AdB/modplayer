@@ -20,10 +20,13 @@ members = ["xmplayer", "display", "modplayer-bin", "modplayer-emscripten", "modp
 #wasm-opt = false
 #
 #[workspace.metadata.wasm-pack.profile.release.wasm-bindgen]
+##lto = true
+##panic = 'abort'
+##wasm-opt = ['-O4']
 #debug-js-glue = true
 #demangle-name-section = true
 #dwarf-debug-info = true
-
+#wasm-opt = false
 #[profile.custom.release-lto]
 #lto = true
 #panic = 'abort'
