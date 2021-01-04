@@ -1,0 +1,29 @@
+{
+  "name": "modplayer-wasm-app",
+  "version": "0.0.0",
+  "description": "Rust wasm mod player",
+  "main": "index.js",
+  "scripts": {
+    "start": "webpack-dev-server"
+  },
+  "keywords": [
+    "webassembly",
+    "wasm",
+    "rust",
+    "webpack"
+  ],
+  "author": "Gil-Ad Ben Or <gilad.benor@gmail.com>",
+  "license": "(MIT)",
+  "homepage": "https://diffuse2000.github.io/rust-modplayer/",
+  "dependencies": {
+    "modplayer-wasm": "file:../pkg",
+    "copy-webpack-plugin": "^5.0.0",
+    "webpack": "^4.16.3",
+    "webpack-cli": "^3.1.0",
+    "webpack-dev-server": "^3.1.5"
+  },
+  "devDependencies": {
+    "css-loader": "^5.0.1",
+    "style-loader": "^2.0.0"
+  }
+}

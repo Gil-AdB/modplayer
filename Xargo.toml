@@ -1,0 +1,7 @@
+[profile.custom.release-lto]
+inherits = "release"
+lto = true
+panic = 'abort'
+
+#[dependencies]
+#std = {default-features=false, features=["panic_immediate_abort"]}

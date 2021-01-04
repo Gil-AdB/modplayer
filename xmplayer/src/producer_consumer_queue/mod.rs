@@ -1,8 +1,9 @@
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError, PoisonError, WaitTimeoutResult};
 use std::sync::atomic::{AtomicPtr, Ordering, AtomicBool};
 use std::sync::atomic::Ordering::{Acquire, Release};
+use std::time::Duration;
 
-pub const AUDIO_BUF_FRAMES: usize = 4096;
+pub const AUDIO_BUF_FRAMES: usize = 2048;
 pub const AUDIO_BUF_SIZE: usize = AUDIO_BUF_FRAMES * 2;
 pub const AUDIO_NUM_BUFFERS: usize = 3;
 
@@ -32,6 +33,23 @@ impl Semaphore {
         }
         *count -= 1;
     }
+
+    fn try_wait(&mut self) -> bool {
+        let (lock, cvar) = &*self.condvar;
+        let mut count = match lock.try_lock() {
+            Ok(lock) => {lock}
+            Err(_) => {return false;}
+        };
+        while *count == 0 {
+            count = match cvar.wait_timeout(count, Duration::from_millis(0)) {
+                Ok(mg) => {if mg.1.timed_out() {return false;} else {mg.0}}
+                Err(_) => {return false;}
+            };
+        }
+        *count -= 1;
+        true
+    }
+
 
 }
 
@@ -74,6 +92,13 @@ impl ProducerConsumerQueue {
         self.stopped.store(true, Ordering::Release);
         self.empty_count.signal();
         self.full_count.signal();
+    }
+
+    pub(crate) fn drain(&mut self) {
+        while self.full_count.try_wait() {
+            self.back = (self.back + 1) % AUDIO_NUM_BUFFERS;
+            self.empty_count.signal();
+        }
     }
 
     pub fn produce<F: FnMut(&mut[f32]) -> bool>(&mut self, mut f: F) -> bool {

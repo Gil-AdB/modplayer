@@ -49,7 +49,7 @@ fn main() {
 
     let mut song = match SongState::new(path) {
         Ok(s) => {s}
-        Err(_) => {return;}
+        Err(e) => {dbg!(e);return;}
     };
 
     if env::args().len() > 2 {
@@ -119,7 +119,14 @@ fn run(song_data: &mut SongHandle) {
     audio.start_audio_output();
     mainloop(song_data.get_mut());
 
-    song_data.get_mut().close(handle);
+    song_data.get_mut().close();
+    if handle.0.is_some() {
+        handle.0.unwrap().join().unwrap();
+    }
+    if handle.1.is_some() {
+        handle.1.unwrap().join().unwrap();
+    }
+
     audio.close();
     if let Err(_e) = crossterm::execute!(stdout(), LeaveAlternateScreen) {}
 }

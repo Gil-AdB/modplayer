@@ -1,6 +1,8 @@
+#![feature(seek_convenience)]
+#![feature(slice_fill)]
 #[macro_use]
 extern crate lazy_static;
-extern crate simple_error;
+pub extern crate simple_error;
 
 pub mod io_helpers;
 pub mod module_reader;

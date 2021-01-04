@@ -1,4 +1,4 @@
-use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume};
+use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState};
 use crate::instrument::Instruments;
 use crate::tables::{TableType};
 use crate::module_reader::is_note_valid;
@@ -119,6 +119,7 @@ pub(crate) struct ChannelState {
     pub(crate) frequency:                      f32,
     pub(crate) volume_envelope_state:          EnvelopeState,
     pub(crate) panning_envelope_state:         EnvelopeState,
+    pub(crate) vibrato_envelope_state: VibratoEnvelopeState,
     pub(crate) vibrato_state:                  VibratoState,
     pub(crate) tremolo_state:                  TremoloState,
     pub(crate) frequency_shift:                f32,

@@ -1,8 +1,12 @@
+#[macro_use]
+
+mod leak;
+
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use crate::song::{PlayData, Song, PlaybackCmd, CallbackState};
 use crate::module_reader::{SongData, read_module};
 use crate::producer_consumer_queue::{PCQHolder, ProducerConsumerQueue};
-use std::sync::{mpsc, Mutex, Arc};
+use std::sync::{mpsc, Mutex, Arc, MutexGuard};
 use core::option::Option::None;
 use core::option::Option;
 use std::thread::{spawn, sleep, JoinHandle};
@@ -11,18 +15,19 @@ use crate::triple_buffer::State::StateNoChange;
 use crate::song::PlaybackCmd::Quit;
 use crate::triple_buffer::{TripleBufferReader, TripleBuffer};
 use std::sync::mpsc::{Sender, Receiver};
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Deref};
 use crate::instrument::Instrument;
-use simple_error::{SimpleError, SimpleResult};
+use simple_error::{SimpleResult};
+use crate::song::InterleavedBufferAdaptar;
 
 #[derive(Clone)]
 pub struct StructHolder<T> {
-    t: Arc<AtomicPtr<Box<T>>>,
+    t: Arc<AtomicPtr<T>>,
 }
 
 impl <T> StructHolder<T> {
     pub fn new(arg: Box<T>) -> Self {
-        Self { t: Arc::new(AtomicPtr::new(Box::into_raw(Box::new(arg)))) }
+        Self { t: Arc::new(AtomicPtr::new(Box::into_raw(arg))) }
     }
 
     pub fn get_mut(&mut self) -> &mut T {
@@ -78,30 +83,51 @@ impl SongState {
         Ok(sh)
     }
 
+    pub fn set_order(&mut self, order: u32) {
+        self.q.get().drain();
+        if let Ok(_) = self.tx.send(PlaybackCmd::SetPosition(order)) {}
+    }
+
     fn callback(&mut self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();
         self.q.get().produce(|buf: &mut [f32]| -> bool {
-            if let CallbackState::Complete = song.get_next_tick(buf, rx.deref_mut()) { return false; }
+            let mut adaptar = InterleavedBufferAdaptar{buf};
+            if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { return false; }
             true
         });
         self.stopped.store(true, Ordering::Release);
     }
 
+    // fn callback_planar(&mut self) {
+    //     let mut song = self.song.lock().unwrap();
+    //     let mut rx = self.rx.lock().unwrap();
+    //     self.q.get().produce(|buf: &mut [f32]| -> bool {
+    //         let adaptar = PlanarBufferAdaptar::new(buf);
+    //         if let CallbackState::Complete = song.get_next_tick(adaptar, rx.deref_mut()) { return false; }
+    //         true
+    //     });
+    //     self.stopped.store(true, Ordering::Release);
+    // }
+
+
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
+    }
+
+    fn clone(&mut self) -> SongHandle {
+        self.self_ref.as_mut().unwrap().clone()
     }
 
     pub fn start(&mut self, display_cb: fn (&PlayData, &Vec<Instrument>)) -> (Option<JoinHandle<()>>, Option<JoinHandle<()>>) {
 
         self.display_cb = Option::from(display_cb);
 
-        let mut s1 = self.self_ref.as_mut().unwrap().clone();
-        // let mut play_thread: Option<JoinHandle<()>> = None;
-        let mut display_thread: Option<JoinHandle<()>> = None;
+        let mut s1 = self.clone();
         let play_thread = Option::from(spawn(move || Self::callback(s1.get_mut())));
+        let mut display_thread: Option<JoinHandle<()>> = None;
 
-        let mut s2 = self.self_ref.as_mut().unwrap().clone();
+        let mut s2 = self.clone();
 
         if self.display_cb.is_some() {
             display_thread = Option::from(spawn(move || {
@@ -142,16 +168,53 @@ impl SongState {
         return self.triple_buffer_reader.clone();
     }
 
-    pub fn close(&mut self, handle: (Option<JoinHandle<()>>, Option<JoinHandle<()>>)) {
+    pub fn close(&mut self) {
         self.stopped.store(true, Ordering::Release);
         self.tx.send(Quit).unwrap();
         self.q.get().quit();
-        if handle.0.is_some() {
-            handle.0.unwrap().join().unwrap();
-        }
-        if handle.1.is_some() {
-            handle.1.unwrap().join().unwrap();
-        }
+        // if handle.0.is_some() {
+        //     handle.0.unwrap().join().unwrap();
+        // }
+        // if handle.1.is_some() {
+        //     handle.1.unwrap().join().unwrap();
+        // }
     }
 }
 
+// pub struct SongHandleLockGuard<'a>{
+//     song_state: &'a mut SongState,
+//     mutex_guard: MutexGuard<'a, u32>,
+//     _nosend: PhantomData<*mut ()>
+// }
+//
+// impl<'a> Deref for SongHandleLockGuard<'a> {
+//     type Target = SongState;
+//     fn deref(&self) -> &SongState { (*self.song_state).as_ref() }
+// }
+//
+// impl<'a> DerefMut for SongHandleLockGuard<'a> {
+//     fn deref_mut(&mut self) -> &mut SongState { (*self.song_state).as_mut() }
+// }
+//
+// impl<'a> Drop for SongHandleLockGuard<'a> {
+//     fn drop(&mut self) {
+//         mem::drop(self.mutex_guard);
+//     }
+// }
+//
+// #[derive(Clone)]
+// pub struct SongHandle {
+//     song_state: *mut c_void,
+//     mutex: Mutex<u32>,
+// }
+//
+// impl SongHandle {
+//     pub fn new(path: String) -> Self {
+//         Self { song_state: leak!(SongState::new(path)), mutex: Mutex::new(0) }
+//     }
+//
+//     pub fn lock(&mut self) -> SongHandleLockGuard {
+//         let guard = self.mutex.lock().unwrap();
+//         SongHandleLockGuard{ song_state: self.song_state as &mut SongState, mutex_guard: guard, _nosend: Default::default() }
+//     }
+// }

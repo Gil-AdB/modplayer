@@ -1,13 +1,13 @@
 pub(crate) mod xm {
-    use std::io::{Read, Seek, SeekFrom, BufReader, Error};
+    use std::io::{Read, Seek, SeekFrom, BufReader};
     use core::result::Result::{Err, Ok};
     use crate::module_reader::{Patterns, Row, SongData, SongType, FrequencyType};
     use crate::io_helpers;
     use crate::pattern::Pattern;
     use crate::envelope::{EnvelopePoints, EnvelopePoint, Envelope};
-    use crate::instrument::{Sample, LoopType, Instrument};
+    use crate::instrument::{Sample, LoopType, Instrument, VibratoEnvelope};
     use std::iter::FromIterator;
-    use std::fs::{File, Metadata};
+    use std::fs::{File};
     use crate::simple_error::SimpleResult;
     use simple_error::SimpleError;
     use std::io;
@@ -214,10 +214,7 @@ pub(crate) mod xm {
                     sample_indexes,
                     volume_envelope: Envelope::create(volume_envelope, volume_points, volume_sustain_point, volume_loop_start_point, volume_loop_end_point, volume_type),
                     panning_envelope: Envelope::create(panning_envelope,panning_points, panning_sustain_point, panning_loop_start_point, panning_loop_end_point,panning_type),
-                    vibrato_type,
-                    vibrato_sweep,
-                    vibrato_depth,
-                    vibrato_rate,
+                    vibrato_envelope: VibratoEnvelope::create(vibrato_type, vibrato_sweep, vibrato_depth, vibrato_rate),
                     volume_fadeout,
                     samples: read_samples(file, sample_count as usize)
                 });
@@ -330,25 +327,23 @@ pub(crate) mod xm {
         })
     }
 
-    pub fn read_xm(path: &str) -> SimpleResult<SongData> {
-        let f = match File::open(path) {
-            Ok(f) => {f}
-            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "failed to open the file")));}
-        };
+    pub fn read_xm<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
+        dbg!("read_xm");
+        dbg!("seek");
+        file.seek(SeekFrom::Start(0));
 
-        let file_len = match f.metadata(){
-            Ok(m) => {m.len()}
+        dbg!("len");
+        let file_len = match file.stream_len() {
+            Ok(m) => {m}
             Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
         };
-
-        let mut file = BufReader::new(f);
-
 
         // println!("file length: {}", file_len);
         if file_len < 60 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "File is too small!")));
         }
 
+        dbg!("header");
         let song_data = read_xm_header(&mut file);
 
         song_data

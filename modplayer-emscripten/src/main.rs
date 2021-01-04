@@ -11,7 +11,7 @@ mod leak;
 
 use emscripten_boilerplate::{setup_mainloop};
 use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioDevice};
-use xmplayer::song::{PlaybackCmd, PlayData, CallbackState};
+use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, InterleavedBufferAdaptar};
 use xmplayer::song_state::{SongState, SongHandle, StructHolder};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver, Sender};
@@ -64,7 +64,8 @@ impl AudioCallback for AudioCB {
             let _ = tx.send(cmd);
         }
 
-        if let CallbackState::Complete = song.get_next_tick(out, &mut rx) {
+        let mut adapter = InterleavedBufferAdaptar{buf: out};
+        if let CallbackState::Complete = song.get_next_tick(&mut adapter, &mut rx) {
             song_state.stopped.store(true, Ordering::Release);
             App::stop();
         }
