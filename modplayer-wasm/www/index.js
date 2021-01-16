@@ -1,41 +1,79 @@
 import './libs/bootstrap.min.css';
-import './libs/xterm.css';
-import * as xterm from './libs/xterm';
+import * as wglt from 'wglt';
+import * as modplayer from '../pkg/modplayer_wasm';
+let font = require("./8x16 Font.png");
+//import './libs/xterm.css';
+//import * as xterm from './libs/xterm';
 
-let term = new xterm.Terminal({cols: 200, rows: 50, disableStdin: true});
-term.open(document.getElementById('terminal'));
+//let term = new xterm.Terminal({cols: 200, rows: 50, disableStdin: true});
+//term.open(document.getElementById('terminal'));
+const term = new wglt.Terminal(
+    document.querySelector('#terminal'),
+    200, 50,
+    { font: new wglt.Font(font.default, 8, 16) });
+term.fillRect(0, 0, 200, 50, 0, wglt.Colors.LIGHT_GRAY, wglt.Colors.BLACK);
 
-function remove_xterm_input_handler() {
-    let textarea = document.getElementsByClassName('xterm-helper-textarea')[0];
-    textarea.addEventListener('keydown', function(){
-        this.outerHTML = this.outerHTML;
-    }, false);
-    textarea.addEventListener('keypress', function(){
-        this.outerHTML = this.outerHTML;
-    }, false);
-    textarea.addEventListener('keyup', function(){
-        this.outerHTML = this.outerHTML;
-    }, false);
+function set_line_colors(x, y, term) {
+    let colors = [
+        wglt.fromRgb(0, 120, 0),
+        wglt.fromRgb(0, 140, 0),
+        wglt.fromRgb(0, 160, 0),
+        wglt.fromRgb(0, 180, 0),
+        wglt.fromRgb(180, 180, 0),
+        wglt.fromRgb(195, 195, 0),
+        wglt.fromRgb(210, 210, 0),
+        wglt.fromRgb(225, 225, 0),
+        wglt.fromRgb(225, 64, 0),
+        wglt.fromRgb(225, 64, 0),
+        wglt.fromRgb(225, 64, 0),
+        wglt.fromRgb(225, 64, 0),
+    ];
 
-    var keyboardEvent = document.createEvent('KeyboardEvent');
-    var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? 'initKeyboardEvent' : 'initKeyEvent';
-
-    keyboardEvent[initMethod](
-        'keyup', // event type: keydown, keyup, keypress
-        true, // bubbles
-        true, // cancelable
-        window, // view: should be window
-        false, // ctrlKey
-        false, // altKey
-        false, // shiftKey
-        false, // metaKey
-        40, // keyCode: unsigned long - the virtual key code, else 0
-        0, // charCode: unsigned long - the Unicode character associated with the depressed key, else 0
-    );
-    textarea.dispatchEvent(keyboardEvent);
+    for (let i = 0; i < 12; i++) {
+        term.getCell(x + i, y).setForeground(colors[i]);
+    }
 }
 
-remove_xterm_input_handler();
+for (let line = 3; line <= 35; line++) {
+    set_line_colors(57, line, term);
+    set_line_colors(102, line, term);
+    set_line_colors(115, line, term);
+    set_line_colors(128, line, term);
+    set_line_colors(141, line, term);
+}
+
+
+function install_input_handler() {
+    // let textarea = document.getElementsByClassName('xterm-helper-textarea')[0];
+    // textarea.addEventListener('keydown', function(){
+    //     this.outerHTML = this.outerHTML;
+    // }, false);
+    // textarea.addEventListener('keypress', function(){
+    //     this.outerHTML = this.outerHTML;
+    // }, false);
+    // textarea.addEventListener('keyup', function(){
+    //     this.outerHTML = this.outerHTML;
+    // }, false);
+
+//     var keyboardEvent = document.createEvent('KeyboardEvent');
+//     var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? 'initKeyboardEvent' : 'initKeyEvent';
+//
+//     keyboardEvent[initMethod](
+//         'keyup', // event type: keydown, keyup, keypress
+//         true, // bubbles
+//         true, // cancelable
+//         window, // view: should be window
+//         false, // ctrlKey
+//         false, // altKey
+//         false, // shiftKey
+//         false, // metaKey
+//         40, // keyCode: unsigned long - the virtual key code, else 0
+//         0, // charCode: unsigned long - the Unicode character associated with the depressed key, else 0
+//     );
+//     textarea.dispatchEvent(keyboardEvent);
+}
+
+install_input_handler();
 
 document.querySelector('#play').addEventListener('click', function () {
     initPlayer();
@@ -69,8 +107,6 @@ document.querySelector('#terminal').addEventListener('drop', function (e) {
 document.querySelector('#terminal').addEventListener('dragover', function (e) {
     dragOverHandler(e);
 });
-
-import * as modplayer from '../pkg/modplayer_wasm';
 
 function initAudio() {
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -284,8 +320,10 @@ function dragOverHandler(ev) {
     ev.preventDefault();
 }
 
+let posy = 0;
 top.term_writeln = function(str) {
-    term.writeln(str);
+    term.drawString(0, posy, str);
+    posy = posy + 1;
 }
 
 let events = [];
@@ -313,6 +351,7 @@ function render(timestamp) {
     }
     lastTimestamp = timestamp;
 
+    posy = 0;
     if (player && player.IsPlaying()) {
         player.Display();
     }

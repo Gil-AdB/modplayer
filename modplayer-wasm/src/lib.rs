@@ -6,6 +6,7 @@ extern crate wasm_bindgen;
 extern crate xmplayer;
 
 mod leak;
+mod display;
 
 use wasm_bindgen::prelude::*;
 use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song, BufferAdapter};
@@ -20,7 +21,7 @@ use std::collections::VecDeque;
 use std::time::{SystemTime, Duration};
 use xmplayer::triple_buffer::State::StateNoChange;
 use xmplayer::instrument::Instrument;
-use display::display::Display;
+use display::Display;
 use display::ViewPort;
 use std::ops::DerefMut;
 use xmplayer::producer_consumer_queue::{AUDIO_BUF_FRAMES};
