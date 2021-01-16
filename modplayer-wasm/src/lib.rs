@@ -220,11 +220,11 @@ impl SongJs {
         self.song.set_sample_rate(sample_rate);
         let mut adaptar = PlanarBufferAdaptar{buf:[left, right]};
         match self.song.get_next_tick(&mut adaptar, &mut self.rx) {
+
             CallbackState::Ok => {true}
             CallbackState::Complete => {false}
         }
     }
-
 
     pub fn handle_input(&mut self, events: &Array) -> bool {
 
@@ -303,7 +303,6 @@ impl SongJs {
         self.last_time = now;
         return false;
     }
-
 }
 
 struct App {
@@ -325,17 +324,6 @@ impl App {
 
         leak!(app)
     }
-
-    // pub(crate) fn start(cb: String) {
-    //     dbg!("Sending New");
-    //     CMDS.lock().unwrap().send(PlayerCmd::NewSong(cb));
-    // }
-    //
-    // pub(crate) fn stop() {
-    //     dbg!("Sending Stop");
-    //     CMDS.lock().unwrap().send(PlayerCmd::Stop);
-    // }
-
     
     // fn resume(audio: *mut c_void) {
     //     let leaked_pointer = audio as *mut AudioDevice<AudioCB>;
@@ -458,120 +446,3 @@ impl App {
     //     }
     // }
 }
-
-// fn handle_input(event_pump: &mut EventPump) -> bool {
-//     let mut last_time = SystemTime::now();
-//     let mut last_char = '\0';
-//
-//     let mut tx = PLAYBACK_CMDS.lock().unwrap();
-//
-//     // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
-//     for input in  event_pump.poll_iter() {
-//         if SystemTime::now() > last_time + Duration::from_secs(1) {
-//             last_char = '\0';
-//         }
-//
-//         match input {
-//             Event::Quit { .. } => {
-//                 let _ = tx.send(PlaybackCmd::Quit);
-//                 return true;
-//             }
-//             Event::KeyUp { keycode, ..} => {
-//                 if !keycode.is_some() {
-//                     continue;
-//                 }
-//                 let key = keycode.unwrap();
-//                 match key {
-//                     Keycode::Escape | Keycode::Q => {
-//                         let _ = tx.send(PlaybackCmd::Quit);
-//                         return true;
-//                     }
-//                     Keycode::Num0 | Keycode::Num1 | Keycode::Num2 | Keycode::Num3 |
-//                     Keycode::Num4 | Keycode::Num5 | Keycode::Num6 | Keycode::Num7 |
-//                     Keycode::Num8 | Keycode::Num9 => {
-//                         let ch = ((key as i32 - Keycode::Num0 as i32) as u8 + '0' as u8) as char; // FIXME: Blachhh
-//                         if last_char != '\0' {
-//                             let channel_number = (last_char as u8 - '0' as u8) * 10 + (ch as u8 - '0' as u8);
-//                             if channel_number > 0 && channel_number <= 32 {
-//                                 let _ = tx.send(PlaybackCmd::ChannelToggle(channel_number - 1));
-//                             }
-//                             last_char = '\0';
-//                         } else {
-//                             last_char = ch;
-//                         }
-//                     }
-//                     Keycode::Plus => {
-//                         let _ = tx.send(PlaybackCmd::IncSpeed);
-//                     }
-//
-//                     Keycode::Minus => {
-//                         let _ = tx.send(PlaybackCmd::DecSpeed);
-//                     }
-//                     Keycode::Period => {
-//                         let _ = tx.send(PlaybackCmd::IncBPM);
-//                     }
-//                     Keycode::Comma => {
-//                         let _ = tx.send(PlaybackCmd::DecBPM);
-//                     }
-//                     Keycode::Space => {
-//                         let _ = tx.send(PlaybackCmd::PauseToggle);
-//                     }
-//                     Keycode::N => {
-//                         let _ = tx.send(PlaybackCmd::Next);
-//                     }
-//                     Keycode::Slash => {
-//                         let _ = tx.send(PlaybackCmd::LoopPattern);
-//                     }
-//                     Keycode::P => {
-//                         let _ = tx.send(PlaybackCmd::Prev);
-//                     }
-//                     Keycode::R => {
-//                         let _ = tx.send(PlaybackCmd::Restart);
-//                     }
-//                     Keycode::A => {
-//                         let _ = tx.send(PlaybackCmd::AmigaTable);
-//                     }
-//                     Keycode::L => {
-//                         let _ = tx.send(PlaybackCmd::LinearTable);
-//                     }
-//                     Keycode::F => {
-//                         let _ = tx.send(PlaybackCmd::FilterToggle);
-//                     }
-//                     Keycode::D => {
-//                         let _ = tx.send(PlaybackCmd::DisplayToggle);
-//                     }
-//                     _ => {}
-//                 }
-//             }
-//             _ => {}
-//         }
-//     }
-//     last_time = SystemTime::now();
-//     return false;
-// }
-
-// #[no_mangle]
-// extern fn Modplayer_Stop(app_ptr: *mut c_void) {
-//     let leaked_pointer = app_ptr as *mut App;
-//     let self_ = unsafe { &mut *leaked_pointer };
-//     App::stop();
-// }
-
-// #[no_mangle]
-// extern fn Modplayer_Start(app_ptr: *mut c_void, cb: String) {
-//     dbg!("Modplayer_Start");
-//     let leaked_pointer = app_ptr as *mut App;
-//     let self_ = unsafe { &mut *leaked_pointer };
-//     App::start(cb);
-// }
-
-// pub fn main() {
-//     let untyped_pointer = App::new();
-//     let code = format!("player = {}", untyped_pointer as u64);
-//     unsafe { emscripten_run_script(CString::new(code).unwrap().as_ptr());};
-//
-//     let typed_pointer = untyped_pointer as *mut App;
-//     let self_ = unsafe { &mut *typed_pointer as &mut App };
-//     self_.run()
-// }
-

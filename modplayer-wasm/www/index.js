@@ -174,7 +174,6 @@ class ModPlayerProcessor {
             this.Stop();
         }
     }
-
 }
 
 function loadFileInput(file) {
@@ -307,6 +306,7 @@ function render(timestamp) {
         }
         events = [];
     }
+
     // skip if timestep ms hasn't passed since last frame
     if (timestamp - lastTimestamp < timestep) {
         return;
