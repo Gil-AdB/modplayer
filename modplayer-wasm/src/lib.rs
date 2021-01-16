@@ -30,14 +30,101 @@ use xmplayer::simple_error::{SimpleResult};
 use xmplayer::triple_buffer::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
 use wasm_bindgen::__rt::std::os::raw::c_char;
+use crate::wasm_bindgen::JsCast;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "wee_alloc")] {
-        #[global_allocator]
-        static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+
+use std::convert::{TryInto};
+use std::ops::{Add, Sub, AddAssign, SubAssign};
+
+pub use std::time::*;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Instant(std::time::Instant);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Instant {
+    pub fn now() -> Self { Self(std::time::Instant::now()) }
+    pub fn duration_since(&self, earlier: Instant) -> Duration { self.0.duration_since(earlier.0) }
+    pub fn elapsed(&self) -> Duration { self.0.elapsed() }
+    pub fn checked_add(&self, duration: Duration) -> Option<Self> { self.0.checked_add(duration).map(|i| Self(i)) }
+    pub fn checked_sub(&self, duration: Duration) -> Option<Self> { self.0.checked_sub(duration).map(|i| Self(i)) }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(inline_js = r#"
+export function performance_now() {
+  return performance.now();
+}"#)]
+extern "C" {
+    fn performance_now() -> f64;
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Instant(u64);
+
+#[cfg(target_arch = "wasm32")]
+impl Instant {
+    pub fn now() -> Self { Self((performance_now() * 1000.0) as u64) }
+    pub fn duration_since(&self, earlier: Instant) -> Duration { Duration::from_micros(self.0 - earlier.0) }
+    pub fn elapsed(&self) -> Duration { Self::now().duration_since(*self) }
+    pub fn checked_add(&self, duration: Duration) -> Option<Self> {
+        match duration.as_micros().try_into() {
+            Ok(duration) => self.0.checked_add(duration).map(|i| Self(i)),
+            Err(_) => None,
+        }
+    }
+    pub fn checked_sub(&self, duration: Duration) -> Option<Self> {
+        match duration.as_micros().try_into() {
+            Ok(duration) => self.0.checked_sub(duration).map(|i| Self(i)),
+            Err(_) => None,
+        }
     }
 }
 
+impl Add<Duration> for Instant { type Output = Instant; fn add(self, other: Duration) -> Instant { self.checked_add(other).unwrap() } }
+impl Sub<Duration> for Instant { type Output = Instant; fn sub(self, other: Duration) -> Instant { self.checked_sub(other).unwrap() } }
+impl Sub<Instant>  for Instant { type Output = Duration; fn sub(self, other: Instant) -> Duration { self.duration_since(other) } }
+impl AddAssign<Duration> for Instant { fn add_assign(&mut self, other: Duration) { *self = *self + other; } }
+impl SubAssign<Duration> for Instant { fn sub_assign(&mut self, other: Duration) { *self = *self - other; } }
+
+
+
+
+// First up let's take a look of binding `console.log` manually, without the
+// help of `web_sys`. Here we're writing the `#[wasm_bindgen]` annotations
+// manually ourselves, and the correctness of our program relies on the
+// correctness of these annotations!
+
+#[wasm_bindgen]
+extern "C" {
+    // Use `js_namespace` here to bind `console.log(..)` instead of just
+    // `log(..)`
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+
+    // The `console.log` is quite polymorphic, so we can bind it with multiple
+    // signatures. Note that we need to use `js_name` to ensure we always call
+    // `log` in JS.
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn log_u32(a: u32);
+
+    // Multiple arguments too!
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn log_many(a: &str, b: &str);
+}
+
+// Next let's define a macro that's like `println!`, only it works for
+// `console.log`. Note that `println!` doesn't actually work on the wasm target
+// because the standard library currently just eats all output. To get
+// `println!`-like behavior in your app you'll likely want a macro like this.
+
+macro_rules! console_log {
+    // Note that this is using the `log` function imported above during
+    // `bare_bones`
+    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
+}
 
 pub enum PlayerCmd {
     Stop,
@@ -54,14 +141,16 @@ struct AudioCB {
     q: SongHandle,
 }
 
-
-
 #[wasm_bindgen]
 pub struct SongJs {
     song:                               Song,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
     song_row:                           usize,
     song_tick:                          u32,
+    tx:                                 Sender<PlaybackCmd>,
+    rx:                                 Receiver<PlaybackCmd>,
+    last_time:                          Instant,
+    last_char:                          char,
 }
 
 use js_sys::{Array, JsString};
@@ -78,11 +167,16 @@ impl SongJs {
         let triple_buffer = TripleBuffer::<PlayData>::new();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
         let song = Song::new(&data, triple_buffer_writer, sample_rate);
+        let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
         Self {
             song,
             triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader)),
             song_row: 0,
             song_tick: 2000,
+            tx,
+            rx,
+            last_time: Instant::now(),
+            last_char: '\0'
         }
     }
 
@@ -119,18 +213,95 @@ impl SongJs {
         }
     }
 
-
     // true  - continue playing
     // false - song finished
     pub fn get_next_tick(&mut self, left: &mut [f32], right: &mut [f32], sample_rate: f32) -> bool {
-        let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
 
         self.song.set_sample_rate(sample_rate);
         let mut adaptar = PlanarBufferAdaptar{buf:[left, right]};
-        match self.song.get_next_tick(&mut adaptar, &mut rx) {
+        match self.song.get_next_tick(&mut adaptar, &mut self.rx) {
+
             CallbackState::Ok => {true}
             CallbackState::Complete => {false}
         }
+    }
+
+    pub fn handle_input(&mut self, events: &Array) -> bool {
+
+        let now = Instant::now();
+
+        let tx = &self.tx;
+
+        for event in events.iter() {
+
+            if now > self.last_time + Duration::from_secs(1) {
+                self.last_char = '\0';
+            }
+
+            let key = String::from(event.dyn_ref::<JsString>().unwrap());
+
+            match key.as_ref() {
+                "Escape" | "q" => {
+                    let _ = tx.send(PlaybackCmd::Quit);
+                    return true;
+                }
+                "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
+                    let ch = ((key.as_bytes()[0] as i32 - '0' as i32) as u8 + '0' as u8) as char; // FIXME: Blachhh
+                    if self.last_char != '\0' {
+                        let channel_number = (self.last_char as u8 - '0' as u8) * 10 + (ch as u8 - '0' as u8);
+                        if channel_number > 0 && channel_number <= 32 {
+                            let _ = tx.send(PlaybackCmd::ChannelToggle(channel_number - 1));
+                        }
+                        self.last_char = '\0';
+                    } else {
+                        self.last_char = ch;
+                    }
+                }
+                "+" => {
+                    let _ = tx.send(PlaybackCmd::IncSpeed);
+                }
+
+                "-" => {
+                    let _ = tx.send(PlaybackCmd::DecSpeed);
+                }
+                "." => {
+                    let _ = tx.send(PlaybackCmd::IncBPM);
+                }
+                "," => {
+                    let _ = tx.send(PlaybackCmd::DecBPM);
+                }
+                " " => {
+                    let _ = tx.send(PlaybackCmd::PauseToggle);
+                }
+                "n" => {
+                    let _ = tx.send(PlaybackCmd::Next);
+                }
+                "/" => {
+                    let _ = tx.send(PlaybackCmd::LoopPattern);
+                }
+                "p" => {
+                    let _ = tx.send(PlaybackCmd::Prev);
+                }
+                "r" => {
+                    let _ = tx.send(PlaybackCmd::Restart);
+                }
+                "a" => {
+                    let _ = tx.send(PlaybackCmd::AmigaTable);
+                }
+                "l" => {
+                    let _ = tx.send(PlaybackCmd::LinearTable);
+                }
+                "f" => {
+                    let _ = tx.send(PlaybackCmd::FilterToggle);
+                }
+                "d" => {
+                    let _ = tx.send(PlaybackCmd::DisplayToggle);
+                }
+                _ => {}
+            }
+        }
+        self.last_time = now;
+        return false;
     }
 }
 
@@ -153,17 +324,6 @@ impl App {
 
         leak!(app)
     }
-
-    pub(crate) fn start(cb: String) {
-        dbg!("Sending New");
-        CMDS.lock().unwrap().push_back(PlayerCmd::NewSong(cb));
-    }
-
-    pub(crate) fn stop() {
-        dbg!("Sending Stop");
-        CMDS.lock().unwrap().push_back(PlayerCmd::Stop);
-    }
-
     
     // fn resume(audio: *mut c_void) {
     //     let leaked_pointer = audio as *mut AudioDevice<AudioCB>;
@@ -286,120 +446,3 @@ impl App {
     //     }
     // }
 }
-
-// fn handle_input(event_pump: &mut EventPump) -> bool {
-//     let mut last_time = SystemTime::now();
-//     let mut last_char = '\0';
-//
-//     let mut tx = PLAYBACK_CMDS.lock().unwrap();
-//
-//     // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
-//     for input in  event_pump.poll_iter() {
-//         if SystemTime::now() > last_time + Duration::from_secs(1) {
-//             last_char = '\0';
-//         }
-//
-//         match input {
-//             Event::Quit { .. } => {
-//                 let _ = tx.push_back(PlaybackCmd::Quit);
-//                 return true;
-//             }
-//             Event::KeyUp { keycode, ..} => {
-//                 if !keycode.is_some() {
-//                     continue;
-//                 }
-//                 let key = keycode.unwrap();
-//                 match key {
-//                     Keycode::Escape | Keycode::Q => {
-//                         let _ = tx.push_back(PlaybackCmd::Quit);
-//                         return true;
-//                     }
-//                     Keycode::Num0 | Keycode::Num1 | Keycode::Num2 | Keycode::Num3 |
-//                     Keycode::Num4 | Keycode::Num5 | Keycode::Num6 | Keycode::Num7 |
-//                     Keycode::Num8 | Keycode::Num9 => {
-//                         let ch = ((key as i32 - Keycode::Num0 as i32) as u8 + '0' as u8) as char; // FIXME: Blachhh
-//                         if last_char != '\0' {
-//                             let channel_number = (last_char as u8 - '0' as u8) * 10 + (ch as u8 - '0' as u8);
-//                             if channel_number > 0 && channel_number <= 32 {
-//                                 let _ = tx.push_back(PlaybackCmd::ChannelToggle(channel_number - 1));
-//                             }
-//                             last_char = '\0';
-//                         } else {
-//                             last_char = ch;
-//                         }
-//                     }
-//                     Keycode::Plus => {
-//                         let _ = tx.push_back(PlaybackCmd::IncSpeed);
-//                     }
-//
-//                     Keycode::Minus => {
-//                         let _ = tx.push_back(PlaybackCmd::DecSpeed);
-//                     }
-//                     Keycode::Period => {
-//                         let _ = tx.push_back(PlaybackCmd::IncBPM);
-//                     }
-//                     Keycode::Comma => {
-//                         let _ = tx.push_back(PlaybackCmd::DecBPM);
-//                     }
-//                     Keycode::Space => {
-//                         let _ = tx.push_back(PlaybackCmd::PauseToggle);
-//                     }
-//                     Keycode::N => {
-//                         let _ = tx.push_back(PlaybackCmd::Next);
-//                     }
-//                     Keycode::Slash => {
-//                         let _ = tx.push_back(PlaybackCmd::LoopPattern);
-//                     }
-//                     Keycode::P => {
-//                         let _ = tx.push_back(PlaybackCmd::Prev);
-//                     }
-//                     Keycode::R => {
-//                         let _ = tx.push_back(PlaybackCmd::Restart);
-//                     }
-//                     Keycode::A => {
-//                         let _ = tx.push_back(PlaybackCmd::AmigaTable);
-//                     }
-//                     Keycode::L => {
-//                         let _ = tx.push_back(PlaybackCmd::LinearTable);
-//                     }
-//                     Keycode::F => {
-//                         let _ = tx.push_back(PlaybackCmd::FilterToggle);
-//                     }
-//                     Keycode::D => {
-//                         let _ = tx.push_back(PlaybackCmd::DisplayToggle);
-//                     }
-//                     _ => {}
-//                 }
-//             }
-//             _ => {}
-//         }
-//     }
-//     last_time = SystemTime::now();
-//     return false;
-// }
-
-// #[no_mangle]
-// extern fn Modplayer_Stop(app_ptr: *mut c_void) {
-//     let leaked_pointer = app_ptr as *mut App;
-//     let self_ = unsafe { &mut *leaked_pointer };
-//     App::stop();
-// }
-
-// #[no_mangle]
-// extern fn Modplayer_Start(app_ptr: *mut c_void, cb: String) {
-//     dbg!("Modplayer_Start");
-//     let leaked_pointer = app_ptr as *mut App;
-//     let self_ = unsafe { &mut *leaked_pointer };
-//     App::start(cb);
-// }
-
-// pub fn main() {
-//     let untyped_pointer = App::new();
-//     let code = format!("player = {}", untyped_pointer as u64);
-//     unsafe { emscripten_run_script(CString::new(code).unwrap().as_ptr());};
-//
-//     let typed_pointer = untyped_pointer as *mut App;
-//     let self_ = unsafe { &mut *typed_pointer as &mut App };
-//     self_.run()
-// }
-
