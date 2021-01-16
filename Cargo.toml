@@ -3,6 +3,11 @@ cargo-features = ["named-profiles"]
 [workspace]
 members = ["xmplayer", "display", "modplayer-bin", "modplayer-emscripten", "modplayer-wasm", "modplayer-lib"]
 
+
+rustflags = [
+    "--remap-path-prefix=C:\\Projects=moshe",
+]
+
 #[profile.release]
 #debug = true
 #
