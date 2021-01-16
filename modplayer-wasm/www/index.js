@@ -5,6 +5,38 @@ import * as xterm from './libs/xterm';
 let term = new xterm.Terminal({cols: 200, rows: 50, disableStdin: true});
 term.open(document.getElementById('terminal'));
 
+function remove_xterm_input_handler() {
+    let textarea = document.getElementsByClassName('xterm-helper-textarea')[0];
+    textarea.addEventListener('keydown', function(){
+        this.outerHTML = this.outerHTML;
+    }, false);
+    textarea.addEventListener('keypress', function(){
+        this.outerHTML = this.outerHTML;
+    }, false);
+    textarea.addEventListener('keyup', function(){
+        this.outerHTML = this.outerHTML;
+    }, false);
+
+    var keyboardEvent = document.createEvent('KeyboardEvent');
+    var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? 'initKeyboardEvent' : 'initKeyEvent';
+
+    keyboardEvent[initMethod](
+        'keyup', // event type: keydown, keyup, keypress
+        true, // bubbles
+        true, // cancelable
+        window, // view: should be window
+        false, // ctrlKey
+        false, // altKey
+        false, // shiftKey
+        false, // metaKey
+        40, // keyCode: unsigned long - the virtual key code, else 0
+        0, // charCode: unsigned long - the Unicode character associated with the depressed key, else 0
+    );
+    textarea.dispatchEvent(keyboardEvent);
+}
+
+remove_xterm_input_handler();
+
 document.querySelector('#play').addEventListener('click', function () {
     initPlayer();
     if (player.IsPlaying()) {
@@ -39,13 +71,6 @@ document.querySelector('#terminal').addEventListener('dragover', function (e) {
 });
 
 import * as modplayer from '../pkg/modplayer_wasm';
-
-// async function run() {
-//     await init();
-// }
-//
-// run();
-
 
 function initAudio() {
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -144,6 +169,11 @@ class ModPlayerProcessor {
         }
     }
 
+    HandleKeyboardEvents(events) {
+        if (true === this.song.handle_input(events)) {
+            this.Stop();
+        }
+    }
 }
 
 function loadFileInput(file) {
@@ -167,8 +197,6 @@ function loadFilesInput(fileInput) {
     if (files.length === 0) {
         return;
     }
-//var file = fileInput.files[0];
-//loadFileInput(file)
     fileHandler(files);
 }
 
@@ -260,11 +288,24 @@ top.term_writeln = function(str) {
     term.writeln(str);
 }
 
+let events = [];
+window.onkeyup = handleKeyboardEvents;
+function handleKeyboardEvents(e) {
+    events.push(e.key);
+}
+
 let lastTimestamp = 0;
 const fps = 30;
 const timestep = 1000 / fps; // ms for each frame
 function render(timestamp) {
     window.requestAnimationFrame(render);
+
+    if (events.length !== 0) {
+        if (player) {
+            player.HandleKeyboardEvents(events);
+        }
+        events = [];
+    }
 
     // skip if timestep ms hasn't passed since last frame
     if (timestamp - lastTimestamp < timestep) {

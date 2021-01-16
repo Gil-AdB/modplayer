@@ -21,7 +21,7 @@ cfg-if = "0.1"
 wasm-bindgen-test = "0.3.0"
 
 [profile.release]
-wasm-opt = { opt-level = "z" }
+#wasm-opt = { opt-level = "z" }
 wasm-snip = { snip-rust-fmt-code = true, snip-rust-panicking-code = true }
 lto = true
 wasm-bindgen = true

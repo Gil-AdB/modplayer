@@ -2,7 +2,6 @@ cargo-features = ["named-profiles"]
 
 [workspace]
 members = ["xmplayer", "display", "modplayer-bin", "modplayer-emscripten", "modplayer-wasm", "modplayer-lib"]
-
 #[profile.release]
 #debug = true
 #
