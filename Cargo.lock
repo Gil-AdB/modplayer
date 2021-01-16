@@ -393,7 +393,6 @@ version = "1.0.0"
 dependencies = [
  "cfg-if 0.1.10",
  "crossbeam",
- "display",
  "js-sys",
  "lazy_static",
  "wasm-bindgen",
