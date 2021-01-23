@@ -18,10 +18,7 @@ use std::sync::mpsc::{Sender, Receiver};
 use std::ops::{DerefMut, Deref};
 use crate::instrument::Instrument;
 use simple_error::{SimpleResult};
-<<<<<<< HEAD
 use crate::song::InterleavedBufferAdaptar;
-=======
->>>>>>> wasm-bindgen
 
 #[derive(Clone)]
 pub struct StructHolder<T> {
