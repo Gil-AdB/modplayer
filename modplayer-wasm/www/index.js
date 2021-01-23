@@ -1,17 +1,25 @@
 import './libs/bootstrap.min.css';
 import * as wglt from 'wglt';
 import * as modplayer from '../pkg/modplayer_wasm';
+// import * as Terminal from "terminal";
 let font = require("./8x16 Font.png");
 //import './libs/xterm.css';
 //import * as xterm from './libs/xterm';
 
 //let term = new xterm.Terminal({cols: 200, rows: 50, disableStdin: true});
 //term.open(document.getElementById('terminal'));
-const term = new wglt.Terminal(
+
+class NonResizeableTerminal extends wglt.Terminal {
+    constructor(canvas, width, height, options) {
+        super(canvas, width, height, options);
+    }
+    handleResize() {}
+}
+
+const term = new NonResizeableTerminal(
     document.querySelector('#terminal'),
     200, 50,
     { font: new wglt.Font(font.default, 8, 16) });
-term.fillRect(0, 0, 200, 50, 0, wglt.Colors.LIGHT_GRAY, wglt.Colors.BLACK);
 
 function set_line_colors(x, y, term) {
     let colors = [
@@ -33,47 +41,57 @@ function set_line_colors(x, y, term) {
         term.getCell(x + i, y).setForeground(colors[i]);
     }
 }
-
-for (let line = 3; line <= 35; line++) {
-    set_line_colors(57, line, term);
-    set_line_colors(102, line, term);
-    set_line_colors(115, line, term);
-    set_line_colors(128, line, term);
-    set_line_colors(141, line, term);
+function set_screen_colors() {
+    term.fillRect(0, 0, 200, 50, 0, wglt.Colors.LIGHT_GRAY, wglt.Colors.BLACK);
+    for (let line = 3; line <= 35; line++) {
+        set_line_colors(57, line, term);
+        set_line_colors(102, line, term);
+        set_line_colors(115, line, term);
+        set_line_colors(128, line, term);
+        set_line_colors(141, line, term);
+    }
 }
 
+set_screen_colors();
 
-function install_input_handler() {
-    // let textarea = document.getElementsByClassName('xterm-helper-textarea')[0];
-    // textarea.addEventListener('keydown', function(){
-    //     this.outerHTML = this.outerHTML;
-    // }, false);
-    // textarea.addEventListener('keypress', function(){
-    //     this.outerHTML = this.outerHTML;
-    // }, false);
-    // textarea.addEventListener('keyup', function(){
-    //     this.outerHTML = this.outerHTML;
-    // }, false);
-
-//     var keyboardEvent = document.createEvent('KeyboardEvent');
-//     var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? 'initKeyboardEvent' : 'initKeyEvent';
+// function install_input_handler() {
+//     // let textarea = document.getElementsByClassName('xterm-helper-textarea')[0];
+//     // textarea.addEventListener('keydown', function(){
+//     //     this.outerHTML = this.outerHTML;
+//     // }, false);
+//     // textarea.addEventListener('keypress', function(){
+//     //     this.outerHTML = this.outerHTML;
+//     // }, false);
+//     // textarea.addEventListener('keyup', function(){
+//     //     this.outerHTML = this.outerHTML;
+//     // }, false);
 //
-//     keyboardEvent[initMethod](
-//         'keyup', // event type: keydown, keyup, keypress
-//         true, // bubbles
-//         true, // cancelable
-//         window, // view: should be window
-//         false, // ctrlKey
-//         false, // altKey
-//         false, // shiftKey
-//         false, // metaKey
-//         40, // keyCode: unsigned long - the virtual key code, else 0
-//         0, // charCode: unsigned long - the Unicode character associated with the depressed key, else 0
-//     );
-//     textarea.dispatchEvent(keyboardEvent);
-}
+// //     var keyboardEvent = document.createEvent('KeyboardEvent');
+// //     var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? 'initKeyboardEvent' : 'initKeyEvent';
+// //
+// //     keyboardEvent[initMethod](
+// //         'keyup', // event type: keydown, keyup, keypress
+// //         true, // bubbles
+// //         true, // cancelable
+// //         window, // view: should be window
+// //         false, // ctrlKey
+// //         false, // altKey
+// //         false, // shiftKey
+// //         false, // metaKey
+// //         40, // keyCode: unsigned long - the virtual key code, else 0
+// //         0, // charCode: unsigned long - the Unicode character associated with the depressed key, else 0
+// //     );
+// //     textarea.dispatchEvent(keyboardEvent);
+// //     window.addEventListener('resize', function(e) {
+// //                 e.stopPropagation();
+// //              }, false);
+// }
+//
+// // install_input_handler();
 
-install_input_handler();
+// const terminal_canvas = document.querySelector('#terminal');
+// terminal_canvas.style.width = "1600px";
+// terminal_canvas.style.height = "800px";
 
 document.querySelector('#play').addEventListener('click', function () {
     initPlayer();
@@ -114,15 +132,15 @@ function initAudio() {
     const processor = new ModPlayerProcessor(audioContext.sampleRate,
         function (self) {
             if (self.IsPlaying()) {
-                document.querySelector('#play').value = "Pause";
+                document.querySelector('#play').value = "⏸";
                 //render();
             } else {
-                document.querySelector('#play').value = "Play";
+                document.querySelector('#play').value = "▶️";
             }
         },
         function () {
             if (!Next()) {
-                document.querySelector('#play').value = "Play";
+                document.querySelector('#play').value = "▶️";
             }
         });
     modplayerNode.onaudioprocess = processor.process.bind(processor);
@@ -192,6 +210,7 @@ class ModPlayerProcessor {
     Start(data) {
         this.Stop();
         term.clear()
+        set_screen_colors();
         this.song = modplayer.SongJs.new(this.sampleRate, data);
     }
 
@@ -213,14 +232,14 @@ class ModPlayerProcessor {
 }
 
 function loadFileInput(file) {
-    var fr = new FileReader();
-    fr.onload = function () {
-        var dataarr = new Uint8Array(fr.result);
-        document.getElementById('filename').innerText = file.name;
-        player.Start(dataarr);
-        player.Play();
-    };
-    fr.readAsArrayBuffer(file);
+    fetch(file.url).then(function (response) {
+        response.arrayBuffer().then(function (buf) {
+            var dataarr = new Uint8Array(buf);
+            document.getElementById('filename').innerText = file.name;
+            player.Start(dataarr);
+            player.Play();
+        });
+    });
 }
 
 function loadFilesInput(fileInput) {
@@ -280,7 +299,7 @@ function fileHandler(data) {
                 var file = data.items[i].getAsFile();
 
                 console.log('... file[' + i + '].name = ' + file.name);
-                filesList.push(file);
+                filesList.push({name: file.name, url: window.URL.createObjectURL(file)});
             }
         }
     } else {
@@ -296,7 +315,7 @@ function fileHandler(data) {
                 continue;
             }
             console.log('... file[' + i + '].name = ' + file.name);
-            filesList.push(file);
+            filesList.push({name: file.name, url: window.URL.createObjectURL(file)});
         }
     }
 
@@ -326,6 +345,13 @@ top.term_writeln = function(str) {
     posy = posy + 1;
 }
 
+top.term_writeln_with_background = function(str, c) {
+    term.fillRect(0, posy, 200, 1, 0, wglt.Colors.LIGHT_GRAY, wglt.fromRgb(c.r, c.g, c.b));
+    term.drawString(0, posy, str);
+    posy = posy + 1;
+}
+
+
 let events = [];
 window.onkeyup = handleKeyboardEvents;
 function handleKeyboardEvents(e) {
@@ -333,7 +359,7 @@ function handleKeyboardEvents(e) {
 }
 
 let lastTimestamp = 0;
-const fps = 30;
+const fps = 60;
 const timestep = 1000 / fps; // ms for each frame
 function render(timestamp) {
     window.requestAnimationFrame(render);

@@ -1,6 +1,15 @@
+#[macro_use]
+
+use crate::console::log;
+
 use xmplayer::song::PlayData;
 use std::cmp::{max, min};
 use xmplayer::instrument::Instrument;
+use xmplayer::module_reader::Patterns;
+extern crate wasm_bindgen;
+
+use wasm_bindgen::prelude::*;
+
 
 #[derive(Debug)]
 pub struct ViewPort {
@@ -10,45 +19,24 @@ pub struct ViewPort {
     pub height: usize,
 }
 
-#[derive(Copy, Clone)]
-struct RGB {
-    r: u8,
-    g: u8,
-    b: u8,
+#[wasm_bindgen]
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub struct RGB {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
 }
 
 struct Line {
     data:   String,
-    index:  Vec<usize>
+    background: RGB,
 }
 
 
 impl Line {
-    fn new(data: String) -> Self {
-        let mut index = vec![];
-        let mut inside_escape = false;
-
-        // Minimal heuristic to detect RGB color escape sequence.
-        // Other escape sequences are not supported currently...
-        for (i, c) in data.chars().enumerate() {
-            if !inside_escape {
-                if c == '\x1b' {
-                    inside_escape = true;
-                    continue;
-                }
-                index.push(i);
-            } else {
-                if c == 'm' {
-                    inside_escape = false;
-                }
-                continue;
-            }
-        }
-        index.push(data.len());
-        Self { data, index }
+    fn new(data: String, background: RGB) -> Self {
+        Self { data, background }
     }
-
-
 }
 
 struct VirtualScreen {
@@ -64,13 +52,16 @@ impl VirtualScreen {
     }
 
     fn add_line(&mut self, data: String) {
-        self.lines.push(Line::new(data));
+        self.lines.push(Line::new(data, RGB{ r: 0, g: 0, b: 0 }));
+    }
+
+    fn add_line_with_color(&mut self, data: String, background: RGB) {
+        self.lines.push(Line::new(data, background));
     }
 }
 
 
-pub struct Display {
-}
+pub struct Display {}
 
 impl Display {
     fn color(color: RGB, str: &str) -> String {
@@ -134,7 +125,9 @@ impl Display {
     }
 
 
-    pub fn display(play_data: &PlayData, instruments: &Vec<Instrument>, view_port: ViewPort, display: &mut dyn FnMut(String)) {
+    pub fn display(play_data: &PlayData, instruments: &Vec<Instrument>, patterns: &Vec<Patterns>,
+                   order: &Vec<u8>, view_port: ViewPort, display: &mut dyn FnMut(String),
+                   display_with_background: &mut dyn FnMut(String, RGB)) {
 
         let mut screen = VirtualScreen::new();
 
@@ -161,7 +154,7 @@ impl Display {
         ));
         // display(Self::move_to(0, 2));
 
-        screen.add_line("on |channel|            instrument            |frequency|   volume   |sample_position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |".to_string());
+        screen.add_line("on |channel|            instrument            |frequency|   volume   |sample position| note | period |  chan vol  |   envvol   | globalvol  |   fadeout  | panning |".to_string());
 
         let mut idx = 0u32;
         for channel in &play_data.channel_status {
@@ -192,26 +185,75 @@ impl Display {
             }
         }
 
+        screen.add_line("".to_string());
+        screen.add_line("".to_string());
+
+        if play_data.song_position < play_data.song_length as usize && order[play_data.song_position] < patterns.len() as u8 {
+            let pattern = &patterns[order[play_data.song_position] as usize];
+            let mut first_row;
+            let mut last_row;
+            if play_data.row < 10 {
+                first_row = 0;
+                last_row = 20;
+            } else {
+                first_row = play_data.row - 10;
+
+                if play_data.row + 10 > pattern.rows.len() {
+                    first_row = pattern.rows.len() - 20;
+                    last_row = pattern.rows.len();
+                } else {
+                   last_row = play_data.row + 10;
+                }
+            }
+            for i in first_row..last_row {
+                if i == play_data.row {
+                    screen.add_line_with_color(pattern.rows[i].to_string(), RGB{
+                        r: 50,
+                        g: 50,
+                        b: 128
+                    });
+                } else {
+                    screen.add_line_with_color(pattern.rows[i].to_string(), RGB{
+                        r: 10,
+                        g: 10,
+                        b: 10
+                    });
+                }
+            }
+        }
+
         // screen.add_line(format!("{:?}", view_port));
         // display(Self::hide());
         // display(Self::move_to(0, 0));
 
         for y in view_port.y1..(view_port.y1+view_port.height as isize) {
-            if y < 0 || y as usize >= screen.lines.len(){
+            if y < 0 || y as usize >= screen.lines.len() {
                 display("".to_string());
                 continue;
             }
 
             let line = &screen.lines[y as usize];
-            let len = line.index.len() - 1;
+            let len = if line.data.is_empty() { 0 } else { line.data.len() - 1 };
             // let width = min(view_port.width, len);
-            if view_port.x1.abs() as usize > len {display("".to_string()); continue;}
+            if view_port.x1.abs() as usize > len {
+                display("".to_string());
+                continue;
+            }
             let start = max(view_port.x1, 0);
             let mut preamble: String = "".to_string();
-            if view_port.x1 <= 0 { for _ in 0..(view_port.x1.abs() as usize) {preamble.push(' ');}};
+            if view_port.x1 <= 0 { for _ in 0..(view_port.x1.abs() as usize) { preamble.push(' '); } };
             let end = min(len, (view_port.x1 + (view_port.width as isize)) as usize);
-            let range = line.index[start as usize]..line.index[end];
-            display(String::from(preamble + &line.data[range]));
+            let range = start as usize..end;
+            let black = RGB {
+                r: 0,
+                g: 0,
+                b: 0
+            };
+            if black != line.background {
+                display_with_background(String::from(preamble + &line.data[range]), line.background);
+            } else {
+                display(String::from(preamble + &line.data[range]));
+            }
         }
     }
 }
