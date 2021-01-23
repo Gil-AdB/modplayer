@@ -1,6 +1,6 @@
 use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState};
 use crate::instrument::Instruments;
-use crate::tables::{TableType};
+use crate::tables::AudioTables;
 use crate::module_reader::is_note_valid;
 use std::num::Wrapping;
 use std::cmp::{min, max};
@@ -150,11 +150,11 @@ pub(crate) struct ChannelState {
 }
 
 impl ChannelState {
-    fn set_note(&mut self, note: u8, fine_tune: i8, use_amiga: TableType) {
-        self.note.set_note(note, fine_tune, use_amiga);
+    fn set_note(&mut self, note: u8, fine_tune: i8, original_note: u8, frequency_tables: &AudioTables) {
+        self.note.set_note(note, fine_tune, original_note, frequency_tables);
         self.frequency_shift = 0.0;
         self.period_shift = 0;
-        self.frequency = self.note.frequency(self.period_shift, false, use_amiga);
+        self.frequency = self.note.frequency(self.period_shift, false, frequency_tables);
     }
 
     pub(crate) fn key_off(&mut self, instruments: &Instruments, is_note_delay: bool) -> bool {
@@ -173,11 +173,11 @@ impl ChannelState {
         self.voice.key_off(instruments, is_note_delay)
     }
 
-    pub(crate) fn update_frequency(&mut self, rate: f32, semitone: bool, use_amiga: TableType) {
+    pub(crate) fn update_frequency(&mut self, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
         // self.frequency = self.note.frequency(self.period_shift) + self.frequency_shift;
         // self.frequency = self.note.frequency(self.period_shift, semitone, use_amiga) + self.frequency_shift;
         // self.du = self.frequency / rate;
-        self.voice.set_frequency(self.note.frequency(self.period_shift, semitone, use_amiga) + self.frequency_shift, rate)
+        self.voice.set_frequency(self.note.frequency(self.period_shift, semitone, frequency_tables) + self.frequency_shift, rate)
     }
 
     pub(crate) fn reset_envelopes(&mut self, instruments: &Instruments) {
@@ -191,7 +191,7 @@ impl ChannelState {
     }
 
 
-    pub(crate) fn trigger_note(&mut self, instruments: &Instruments, note: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn trigger_note(&mut self, instruments: &Instruments, note: u8, rate: f32, frequency_tables: &AudioTables) {
         if note >= 1 && note < 97 { // trigger note
             let instrument = &instruments[self.voice.instrument];
             let sample = &instrument.samples[self.voice.sample];
@@ -211,8 +211,8 @@ impl ChannelState {
 
             // println!("channel_state: {}, note: {}, relative: {}, real: {}, vol: {}", i, pattern.note, self.sample.relative_note, pattern.note as i8 + self.sample.relative_note, self.volume);
 
-            self.set_note(tone, sample.finetune, use_amiga);
-            self.update_frequency(rate, false, use_amiga);
+            self.set_note(tone, sample.finetune, note, frequency_tables);
+            self.update_frequency(rate, false, frequency_tables);
             // self.voice.sustained = true;
             self.reset_envelopes(instruments);
         }
@@ -262,13 +262,13 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn retrig_note(&mut self, instruments: &Instruments, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn retrig_note(&mut self, instruments: &Instruments, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, frequency_tables: &AudioTables) {
         if !first_tick && param != 0 && (tick % param as u32 == 0) {
-            self.trigger_note(instruments, note, rate, use_amiga);
+            self.trigger_note(instruments, note, rate, frequency_tables);
         }
     }
 
-    pub(crate) fn multi_retrig(&mut self, instruments: &Instruments, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn multi_retrig(&mut self, instruments: &Instruments, first_tick: bool, tick: u32, param: u8, note: u8, rate: f32, frequency_tables: &AudioTables) {
         // still need to bring volume column and add checks based on it
         if first_tick {
             if param != 0 {
@@ -299,7 +299,7 @@ impl ChannelState {
                     _ => {}
                 }
                 self.voice.volume.set_volume(vol as i32);
-                self.trigger_note(instruments, note, rate, use_amiga);
+                self.trigger_note(instruments, note, rate, frequency_tables);
             }
         }
     }
@@ -407,7 +407,7 @@ impl ChannelState {
         self.voice.volume.set_volume(new_volume);
     }
 
-    pub(crate) fn porta_to_note(&mut self, instruments: &Instruments, first_tick: bool, speed: u8, note: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn porta_to_note(&mut self, instruments: &Instruments, first_tick: bool, speed: u8, note: u8, rate: f32, frequency_tables: &AudioTables) {
         // let speed = pattern.effect_param;
 
         if first_tick {
@@ -417,7 +417,7 @@ impl ChannelState {
 
             if is_note_valid(note) {
                 let sample = &instruments[self.voice.instrument].samples[self.voice.sample];
-                self.porta_to_note.target_note.set_note(clamp(note as i16 + sample.relative_note as i16, 0, 119) as u8, sample.finetune, use_amiga);
+                self.porta_to_note.target_note.set_note(clamp(note as i16 + sample.relative_note as i16, 0, 119) as u8, sample.finetune, note, frequency_tables);
             }
         } else {
             let mut up = true;
@@ -441,11 +441,11 @@ impl ChannelState {
                 self.frequency_shift = 0.0;
             }
 
-            self.update_frequency(rate, self.glissando, use_amiga);
+            self.update_frequency(rate, self.glissando, frequency_tables);
         }
     }
 
-    pub(crate) fn porta_up(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn porta_up(&mut self, first_tick: bool, amount: u8, rate: f32, frequency_tables: &AudioTables) {
         if first_tick {
             if amount != 0 {
                 self.last_porta_up = (amount as u16) * 4;
@@ -455,11 +455,11 @@ impl ChannelState {
             if (self.note.period as i16) < 1 {
                 self.note.period = 1;
             }
-            self.update_frequency(rate, false, use_amiga);
+            self.update_frequency(rate, false, frequency_tables);
         }
     }
 
-    pub(crate) fn porta_down(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn porta_down(&mut self, first_tick: bool, amount: u8, rate: f32, frequency_tables: &AudioTables) {
         if first_tick {
             if amount != 0 {
                 self.last_porta_down = (amount as u16) * 4;
@@ -469,21 +469,21 @@ impl ChannelState {
             if (self.note.period as i16) > 31999 { // FT2 bug
                 self.note.period = 31999;
             }
-            self.update_frequency(rate, false, use_amiga);
+            self.update_frequency(rate, false, frequency_tables);
         }
     }
 
-    pub(crate) fn fine_porta_up(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn fine_porta_up(&mut self, first_tick: bool, amount: u8, rate: f32, frequency_tables: &AudioTables) {
         if first_tick {
             if amount != 0 {
                 self.last_fine_porta_up = (amount as u16) * 4;
             }
             self.note.period = (Wrapping(self.note.period) - Wrapping(self.last_fine_porta_up)).0;
-            self.update_frequency(rate, false, use_amiga);
+            self.update_frequency(rate, false, frequency_tables);
         }
     }
 
-    pub(crate) fn fine_porta_down(&mut self, first_tick: bool, amount: u8, rate: f32, use_amiga: TableType) {
+    pub(crate) fn fine_porta_down(&mut self, first_tick: bool, amount: u8, rate: f32, frequency_tables: &AudioTables) {
         if first_tick {
             if amount != 0 {
                 self.last_fine_porta_down = (amount as u16) * 4;
@@ -492,7 +492,7 @@ impl ChannelState {
             if self.note.period > 31999 {
                 self.note.period = 31999;
             }
-            self.update_frequency(rate, false, use_amiga);
+            self.update_frequency(rate, false, frequency_tables);
         }
     }
 

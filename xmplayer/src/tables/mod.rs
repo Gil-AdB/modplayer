@@ -445,14 +445,14 @@ pub enum TableType {
 }
 
 pub struct AudioTables {
-    pub periods:        [u16; 1936],
-    pub d_period2hz_tab:  [f64; 65536],
+    pub periods:            Vec<u16>,//[u16; 1936],
+    pub d_period2hz_tab:    Vec<f64>,//[f64; 65536],
 }
 
 impl AudioTables {
-    fn calc_tables_linear() -> Box<AudioTables> // taken directly from ft2clone
+    pub(crate) fn calc_tables_linear() -> Box<AudioTables> // taken directly from ft2clone
     {
-        let mut result = Box::new(Self { periods: LINEAR_PERIODS, d_period2hz_tab: [0.0f64; 65536] });
+        let mut result = Box::new(Self { periods: LINEAR_PERIODS.to_vec(), d_period2hz_tab: vec!(0.0f64; 65536) });
         result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
         // linear periods
         for i in 1..65536 {
@@ -466,9 +466,9 @@ impl AudioTables {
         result
     }
 
-    fn calc_tables_amiga() -> Box<AudioTables> // taken directly from ft2clone
+    pub(crate) fn calc_tables_amiga() -> Box<AudioTables> // taken directly from ft2clone
     {
-        let mut result = Box::new(Self { periods: AMIGA_PERIODS, d_period2hz_tab: [0.0f64; 65536] });
+        let mut result = Box::new(Self { periods: AMIGA_PERIODS.to_vec(), d_period2hz_tab: vec!(0.0f64; 65536) });
         result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
         // Amiga periods
         for i in 1..65536 {
@@ -478,7 +478,7 @@ impl AudioTables {
     }
 }
 
-lazy_static! {
-pub static ref AMIGA_TABLES:   Box<AudioTables>   = AudioTables::calc_tables_amiga();
-pub static ref LINEAR_TABLES:  Box<AudioTables>   = AudioTables::calc_tables_linear();
-}
+// lazy_static! {
+// pub static ref AMIGA_TABLES:   Box<AudioTables>   = AudioTables::calc_tables_amiga();
+// pub static ref LINEAR_TABLES:  Box<AudioTables>   = AudioTables::calc_tables_linear();
+// }

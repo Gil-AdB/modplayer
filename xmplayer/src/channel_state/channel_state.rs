@@ -1,6 +1,6 @@
 use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
-use crate::tables::{LINEAR_PERIODS, AMIGA_PERIODS, TableType, LINEAR_TABLES, AMIGA_TABLES};
+use crate::tables::AudioTables;
 use std::num::Wrapping;
 use crate::instrument::VibratoEnvelope;
 
@@ -37,7 +37,8 @@ impl PortaToNoteState {
             target_note: Note{
                 note: 0,
                 finetune: 0,
-                period: 0
+                period: 0,
+                original_note: 0
             },
             speed: 0
         }
@@ -404,9 +405,11 @@ impl VibratoEnvelopeState {
 
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct Note {
-               note:       u8,
-               finetune:   i8,
-    pub(crate) period:     u16
+               note:            u8,
+               finetune:        i8,
+    pub(crate) period:          u16,
+               original_note:   u8,
+
 }
 
 impl Note {
@@ -415,22 +418,21 @@ impl Note {
         Note{
             note: 0,
             finetune: 0,
-            period: 0
+            period: 0,
+            original_note: 0,
         }
     }
 
     // note <= 120
-    pub(crate) fn set_note(&mut self, note: u8, finetune: i8, use_amiga: TableType) {
+    pub(crate) fn set_note(&mut self, note: u8, finetune: i8, original_note: u8, frequency_tables: &AudioTables) {
 
         self.note = note;
+        self.original_note = original_note;
         self.finetune = finetune;
         let sidx= (self.note as i32 - 1) * 16 + ((self.finetune >> 3) + 16) as i32;
         let idx = clamp(sidx, 0, 1935);
 
-        self.period = match use_amiga {
-           TableType::LinearFrequency => {tables::LINEAR_PERIODS[idx as usize]},
-           TableType::AmigaFrequency => {tables::AMIGA_PERIODS[idx as usize]},
-       }
+        self.period = frequency_tables.periods[idx as usize];
     }
 
 
@@ -481,16 +483,13 @@ impl Note {
     // }
 
     // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
-    fn relocate_ton(&self, period: u16, arp_note: u8, use_amiga: TableType) -> u16 {
+    fn relocate_ton(&self, period: u16, arp_note: u8, frequency_tables: &AudioTables) -> u16 {
         // int32_t fine_tune, lo_period, hi_period, tmp_period, tableIndex;
         let fine_tune: u32 = (((self.finetune >> 3) + 16) << 1) as u32;
         let mut hi_period: u32 = (8 * 12 * 16) * 2;
         let mut lo_period: u32 = 0;
 
-        let note2period = match use_amiga {
-            TableType::LinearFrequency => {&LINEAR_PERIODS},
-            TableType::AmigaFrequency => {&AMIGA_PERIODS},
-        };
+        let note2period = &frequency_tables.periods;
 
         for _ in 0..8 {
             let tmp_period = (((lo_period + hi_period) >> 1) & 0xFFFFFFE0) as u32 + fine_tune;
@@ -590,12 +589,12 @@ impl Note {
     }
 
 
-    pub(crate) fn frequency(&self, period_shift: i16, semitone: bool, use_amiga: TableType) -> f32 {
+    pub(crate) fn frequency(&self, period_shift: i16, semitone: bool, frequency_tables: &AudioTables) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
         let period:u16;
         if semitone {
-            period = self.relocate_ton(self.period as u16, period_shift as u8, use_amiga);
+            period = self.relocate_ton(self.period as u16, period_shift as u8, frequency_tables);
             // period = self.nearest_semi_tone(self.period as u16, period_shift as u8, use_amiga);
         } else {
             period = (Wrapping(self.period) - Wrapping((period_shift * 16 * 4) as u16)).0;
@@ -604,10 +603,7 @@ impl Note {
 
         //period = clamp(period, 0, 65535);
 
-        return match use_amiga {
-            TableType::LinearFrequency => {LINEAR_TABLES.d_period2hz_tab[period as usize] as f32},
-            TableType::AmigaFrequency => {AMIGA_TABLES.d_period2hz_tab[period as usize] as f32},
-        }
+        return frequency_tables.d_period2hz_tab[period as usize] as f32;
         // let two = 2.0f32;
         // let freq = 8363.0 * two.powf((6 * 12 * 16 * 4 - period) as f32 / (12 * 16 * 4) as f32);
         // return freq
@@ -616,12 +612,11 @@ impl Note {
     const NOTES: [&'static str;12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
 
     pub(crate) fn to_string(&self) -> String {
-        if self.note == 97 || self.note == 0 { (self.note as u32).to_string() } else {
-            format!("{}{}", Self::NOTES[((self.note as u8 - 1) % 12) as usize], (((self.note as u8 - 1) / 12) + '0' as u8) as char )
+        if self.original_note == 97 || self.original_note == 0 { (self.original_note as u32).to_string() } else {
+            format!("{}{}", Self::NOTES[((self.original_note as u8 - 1) % 12) as usize], (((self.original_note as u8 - 1) / 12) + '0' as u8) as char )
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

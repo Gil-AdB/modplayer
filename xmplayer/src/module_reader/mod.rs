@@ -35,7 +35,7 @@ pub(crate) fn is_note_valid(note: u8) -> bool {
 }
 
 #[derive(Clone)]
-pub(crate) struct Row {
+pub struct Row {
     pub(crate) channels: Vec<Pattern>
 }
 
@@ -69,8 +69,8 @@ impl fmt::Display for Row {
 
 
 #[derive(Debug, Clone)]
-pub(crate) struct Patterns {
-    pub(crate) rows: Vec<Row>
+pub struct Patterns {
+    pub rows: Vec<Row>
 }
 
 impl Patterns {

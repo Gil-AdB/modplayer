@@ -1,5 +1,7 @@
 #[macro_use]
-extern crate lazy_static;
+mod console;
+
+use crate::console::log;
 
 extern crate wasm_bindgen;
 // extern crate sdl2;
@@ -26,7 +28,7 @@ use display::ViewPort;
 use std::ops::DerefMut;
 use xmplayer::producer_consumer_queue::{AUDIO_BUF_FRAMES};
 use std::sync::atomic::Ordering;
-use xmplayer::module_reader::{SongData, read_module, open_module};
+use xmplayer::module_reader::{SongData, read_module, open_module, Patterns};
 use xmplayer::simple_error::{SimpleResult};
 use xmplayer::triple_buffer::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
@@ -89,54 +91,17 @@ impl Sub<Duration> for Instant { type Output = Instant; fn sub(self, other: Dura
 impl Sub<Instant>  for Instant { type Output = Duration; fn sub(self, other: Instant) -> Duration { self.duration_since(other) } }
 impl AddAssign<Duration> for Instant { fn add_assign(&mut self, other: Duration) { *self = *self + other; } }
 impl SubAssign<Duration> for Instant { fn sub_assign(&mut self, other: Duration) { *self = *self - other; } }
+//
+// pub enum PlayerCmd {
+//     Stop,
+//     NewSong(String)
+// }
 
-
-
-
-// First up let's take a look of binding `console.log` manually, without the
-// help of `web_sys`. Here we're writing the `#[wasm_bindgen]` annotations
-// manually ourselves, and the correctness of our program relies on the
-// correctness of these annotations!
-
-#[wasm_bindgen]
-extern "C" {
-    // Use `js_namespace` here to bind `console.log(..)` instead of just
-    // `log(..)`
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-
-    // The `console.log` is quite polymorphic, so we can bind it with multiple
-    // signatures. Note that we need to use `js_name` to ensure we always call
-    // `log` in JS.
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn log_u32(a: u32);
-
-    // Multiple arguments too!
-    #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn log_many(a: &str, b: &str);
-}
-
-// Next let's define a macro that's like `println!`, only it works for
-// `console.log`. Note that `println!` doesn't actually work on the wasm target
-// because the standard library currently just eats all output. To get
-// `println!`-like behavior in your app you'll likely want a macro like this.
-
-macro_rules! console_log {
-    // Note that this is using the `log` function imported above during
-    // `bare_bones`
-    ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
-}
-
-pub enum PlayerCmd {
-    Stop,
-    NewSong(String)
-}
-
-// mpsc is just too much hassle. I tried.
-lazy_static!(
-    static ref CMDS: Mutex<VecDeque<PlayerCmd>> = Mutex::new(VecDeque::new());
-    static ref PLAYBACK_CMDS: Mutex<VecDeque<PlaybackCmd>> = Mutex::new(VecDeque::new());
-);
+// // mpsc is just too much hassle. I tried.
+// lazy_static!(
+//     static ref CMDS: Mutex<VecDeque<PlayerCmd>> = Mutex::new(VecDeque::new());
+//     static ref PLAYBACK_CMDS: Mutex<VecDeque<PlaybackCmd>> = Mutex::new(VecDeque::new());
+// );
 
 struct AudioCB {
     q: SongHandle,
@@ -152,13 +117,18 @@ pub struct SongJs {
     rx:                                 Receiver<PlaybackCmd>,
     last_time:                          Instant,
     last_char:                          char,
+    instruments:                        Vec<Instrument>,
+    patterns:                           Vec<Patterns>,
+    order:                              Vec<u8>,
 }
 
 use js_sys::{Array, JsString};
+use crate::display::RGB;
 
 #[wasm_bindgen(module = "/export.js")]
 extern "C" {
     pub fn term_writeln(str: String);
+    pub fn term_writeln_with_background(str: String, background: RGB);
 }
 
 #[wasm_bindgen]
@@ -169,6 +139,10 @@ impl SongJs {
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
         let song = Song::new(&data, triple_buffer_writer, sample_rate);
         let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
+        let instruments = song.get_instruments();
+        let patterns = song.get_patterns();
+        let order = song.get_order();
+
         Self {
             song,
             triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader)),
@@ -177,16 +151,18 @@ impl SongJs {
             tx,
             rx,
             last_time: Instant::now(),
-            last_char: '\0'
+            last_char: '\0',
+            instruments,
+            patterns,
+            order,
         }
     }
 
-    pub fn display(&mut self) /*-> Array*/ {
-//        let mut result: Vec<String> = vec!();
+    pub fn display(&mut self) {
         let mut tbr = self.triple_buffer_reader.lock().unwrap();
         let (play_data, state) = tbr.read();
         if StateNoChange == state {
-            return;// result.into_iter().map(JsValue::from).collect();
+            return;
         }
 
         if play_data.tick != self.song_tick || play_data.row != self.song_row {
@@ -198,16 +174,16 @@ impl SongJs {
                 height: 35
             };
 
-            let instruments = self.song.get_instruments();
-
             unsafe {
                 let s = Display::move_to(1, 1);
                 term_writeln(s);
             }
 
-            Display::display(play_data, &instruments, view_port, &mut|str| {
+            Display::display(play_data, &self.instruments, &self.patterns, &self.order, view_port, &mut |str| {
                 //    result.push(str);
                 unsafe { term_writeln(str); }
+            }, &mut |str, background| {
+                term_writeln_with_background(str, background);
             });
             self.song_row = play_data.row;
             self.song_tick = play_data.tick;

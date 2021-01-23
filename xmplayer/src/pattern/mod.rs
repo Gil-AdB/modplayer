@@ -2,7 +2,7 @@ use std::fmt;
 use std::string::ToString;
 
 #[derive(Copy, Clone)]
-pub(crate) struct Pattern {
+pub struct Pattern {
     pub(crate) note: u8,
     pub(crate) instrument: u8,
     pub(crate) volume: u8,

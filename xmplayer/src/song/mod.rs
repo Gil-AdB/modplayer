@@ -5,12 +5,13 @@ use crate::channel_state::{ChannelState, Voice};
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp, VibratoEnvelopeState};
 use crate::instrument::{LoopType, Instrument};
 use crate::producer_consumer_queue::AUDIO_BUF_FRAMES;
-use crate::module_reader::{SongData, is_note_valid};
-use crate::tables::{PANNING_TAB, TableType};
+use crate::module_reader::{SongData, is_note_valid, Patterns};
+use crate::tables::{PANNING_TAB, TableType, AudioTables};
 use crate::triple_buffer::{TripleBufferWriter, Init};
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::any::Any;
+use std::borrow::Borrow;
 
 struct BPM {
     pub bpm:                    u32,
@@ -327,7 +328,7 @@ pub struct Song {
     pause:                      bool,
     filter:                     bool,
     display:                    bool,
-    use_amiga:                  TableType,
+    frequency_tables:           Box<AudioTables>,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
     tick_state:                 TickState,
     user_data:                  HashMap<String, UserData>,
@@ -352,7 +353,7 @@ impl Song {
     // }
 
     pub fn new(song_data: &SongData, triple_buffer_writer: TripleBufferWriter<PlayData>, sample_rate: f32) -> Self {
-        let use_amiga = if song_data.use_amiga {TableType::AmigaFrequency} else {TableType::LinearFrequency};
+        let use_amiga = if song_data.use_amiga {AudioTables::calc_tables_amiga()} else {AudioTables::calc_tables_linear()};
         Self {
             name: song_data.name.clone(),
             song_position: 0,
@@ -412,7 +413,7 @@ impl Song {
             pause: false,
             filter: true,
             display: true,
-            use_amiga,
+            frequency_tables: use_amiga,
             triple_buffer_writer,
             tick_state: TickState {
                 state: BufferState::Start,
@@ -530,6 +531,13 @@ impl Song {
         self.song_data.instruments.clone()
     }
 
+    pub fn get_patterns(&self) -> Vec<Patterns> {
+        self.song_data.patterns.clone()
+    }
+
+    pub fn get_order(&self) -> Vec<u8> {
+        self.song_data.pattern_order.clone()
+    }
 
     pub fn get_next_tick(&mut self, buf: &mut impl BufferAdapter, rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
         buf.clear();
@@ -612,8 +620,8 @@ impl Song {
                     PlaybackCmd::FilterToggle => {self.filter = !self.filter;}
                     PlaybackCmd::DisplayToggle => {self.display = !self.display;}
                     PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
-                    PlaybackCmd::AmigaTable => {self.use_amiga = TableType::AmigaFrequency;}
-                    PlaybackCmd::LinearTable => {self.use_amiga = TableType::LinearFrequency;}
+                    PlaybackCmd::AmigaTable => {self.frequency_tables = AudioTables::calc_tables_amiga();}
+                    PlaybackCmd::LinearTable => {self.frequency_tables = AudioTables::calc_tables_linear();}
                     PlaybackCmd::SetUserData(key, value) => {self.user_data.insert(key, value);}
                     PlaybackCmd::ModifyUserDataAddUSize(key, value) => {
                         let entry = self.user_data.entry(key).or_insert(UserData::USize(0));
@@ -779,13 +787,13 @@ impl Song {
                     channel.reset_envelopes(instruments);
                 }
 
-                channel.trigger_note(instruments, note, self.rate, self.use_amiga);
+                channel.trigger_note(instruments, note, self.rate, self.frequency_tables.borrow());
             }
 
             // handle vibrato
             if !first_tick && pattern.has_vibrato() { // vibrate
                 channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::from(channel.vibrato_control)) as f32;
-                channel.update_frequency(self.rate, false, self.use_amiga);
+                channel.update_frequency(self.rate, false, self.frequency_tables.borrow());
             }
 
             // handle tremolo (not really need to do it here, but oh, well)
@@ -818,7 +826,7 @@ impl Song {
                         channel.panning.set_panning(pan as i32);
                     }
                 }
-                0xf0..=0xff => {channel.porta_to_note(instruments, first_tick, pattern.volume & 0xf, pattern.note, self.rate, self.use_amiga); }// Tone porta
+                0xf0..=0xff => {channel.porta_to_note(instruments, first_tick, pattern.volume & 0xf, pattern.note, self.rate, self.frequency_tables.borrow()); }// Tone porta
 
                 _ => {}
             }
@@ -829,15 +837,15 @@ impl Song {
                 0x0 => {  // Arpeggio
                     if pattern.effect_param != 0 {
                         channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y());
-                        channel.update_frequency(self.rate, true, self.use_amiga);
+                        channel.update_frequency(self.rate, true, self.frequency_tables.borrow());
                     }
                 }
-                0x1 => { channel.porta_up(first_tick, pattern.effect_param, self.rate, self.use_amiga); } // Porta up
-                0x2 => { channel.porta_down(first_tick, pattern.effect_param, self.rate, self.use_amiga); } // Porta down
-                0x3 => { channel.porta_to_note(instruments, first_tick,pattern.effect_param,  pattern.note, self.rate, self.use_amiga); } // Porta to note
+                0x1 => { channel.porta_up(first_tick, pattern.effect_param, self.rate, self.frequency_tables.borrow()); } // Porta up
+                0x2 => { channel.porta_down(first_tick, pattern.effect_param, self.rate, self.frequency_tables.borrow()); } // Porta down
+                0x3 => { channel.porta_to_note(instruments, first_tick, pattern.effect_param, pattern.note, self.rate, self.frequency_tables.borrow()); } // Porta to note
                 0x4 => { channel.vibrato(first_tick, pattern.get_x() * 4, pattern.get_y()); } // vibrato
                 0x5 => { // porta to note + volume slide
-                    channel.porta_to_note(instruments, first_tick, 0,0, self.rate, self.use_amiga);
+                    channel.porta_to_note(instruments, first_tick, 0, 0, self.rate, self.frequency_tables.borrow());
                     channel.volume_slide_main(first_tick, pattern.effect_param);
                 }
                 0x6 => { // vibrato + volume slide
@@ -902,7 +910,7 @@ impl Song {
                     channel.panning_slide(first_tick, pattern.effect_param);
                 }
                 0x1b => {
-                    channel.multi_retrig(instruments, first_tick, self.tick, pattern.effect_param, note, self.rate, self.use_amiga);
+                    channel.multi_retrig(instruments, first_tick, self.tick, pattern.effect_param, note, self.rate, self.frequency_tables.borrow());
                 }
                 0x1d => {
                     channel.tremor(self.tick, pattern.effect_param);
@@ -912,13 +920,13 @@ impl Song {
 
             if pattern.effect == 0xe {
                 match pattern.get_x() {
-                    0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate, self.use_amiga); } // Porta up
-                    0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate, self.use_amiga); } // Porta down
+                    0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate, self.frequency_tables.borrow()); } // Porta up
+                    0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate, self.frequency_tables.borrow()); } // Porta down
                     0x3 => { channel.glissando = pattern.get_y() == 1; }
                     0x4 => { channel.vibrato_control = pattern.get_y();}
                     0x7 => { channel.tremolo_control = pattern.get_y();}
                     0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
-                    0x9 => { channel.retrig_note(instruments, first_tick, self.tick, pattern.get_y(), pattern.note, self.rate, self.use_amiga);}
+                    0x9 => { channel.retrig_note(instruments, first_tick, self.tick, pattern.get_y(), pattern.note, self.rate, self.frequency_tables.borrow());}
                     0xa => { channel.fine_volume_slide_up(note_delay_first_tick, pattern.get_y());} // volume slide up
                     0xb => { channel.fine_volume_slide_down(note_delay_first_tick, pattern.get_y());} // volume slide up
                     0xc => { channel.set_volume(self.tick == pattern.get_y() as u32, 0); }
