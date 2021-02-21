@@ -1,4 +1,4 @@
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError, PoisonError, WaitTimeoutResult};
+use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::{AtomicPtr, Ordering, AtomicBool};
 use std::sync::atomic::Ordering::{Acquire, Release};
 use std::time::Duration;

@@ -1,41 +1,22 @@
 
-use std::sync::{Arc, mpsc, Mutex};
-use std::sync::atomic::{AtomicPtr, Ordering, AtomicBool};
-use std::sync::mpsc::{Receiver, Sender, channel};
-
-use crossbeam::thread;
-use getch::Getch;
-
-use xmplayer::song::{Song, PlaybackCmd, PlayData, CallbackState, UserData};
-use xmplayer::module_reader::{SongData, read_module, print_module};
+use xmplayer::song::{PlaybackCmd, UserData};
+use xmplayer::module_reader::print_module;
 use std::env;
 use std::time::{Duration, SystemTime};
-use std::thread::{sleep, spawn, JoinHandle};
 use std::io::{stdout, Write};
-use xmplayer::triple_buffer::{TripleBuffer, TripleBufferReader};
-use xmplayer::triple_buffer::State::StateNoChange;
 
-use crossterm::terminal::ClearType::All;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use std::borrow::BorrowMut;
-use std::marker::PhantomData;
-use std::rc::Rc;
-use crossterm::event::{Event, KeyEvent, KeyCode};
-use crossterm::event::Event::Key;
-use xmplayer::song::PlaybackCmd::Quit;
-use xmplayer::song_state::{SongState, SongHandle, StructHolder};
-use std::error::Error;
+use crossterm::event::KeyCode;
+use xmplayer::song_state::{SongState, SongHandle};
 
 #[cfg(feature="sdl2-feature")] mod sdl2_audio;
 #[cfg(feature="sdl2-feature")] use sdl2_audio::AudioOutput;
 #[cfg(feature="portaudio-feature")] mod portaudio_audio;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
-use xmplayer::instrument::Instrument;
 use crossterm::cursor::{MoveToNextLine, Hide, MoveTo, Show};
 use crossterm::terminal::{Clear, ClearType};
 use display::display::Display;
 use display::ViewPort;
-use xmplayer::song::UserData::ISize;
 
 fn main() {
     if env::args().len() < 2 {return;}
@@ -211,7 +192,7 @@ fn mainloop(song_data: &mut SongState) -> std::result::Result<bool, crossterm::E
                                     let _ = tx.send(PlaybackCmd::Quit);
                                     break;
                                 }
-                                '0'...'9' => {
+                                '0'..='9' => {
                                     if SystemTime::now() > last_time + Duration::from_secs(1) {
                                         last_char = '\0';
                                     }

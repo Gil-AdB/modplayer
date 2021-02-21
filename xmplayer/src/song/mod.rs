@@ -4,13 +4,11 @@ use std::sync::mpsc::Receiver;
 use crate::channel_state::{ChannelState, Voice};
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp, VibratoEnvelopeState};
 use crate::instrument::{LoopType, Instrument};
-use crate::producer_consumer_queue::AUDIO_BUF_FRAMES;
 use crate::module_reader::{SongData, is_note_valid, Patterns};
-use crate::tables::{PANNING_TAB, TableType, AudioTables};
+use crate::tables::{PANNING_TAB, AudioTables};
 use crate::triple_buffer::{TripleBufferWriter, Init};
 use std::collections::HashMap;
 use std::num::Wrapping;
-use std::any::Any;
 use std::borrow::Borrow;
 
 struct BPM {

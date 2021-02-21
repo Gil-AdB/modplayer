@@ -16,6 +16,7 @@ pub trait BinaryReader {
     fn read_bytes   (&mut self, size: usize) -> Vec<u8>;
     fn read_i16_vec (&mut self, size: usize) -> Vec<i16>;
     fn read_u16_vec (&mut self, size: usize) -> Vec<u16>;
+    fn read_u32_vec (&mut self, size: usize) -> Vec<u32>;
     fn read_i8_vec  (&mut self, size: usize) -> Vec<i8>;
 }
 
@@ -67,6 +68,10 @@ impl<R: Read> BinaryReader for R {
 
     fn read_u16_vec(&mut self, size: usize) -> Vec<u16> {
         read_u16_vec(self, size)
+    }
+
+    fn read_u32_vec(&mut self, size: usize) -> Vec<u32> {
+        read_u32_vec(self, size)
     }
 
     fn read_i8_vec(&mut self, size: usize) -> Vec<i8> {
@@ -183,6 +188,19 @@ pub(crate) fn read_u16_vec<R: Read>(file: &mut R, size: usize) -> Vec<u16> {
     LittleEndian::read_u16_into(buf.as_slice(), result.as_mut_slice());
     result
 }
+
+pub(crate) fn read_u32_vec<R: Read>(file: &mut R, size: usize) -> Vec<u32> {
+    let mut result = vec!(0u32; size);
+    let mut buf = vec!(0u8; size * 4);
+    match file.read_exact(&mut buf) {
+        Ok(_) => {}
+        Err(_) => {dbg!("Read partial vec");}
+    }
+
+    LittleEndian::read_u32_into(buf.as_slice(), result.as_mut_slice());
+    result
+}
+
 
 pub(crate) fn read_i8_vec<R: Read>(file: &mut R, size: usize) -> Vec<i8> {
     let mut result = vec!(0i8; size);

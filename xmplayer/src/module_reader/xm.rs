@@ -1,16 +1,17 @@
 pub(crate) mod xm {
-    use std::io::{Read, Seek, SeekFrom, BufReader};
     use core::result::Result::{Err, Ok};
-    use crate::module_reader::{Patterns, Row, SongData, SongType, FrequencyType};
-    use crate::io_helpers;
-    use crate::pattern::Pattern;
-    use crate::envelope::{EnvelopePoints, EnvelopePoint, Envelope};
-    use crate::instrument::{Sample, LoopType, Instrument, VibratoEnvelope};
-    use std::iter::FromIterator;
-    use std::fs::{File};
-    use crate::simple_error::SimpleResult;
-    use simple_error::SimpleError;
+    use std::io::{Read, Seek, SeekFrom};
     use std::io;
+    use std::iter::FromIterator;
+
+    use simple_error::SimpleError;
+
+    use crate::envelope::{Envelope, EnvelopePoint, EnvelopePoints};
+    use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
+    use crate::io_helpers;
+    use crate::module_reader::{FrequencyType, Patterns, Row, SongData, SongType};
+    use crate::pattern::Pattern;
+    use crate::simple_error::SimpleResult;
 
     fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize) -> Vec<Patterns> {
         let mut patterns: Vec<Patterns> = vec![];
@@ -328,7 +329,7 @@ pub(crate) mod xm {
     }
 
     pub fn read_xm<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
-        file.seek(SeekFrom::Start(0));
+        if let Err(res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
 
         let file_len = match file.stream_len() {
             Ok(m) => {m}

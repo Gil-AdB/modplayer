@@ -37,7 +37,7 @@ impl AudioOutput {
             samples: Some((AUDIO_BUF_SIZE / 2) as u16)
         };
 
-        let audio_output = audio.open_playback(None, &desired_spec, |spec| {
+        let audio_output = audio.open_playback(None, &desired_spec, |_spec| {
             AudioCB{ q: song_handle.clone()}
         }).unwrap();
 
