@@ -1,4 +1,4 @@
-use std::{fmt, io, fs};
+use std::{fmt, fs};
 use simple_error::{SimpleResult, SimpleError};
 use crate::instrument::{Instrument, Sample};
 use crate::module_reader::module::module::read_mod;
@@ -9,13 +9,14 @@ use crate::channel_state::channel_state::clamp;
 use crate::module_reader::stm::stm::read_stm;
 use crate::channel_state::ChannelState;
 use crate::song_state::SongHandle;
-use std::io::{Read, Seek, BufReader, Cursor};
-use std::fs::File;
+use std::io::Cursor;
+use crate::module_reader::it::it::read_it;
 
 mod xm;
 mod module;
 mod s3m;
 mod stm;
+mod it;
 
 #[derive(Debug, Copy, Clone)]
 enum SongType {
@@ -145,7 +146,12 @@ pub fn open_module(data: &[u8]) -> SimpleResult<SongData> {
         Err(_) => {},
     }
 
-    read_s3m(&mut buf)
+    match read_s3m(&mut buf) {
+        Ok(module) => {return Ok(module)},
+        Err(_) => {},
+    }
+
+    read_it(&mut buf)
 }
 
 

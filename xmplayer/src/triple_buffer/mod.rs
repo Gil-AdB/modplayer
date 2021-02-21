@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU32, AtomicPtr, Ordering};
-use std::sync::atomic::Ordering::{Acquire, Release};
+use std::sync::atomic::Ordering::{Acquire, Release, Relaxed};
 use std::sync::Arc;
 use ::array_init::array_init;
 use crate::triple_buffer::State::{StateNoChange, StateDirty};
