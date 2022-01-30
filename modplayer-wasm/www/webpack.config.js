@@ -18,6 +18,10 @@ module.exports = {
             },
         ],
     },
+    experiments: {
+        syncWebAssembly: true,
+        // asyncWebAssembly: true,
+    },
     entry: {
         bootstrap: "./bootstrap.js",
     },
@@ -27,7 +31,7 @@ module.exports = {
     },
    mode: "development",
    plugins: [
-       new CopyWebpackPlugin(['index.html']),
+       new CopyWebpackPlugin({patterns: ['index.html']}),
    ]
     // mode: "production",
     // plugins: [
