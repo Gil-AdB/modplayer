@@ -1,4 +1,5 @@
 #![feature(seek_convenience)]
+#![feature(seek_stream_len)]
 
 use wasm_bindgen_test::*;
 use wasm_bindgen_test::wasm_bindgen_test_configure;

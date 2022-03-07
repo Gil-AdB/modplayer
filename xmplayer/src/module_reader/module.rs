@@ -1,6 +1,6 @@
 pub(crate) mod module {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
-    use std::io::{Read, Seek, SeekFrom};
+    use std::io::{BufReader, Read, Seek, SeekFrom};
     use crate::io_helpers::{read_string, read_bytes};
     use std::iter::FromIterator;
     use crate::pattern::Pattern;

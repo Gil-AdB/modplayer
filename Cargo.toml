@@ -35,6 +35,14 @@ members = ["xmplayer", "display", "modplayer-bin", "modplayer-emscripten", "modp
 #lto = true
 #panic = 'abort'
 
+# [dependencies]
+# std = {default-features=false, features=["panic_immediate_abort"]}
+
+# [profile.release]
+# lto = true
+# panic = 'abort'
+
+
 # uncomment for termux
 #[patch.crates-io]
 #termios = { path = "vendor/termios-0.2.2" }
