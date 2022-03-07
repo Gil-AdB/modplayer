@@ -1,17 +1,15 @@
 pub(crate) mod xm {
-    use core::result::Result::{Err, Ok};
     use std::io::{Read, Seek, SeekFrom};
-    use std::io;
-    use std::iter::FromIterator;
-
-    use simple_error::SimpleError;
-
-    use crate::envelope::{Envelope, EnvelopePoint, EnvelopePoints};
-    use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
+    use core::result::Result::{Err, Ok};
+    use crate::module_reader::{Patterns, Row, SongData, SongType, FrequencyType};
     use crate::io_helpers;
-    use crate::module_reader::{FrequencyType, Patterns, Row, SongData, SongType};
     use crate::pattern::Pattern;
+    use crate::envelope::{EnvelopePoints, EnvelopePoint, Envelope};
+    use crate::instrument::{Sample, LoopType, Instrument, VibratoEnvelope};
+    use std::iter::FromIterator;
     use crate::simple_error::SimpleResult;
+    use simple_error::SimpleError;
+    use std::io;
 
     fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize) -> Vec<Patterns> {
         let mut patterns: Vec<Patterns> = vec![];
@@ -220,7 +218,7 @@ pub(crate) mod xm {
                     samples: read_samples(file, sample_count as usize)
                 });
             } else {
-                if let Err(e) = file.seek(SeekFrom::Start(instrument_pos + header_size as u64)) { panic!(e); }
+                if let Err(e) = file.seek(SeekFrom::Start(instrument_pos + header_size as u64)) { std::panic::panic_any(e); }
                 instruments.push(Instrument::new());
             }
         }
@@ -329,7 +327,7 @@ pub(crate) mod xm {
     }
 
     pub fn read_xm<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
-        if let Err(res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
+        file.seek(SeekFrom::Start(0));
 
         let file_len = match file.stream_len() {
             Ok(m) => {m}
