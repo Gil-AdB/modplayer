@@ -1,6 +1,6 @@
 use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
-use crate::tables::AudioTables;
+use crate::tables::{TableType, AudioTables, AMIGA_PERIODS, TableType::AmigaFrequency, LINEAR_PERIODS, TableType::LinearFrequency};
 use std::num::Wrapping;
 use crate::instrument::VibratoEnvelope;
 
@@ -522,8 +522,8 @@ impl Note {
     fn nearest_semi_tone_test(&self, period: u16, added_note: u8, use_amiga: TableType) -> (u16, u32) {
 
         let note2period = match use_amiga {
-            TableType::LinearFrequency => {&LINEAR_PERIODS},
-            TableType::AmigaFrequency => {&AMIGA_PERIODS},
+            LinearFrequency => {&LINEAR_PERIODS},
+            AmigaFrequency => {&AMIGA_PERIODS},
         };
 
         let mut needed_period = period as u16;
@@ -555,8 +555,8 @@ impl Note {
         let mut lo_period: u32 = 0;
 
         let note2period = match use_amiga {
-            TableType::LinearFrequency => {&LINEAR_PERIODS},
-            TableType::AmigaFrequency => {&AMIGA_PERIODS},
+            LinearFrequency => {&LINEAR_PERIODS},
+            AmigaFrequency => {&AMIGA_PERIODS},
         };
 
         for _ in 0..8 {
@@ -621,16 +621,18 @@ impl Note {
 #[cfg(test)]
 mod tests {
     use crate::channel_state::channel_state::Note;
-    use crate::tables::TableType;
+    use crate::tables::{TableType, AudioTables};
 
     #[test]
     fn test_glissando() {
         for t in [ TableType::AmigaFrequency, TableType::LinearFrequency,].iter() {
+            let table = if *t == TableType::AmigaFrequency {AudioTables::calc_tables_amiga()} 
+                                                                     else {AudioTables::calc_tables_linear()};
             for note_idx in 1..=120 {
                 for added_note in 0..16 {
                     for finetune in -16..=15 {
                         let mut note = Note::new();
-                        note.set_note(note_idx, finetune << 3, *t);
+                        note.set_note(note_idx, finetune << 3, note_idx, &table);
 
                         if note_idx == 83 && finetune == 15 {
                             let _banana = true;

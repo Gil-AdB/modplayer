@@ -9,8 +9,7 @@ use crate::channel_state::channel_state::clamp;
 use crate::module_reader::stm::stm::read_stm;
 use crate::channel_state::ChannelState;
 use crate::song_state::SongHandle;
-use std::io::Cursor;
-use crate::module_reader::it::it::read_it;
+use std::io::{Cursor};
 
 mod xm;
 mod module;
