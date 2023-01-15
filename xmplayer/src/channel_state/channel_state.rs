@@ -1,6 +1,6 @@
 use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
-use crate::tables::{TableType, AudioTables, AMIGA_PERIODS, TableType::AmigaFrequency, LINEAR_PERIODS, TableType::LinearFrequency};
+use crate::tables::{AudioTables};
 use std::num::Wrapping;
 use crate::instrument::VibratoEnvelope;
 

@@ -1,6 +1,6 @@
 pub(crate) mod module {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
-    use std::io::{BufReader, Read, Seek, SeekFrom};
+    use std::io::{Read, Seek, SeekFrom};
     use crate::io_helpers::{read_string, read_bytes};
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
@@ -12,7 +12,7 @@ pub(crate) mod module {
     use std::io;
 
     pub fn read_mod<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
-        if let Err(res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
+        if let Err(_res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
 
         let file_len = match file.stream_len() {
             Ok(m) => {m}

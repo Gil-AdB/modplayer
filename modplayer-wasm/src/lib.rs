@@ -1,8 +1,6 @@
 #[macro_use]
 mod console;
 
-use crate::console::log;
-
 extern crate wasm_bindgen;
 // extern crate sdl2;
 extern crate xmplayer;
@@ -11,25 +9,19 @@ mod leak;
 mod display;
 
 use wasm_bindgen::prelude::*;
-use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song, BufferAdapter};
-use xmplayer::song_state::{SongState, SongHandle, StructHolder};
+use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song};
+use xmplayer::song_state::{SongHandle};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 // use sdl2::{EventPump};
 use std::ffi::c_void;
-use std::ffi::CString;
-use std::collections::VecDeque;
-use std::time::{SystemTime, Duration};
+use std::time::{Duration};
 use xmplayer::triple_buffer::State::StateNoChange;
 use xmplayer::instrument::Instrument;
 use display::Display;
 use display::ViewPort;
-use std::ops::DerefMut;
-use xmplayer::producer_consumer_queue::{AUDIO_BUF_FRAMES};
-use std::sync::atomic::Ordering;
-use xmplayer::module_reader::{SongData, read_module, open_module, Patterns};
-use xmplayer::simple_error::{SimpleResult};
+use xmplayer::module_reader::{open_module, Patterns};
 use xmplayer::triple_buffer::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
 use wasm_bindgen::__rt::std::os::raw::c_char;

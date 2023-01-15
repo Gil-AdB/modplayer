@@ -1,5 +1,3 @@
-#![feature(seek_convenience)]
-#![feature(slice_fill)]
 #![feature(seek_stream_len)]
 #[macro_use]
 extern crate lazy_static;
