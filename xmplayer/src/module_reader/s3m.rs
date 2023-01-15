@@ -10,7 +10,7 @@ pub(crate) mod s3m {
     use crate::module_reader;
 
     pub fn read_s3m<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
-        if let Err(res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
+        if let Err(_res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
 
         let file_len = match file.stream_len() {
             Ok(m) => {m}

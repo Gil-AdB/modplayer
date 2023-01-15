@@ -9,7 +9,7 @@ pub(crate) mod it {
     use crate::instrument::{Instrument, LoopType, Sample};
     use crate::io_helpers;
     use crate::io_helpers::{BinaryReader, read_string};
-    use crate::module_reader::{FrequencyType, Patterns, Row, SongData, SongType};
+    use crate::module_reader::{Patterns, Row, SongData};
     use crate::pattern::Pattern;
     use crate::simple_error::SimpleResult;
 
@@ -181,7 +181,7 @@ pub(crate) mod it {
 
         for (_instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
             let mut _instrument = Instrument::new();
-            if let Err(pos) = file.seek(SeekFrom::Start(instrument_ptr as u64)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Error in reading IT instrument - file offset")));}
+            if let Err(_pos) = file.seek(SeekFrom::Start(instrument_ptr as u64)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Error in reading IT instrument - file offset")));}
             let id = read_string(file, 4);
             if id != "IMPI" {
                 return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Error in reading IT instrument - wrong ID")));

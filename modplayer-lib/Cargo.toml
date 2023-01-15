@@ -25,10 +25,10 @@ simple-error = "0.2.2"
 xmplayer = {path="../xmplayer"}
 
 [dependencies.sdl2]
-version = "0.34.3"
+version = "0.35.2"
 optional = true
 default-features = false
-features = ["static-link"]
+features = ["bundled"]
 #features = ["bundled","static-link","use-vcpkg"]
 
 [package.metadata.vcpkg]
