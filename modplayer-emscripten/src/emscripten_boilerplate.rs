@@ -1,4 +1,4 @@
-use crate::leak;
+
 
 use std::os::raw::{c_int, c_void, c_char};
 
@@ -70,19 +70,19 @@ pub fn setup_mainloop<A, F: FnMut(*mut c_void) + 'static>(
 }
 
 #[cfg(not(target_os = "emscripten"))]
-pub unsafe fn emscripten_run_script(code: *const c_char) {}
+pub unsafe fn emscripten_run_script(_code: *const c_char) {}
 
 #[cfg(not(target_os = "emscripten"))]
 pub fn setup_mainloop<A, F: FnMut(*mut c_void) + 'static>(
-    fps: c_int,
-    simulate_infinite_loop: c_int,
-    arg: A,
-    callback: F,
+    _fps: c_int,
+    _simulate_infinite_loop: c_int,
+    _arg: A,
+    _callback: F,
 ) {
 }
 
 #[cfg(not(target_os = "emscripten"))]
-pub unsafe fn term_writeln(str: *const c_char) {}
+pub unsafe fn term_writeln(_str: *const c_char) {}
 
 #[cfg(not(target_os = "emscripten"))]
 pub unsafe fn on_module_stop() {}

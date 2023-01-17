@@ -1,7 +1,27 @@
 cargo-features = ["named-profiles"]
 
 [workspace]
-members = ["xmplayer", "display", "modplayer-bin", "modplayer-emscripten", "modplayer-wasm", "modplayer-lib"]
+members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm", "modplayer-lib"]
+
+[profile.release]
+debug = true
+
+
+[profile.release.modplayer-bin]
+lto = true
+
+[profile.release.package.modplayer-wasm]
+#wasm-opt = { opt-level = "z" }
+#wasm-snip = { snip-rust-fmt-code = true, snip-rust-panicking-code = true }
+wasm-bindgen = true
+debug = true
+# Should we enable wasm-bindgen's debug assertions in its generated JS glue?
+debug-js-glue = true
+# Should wasm-bindgen demangle the symbols in the "name" custom section?
+demangle-name-section = true
+# Should we emit the DWARF debug info custom sections?
+dwarf-debug-info = true
+
 #[profile.release]
 #debug = true
 #

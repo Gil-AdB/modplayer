@@ -90,7 +90,7 @@ fn run(song_data: &mut SongHandle) {
 
         if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0, 0)) {}
         Display::display(data, instruments, view_port, &mut|str| {
-            write!(stdout(), "{}", str);
+            write!(stdout(), "{}", str).expect("write error");
             if let Err(_e) = crossterm::execute!(stdout(), Clear(ClearType::UntilNewLine), MoveToNextLine(1)) {}
             // if let Err(_e) = crossterm::execute!(stdout(), ) {}
         });

@@ -24,11 +24,11 @@ use display::ViewPort;
 use xmplayer::module_reader::{open_module, Patterns};
 use xmplayer::triple_buffer::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
-use wasm_bindgen::__rt::std::os::raw::c_char;
+
 use crate::wasm_bindgen::JsCast;
 
 
-use std::convert::{TryInto};
+
 use std::ops::{Add, Sub, AddAssign, SubAssign};
 
 pub use std::time::*;
@@ -130,7 +130,7 @@ impl SongJs {
         let triple_buffer = TripleBuffer::<PlayData>::new();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
         let song = Song::new(&data, triple_buffer_writer, sample_rate);
-        let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
+        let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
         let instruments = song.get_instruments();
         let patterns = song.get_patterns();
         let order = song.get_order();
@@ -157,29 +157,28 @@ impl SongJs {
             return;
         }
 
-        if play_data.tick != self.song_tick || play_data.row != self.song_row {
-
-            let view_port = ViewPort {
-                x1: 0,
-                y1: 0,
-                width: 200,
-                height: 35
-            };
-
-            unsafe {
-                let s = Display::move_to(1, 1);
-                term_writeln(s);
-            }
-
-            Display::display(play_data, &self.instruments, &self.patterns, &self.order, view_port, &mut |str| {
-                //    result.push(str);
-                unsafe { term_writeln(str); }
-            }, &mut |str, background| {
-                term_writeln_with_background(str, background);
-            });
-            self.song_row = play_data.row;
-            self.song_tick = play_data.tick;
+        if !(play_data.tick != self.song_tick || play_data.row != self.song_row) {
+            return;
         }
+
+        let view_port = ViewPort {
+            x1: 0,
+            y1: 0,
+            width: 200,
+            height: 35
+        };
+
+        let s = Display::move_to(1, 1);
+        term_writeln(s);
+
+        Display::display(play_data, &self.instruments, &self.patterns, &self.order, view_port, &mut |str| {
+            //    result.push(str);
+            term_writeln(str);
+        }, &mut |str, background| {
+            term_writeln_with_background(str, background);
+        });
+        self.song_row = play_data.row;
+        self.song_tick = play_data.tick;
     }
 
     // true  - continue playing

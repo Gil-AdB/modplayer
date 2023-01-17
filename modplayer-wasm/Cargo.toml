@@ -17,18 +17,5 @@ cfg-if = "1.0.0"
 [dev-dependencies]
 wasm-bindgen-test = "0.3.0"
 
-[profile.release]
-#wasm-opt = { opt-level = "z" }
-#wasm-snip = { snip-rust-fmt-code = true, snip-rust-panicking-code = true }
-lto = true
-wasm-bindgen = true
-debug = true
-# Should we enable wasm-bindgen's debug assertions in its generated JS glue?
-debug-js-glue = true
-# Should wasm-bindgen demangle the symbols in the "name" custom section?
-demangle-name-section = true
-# Should we emit the DWARF debug info custom sections?
-dwarf-debug-info = true
-
 [lib]
 crate-type = ["cdylib", "rlib"]

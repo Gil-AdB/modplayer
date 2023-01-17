@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU32, AtomicPtr, Ordering};
-use std::sync::atomic::Ordering::{Acquire, Release};
+use std::sync::atomic::Ordering::{Acquire, Release, Relaxed};
 use std::sync::Arc;
 use ::array_init::array_init;
 use crate::triple_buffer::State::{StateNoChange, StateDirty};
@@ -58,9 +58,14 @@ impl <T> TripleBufferReader<T> where T: Clone + Init {
             // try to exchange ready slot with reader
             let new_indexes = TripleBuffer::<T>::swap_ready_and_reader(current_indexes);
 
-            let result = tb.indexes.compare_and_swap(current_indexes, new_indexes, Release);
+            let result = tb.indexes.compare_exchange_weak(current_indexes, new_indexes, Release, Relaxed);
+            
+            let result_index = match result {
+                Ok(v) => v,
+                Err(e) => e,
+            };
 
-            if result != current_indexes { // failed to exchange, try again
+            if result_index != current_indexes { // failed to exchange, try again
                 continue;
             }
 
@@ -86,9 +91,14 @@ impl <T> TripleBufferWriter<T> where T: Clone + Init {
             // try to exchange ready slot with writer
             let new_indexes = TripleBuffer::<T>::swap_ready_and_writer(current_indexes);
 
-            let result = tb.indexes.compare_and_swap(current_indexes, new_indexes, Release);
+            let result = tb.indexes.compare_exchange(current_indexes, new_indexes, Release, Relaxed);
+            
+            let result_index = match result {
+                Ok(v) => v,
+                Err(e) => e,
+            };
 
-            if result != current_indexes { // failed to exchange, try again
+            if result_index != current_indexes { // failed to exchange, try again
                 continue;
             }
 

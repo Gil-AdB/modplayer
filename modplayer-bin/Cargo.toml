@@ -39,8 +39,4 @@ git = "https://github.com/microsoft/vcpkg"
 rev = "a0518036077baa4"
 optional = true
 
-[profile.release]
-lto = true
-panic = 'abort'
-
 

@@ -12,27 +12,27 @@ mod leak;
 #[cfg(feature="portaudio-feature")] mod portaudio_audio;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
 
-use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioDevice};
-use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, InterleavedBufferAdaptar};
-use xmplayer::song_state::{SongState, SongHandle, StructHolder};
-use std::sync::{mpsc, Arc};
+use sdl2::audio::{AudioCallback};
+use xmplayer::song::{PlaybackCmd, CallbackState, InterleavedBufferAdaptar};
+use xmplayer::song_state::{SongState, SongHandle};
+use std::sync::{mpsc};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Mutex;
-use sdl2::{EventPump};
+
+
 use std::ffi::{c_void, CStr};
-use std::collections::VecDeque;
-use std::time::{SystemTime, Duration};
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use xmplayer::triple_buffer::TripleBufferReader;
-use xmplayer::triple_buffer::State::StateNoChange;
-use xmplayer::instrument::Instrument;
-use std::ops::DerefMut;
-use xmplayer::producer_consumer_queue::{AUDIO_BUF_FRAMES};
+
+
+
+
+
+
+
+
+
 use std::sync::atomic::Ordering;
 use std::os::raw::c_char;
-use simple_error::{SimpleResult, SimpleError};
-use std::thread::JoinHandle;
+use simple_error::{SimpleResult};
+
 
 pub enum PlayerCmd {
     Stop,
@@ -49,7 +49,7 @@ impl AudioCallback for AudioCB {
     fn callback(&mut self, out: &mut [f32]) {
         let song_state = self.q.get_mut();
         let mut song = song_state.song.lock().unwrap();
-        let (tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
+        let (_tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
         let mut adaptar = InterleavedBufferAdaptar{buf: out};
 
         if let CallbackState::Complete = song.get_next_tick(&mut adaptar, &mut rx) {
@@ -70,7 +70,7 @@ impl App {
 
         // let (tx, mut rx): (Sender<PlayerCmd>, Receiver<PlayerCmd>) = mpsc::channel();
         dbg!("start");
-        let mut song = SongState::new(path)?;
+        let song = SongState::new(path)?;
         Ok(leak!(Self {
             // tx: Box::new(tx),
             // rx: Box::new(rx)
