@@ -5,8 +5,8 @@ use xmplayer::producer_consumer_queue::AUDIO_BUF_SIZE;
 use core::option::Option::{Some, None};
 
 use sdl2::{Error, AudioSubsystem, audio::{AudioSpecDesired, AudioCallback, AudioDevice}};
-use std::ffi::{c_void, CStr};
-use crate::leak;
+
+
 use std::thread::JoinHandle;
 
 struct AudioCB {
@@ -44,7 +44,7 @@ impl AudioOutput {
             samples: Some((AUDIO_BUF_SIZE / 2) as u16)
         };
 
-        let audio_output = audio.open_playback(None, &desired_spec, |spec| {
+        let audio_output = audio.open_playback(None, &desired_spec, |_spec| {
             //song_handle.get_mut().song.lock().unwrap().set_sample_rate(spec.freq as f32);
             let cb = AudioCB{ q: song_handle.clone()};
             cb
@@ -61,7 +61,7 @@ impl AudioOutput {
     }
 
     pub fn start_audio_output(&mut self) {
-        let h = self.audio_output.lock().q.get_mut().start(|data, instruments| {});
+        let h = self.audio_output.lock().q.get_mut().start(|_data, _instruments| {});
         self.play_thread = h.0;
         self.display_thread = h.1;
 

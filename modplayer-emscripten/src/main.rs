@@ -12,7 +12,7 @@ mod leak;
 use emscripten_boilerplate::{setup_mainloop};
 use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioDevice};
 use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, InterleavedBufferAdaptar};
-use xmplayer::song_state::{SongState, SongHandle, StructHolder};
+use xmplayer::song_state::{SongState, SongHandle};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
@@ -119,24 +119,25 @@ impl App {
     fn handle_display(&mut self, triple_buffer_reader: &mut TripleBufferReader<PlayData>, instruments: &Vec<Instrument>) {
         let (play_data, state) = triple_buffer_reader.read();
         if StateNoChange == state { return; }
-        if play_data.tick != self.song_tick || play_data.row != self.song_row {
-
-            let view_port = ViewPort {
-                x1: 0,
-                y1: 0,
-                width: 200,
-                height: 35
-            };
-
-
-            unsafe { term_writeln(CString::new(Display::move_to(1, 1)).unwrap().as_ptr()); }
-
-            Display::display(play_data, instruments, view_port, &mut|str| {
-                unsafe { term_writeln(CString::new(str).unwrap().as_ptr()); }
-            });
-            self.song_row = play_data.row;
-            self.song_tick = play_data.tick;
+        if !(play_data.tick != self.song_tick || play_data.row != self.song_row) {
+            return;
         }
+
+        let view_port = ViewPort {
+            x1: 0,
+            y1: 0,
+            width: 200,
+            height: 35
+        };
+
+
+        unsafe { term_writeln(CString::new(Display::move_to(1, 1)).unwrap().as_ptr()); }
+
+        Display::display(play_data, instruments, view_port, &mut|str| {
+            unsafe { term_writeln(CString::new(str).unwrap().as_ptr()); }
+        });
+        self.song_row = play_data.row;
+        self.song_tick = play_data.tick;
     }
 
     fn run(&self) {
@@ -162,7 +163,7 @@ impl App {
         let mut triple_buffer_reader: Option<Arc<Mutex<TripleBufferReader<PlayData>>>> = None;
         let mut instruments: Vec<Instrument> = vec![];
 
-        setup_mainloop(fps, simulate_infinite_loop, leaked_self, move |self_| unsafe {
+        setup_mainloop(fps, simulate_infinite_loop, leaked_self, move |_self_| unsafe {
             let leaked_pointer = leaked_self as *mut Self;
             let self_ = &mut *leaked_pointer;
 
@@ -178,7 +179,7 @@ impl App {
                         dbg!("Stop");
                         App::stop_audio(&mut audio_output, &mut triple_buffer_reader);
                     }
-                    PlayerCmd::NewSong(cb) => {
+                    PlayerCmd::NewSong(_cb) => {
                         dbg!("Start");
 
                         App::stop_audio(&mut audio_output, &mut triple_buffer_reader);
@@ -312,14 +313,14 @@ fn handle_input(event_pump: &mut EventPump) -> bool {
             _ => {}
         }
     }
-    last_time = SystemTime::now();
+    //last_time = SystemTime::now();
     return false;
 }
 
 #[no_mangle]
 extern fn Modplayer_Stop(app_ptr: *mut c_void) {
     let leaked_pointer = app_ptr as *mut App;
-    let self_ = unsafe { &mut *leaked_pointer };
+    let _self_ = unsafe { &mut *leaked_pointer };
     App::stop();
 }
 
@@ -327,7 +328,7 @@ extern fn Modplayer_Stop(app_ptr: *mut c_void) {
 extern fn Modplayer_Start(app_ptr: *mut c_void, cb: String) {
     dbg!("Modplayer_Start");
     let leaked_pointer = app_ptr as *mut App;
-    let self_ = unsafe { &mut *leaked_pointer };
+    let _self_ = unsafe { &mut *leaked_pointer };
     App::start(cb);
 }
 

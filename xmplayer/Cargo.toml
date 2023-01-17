@@ -11,9 +11,6 @@ exclude = ["build/**/it.o"]
 name = "xmplayer"
 crate-type = ["rlib"]
 
-[profile.release]
-debug = true
-
 [dependencies]
 byteorder = "1"
 #crossbeam = "0.7"

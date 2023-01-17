@@ -248,7 +248,7 @@ pub(crate) mod it {
             let _midi_bank = file.read_u16();
             dbg!(_midi_bank);
 
-            let note_sample_indexes = io_helpers::read_bytes(file, 240);
+            let _note_sample_indexes = io_helpers::read_bytes(file, 240);
         }
         return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other,"Unimplemented")));
 //
@@ -392,13 +392,13 @@ pub(crate) mod it {
         truncate_patterns(&mut pattern_order);
 
         let instrument_ptrs = file.read_u32_vec(instrument_count as usize);
-        let sample_ptrs = file.read_u32_vec(sample_count as usize);
-        let pattern_ptrs = file.read_u32_vec(pattern_count as usize);
+        let _sample_ptrs = file.read_u32_vec(sample_count as usize);
+        let _pattern_ptrs = file.read_u32_vec(pattern_count as usize);
 
 
 
         // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
-        let instruments = read_instruments(file, &instrument_ptrs)?;
+        let _instruments = read_instruments(file, &instrument_ptrs)?;
         //let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map);
 
         return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other,"Unknown file format")));

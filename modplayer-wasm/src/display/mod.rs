@@ -1,6 +1,4 @@
-#[macro_use]
 
-use crate::console::log;
 
 use xmplayer::song::PlayData;
 use std::cmp::{max, min};
@@ -64,7 +62,7 @@ impl VirtualScreen {
 pub struct Display {}
 
 impl Display {
-    fn color(color: RGB, str: &str) -> String {
+    fn color(_color: RGB, str: &str) -> String {
         format!("{}", str)
     }
 
@@ -76,7 +74,7 @@ impl Display {
         "".to_string()
     }
 
-    pub fn move_to(x: usize, y:usize) -> String {
+    pub fn move_to(_x: usize, _y:usize) -> String {
         "".to_string()
     }
 
@@ -191,7 +189,7 @@ impl Display {
         if play_data.song_position < play_data.song_length as usize && order[play_data.song_position] < patterns.len() as u8 {
             let pattern = &patterns[order[play_data.song_position] as usize];
             let mut first_row;
-            let mut last_row;
+            let last_row;
             if play_data.row < 10 {
                 first_row = 0;
                 last_row = 20;
