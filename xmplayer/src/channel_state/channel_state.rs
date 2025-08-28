@@ -1,6 +1,6 @@
 use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
-use crate::tables::{AudioTables};
+use crate::tables::{AudioTables, TableType, AMIGA_PERIODS, LINEAR_PERIODS};
 use std::num::Wrapping;
 use crate::instrument::VibratoEnvelope;
 
@@ -9,7 +9,7 @@ use crate::instrument::VibratoEnvelope;
 ///
 ///  If input is less than min then this returns min.
 ///  If input is greater than max then this returns max.
-///  Otherwise this returns input.
+///  Otherwise, this returns input.
 ///
 /// **Panics** in debug mode if `!(min <= max)`.
 #[inline]
