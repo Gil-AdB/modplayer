@@ -104,7 +104,7 @@ pub(crate) mod xm {
     fn read_envelope<R: Read>(file: &mut R) -> EnvelopePoints {
         let mut result = [EnvelopePoint::new(); 12];
 
-        for mut point in &mut result {
+        for point in &mut result {
             point.frame = io_helpers::read_u16(file);
             point.value = io_helpers::read_u16(file);
         }
@@ -327,7 +327,11 @@ pub(crate) mod xm {
     }
 
     pub fn read_xm<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
-        file.seek(SeekFrom::Start(0));
+        match file.seek(SeekFrom::Start(0))
+        {
+            Ok(_) => {}
+            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek to file start")));}
+        }
 
         let file_len = match file.stream_len() {
             Ok(m) => {m}

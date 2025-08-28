@@ -22,7 +22,7 @@ const term = new NonResizeableTerminal(
     { font: new wglt.Font(font.default, 8, 16) });
 
 function set_line_colors(x, y, term) {
-    let colors = [
+    const colors = [
         wglt.fromRgb(0, 120, 0),
         wglt.fromRgb(0, 140, 0),
         wglt.fromRgb(0, 160, 0),

@@ -8,6 +8,7 @@ extern crate xmplayer;
 mod leak;
 mod display;
 
+use std::convert::TryInto;
 use wasm_bindgen::prelude::*;
 use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song};
 use xmplayer::song_state::{SongHandle};

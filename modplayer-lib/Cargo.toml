@@ -8,33 +8,33 @@ edition = "2018"
 name = "modplayer"
 crate-type = ["staticlib"]
 
-#[target.i686-pc-windows-msvc]
-#rustflags = ["-C", "target-feature=+crt-static", "-C", "-target-cpu=mycpu"]
+[target.'cfg(target_arch = "wasm32")']
+build = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 default = ["sdl2-feature"] # "portaudio-feature"/"sdl2-feature"
 portaudio-feature = ["portaudio"]
 sdl2-feature = ["sdl2"]
-#sdl2 = [package.metadata.vcpkg]
 
 [dependencies]
-portaudio = {version = "0.7", optional = true}
-crossbeam = "0.7"
-simple-error = "0.2.2"
+portaudio = {version = "0.8", optional = true}
+crossbeam = "0.8.4"
+simple-error = "0.3.1"
 xmplayer = {path="../xmplayer"}
 
 [dependencies.sdl2]
-version = "0.35.2"
+#version = "0.35.2"
 optional = true
-default-features = false
-features = ["bundled"]
+features = ["bundled", "static-link"]
+#git = "https://github.com/Rust-SDL2/rust-sdl2"
+#rev = "27cd1fd67c811e06b9d997a77bb6089a1b65070d"
 #features = ["bundled","static-link","use-vcpkg"]
 
 [package.metadata.vcpkg]
 dependencies = ["sdl2"]
-git = "https://github.com/microsoft/vcpkg"
-rev = "a0518036077baa4"
+#git = "https://github.com/microsoft/vcpkg"
+#rev = "a0518036077baa4"
 optional = true
 
 #[profile.release]
