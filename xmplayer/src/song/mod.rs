@@ -723,7 +723,7 @@ impl Song {
 
         let mut missing = String::new();
         for (i, pattern) in row.channels.iter().enumerate() {
-            let mut channel = &mut self.channels[i];
+            let channel = &mut self.channels[i];
             let note_delay_first_tick = if pattern.is_note_delay() { self.tick == pattern.get_y() as u32 } else {first_tick};
 
             if !channel.voice.sustained {

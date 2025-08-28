@@ -29,9 +29,10 @@ module.exports = {
         path: path.resolve(__dirname, "dist"),
         filename: "bootstrap.js",
     },
-   mode: "development",
+   mode: "production",
    plugins: [
        new CopyWebpackPlugin({patterns: ['index.html']}),
+       new MiniCssExtractPlugin()
    ]
     // mode: "production",
     // plugins: [

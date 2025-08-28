@@ -106,7 +106,7 @@ pub(crate) mod it {
     fn read_envelope<R: Read>(file: &mut R) -> EnvelopePoints {
         let mut result = [EnvelopePoint::new(); 12];
 
-        for mut point in &mut result {
+        for point in &mut result {
             point.frame = io_helpers::read_u16(file);
             point.value = io_helpers::read_u16(file);
         }
@@ -379,11 +379,11 @@ pub(crate) mod it {
         let reserved = io_helpers::read_u32(file);
         dbg!(reserved);
 
-        let channel_volume = io_helpers::read_u8_vec(file, 64);
-        dbg!(channel_volume);
-
         let channel_panning = io_helpers::read_u8_vec(file, 64);
         dbg!(channel_panning);
+
+        let channel_volume = io_helpers::read_u8_vec(file, 64);
+        dbg!(channel_volume);
 
         dbg!(file.seek(SeekFrom::Current(0)));
 
@@ -397,7 +397,6 @@ pub(crate) mod it {
 
 
 
-        // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
         let _instruments = read_instruments(file, &instrument_ptrs)?;
         //let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map);
 
@@ -456,7 +455,7 @@ pub(crate) mod it {
     }
 
     pub fn read_it<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
-        file.seek(SeekFrom::Start(0));
+        let _ = file.seek(SeekFrom::Start(0));
 
         let file_len = match file.stream_len() {
             Ok(m) => {m}

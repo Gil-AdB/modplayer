@@ -4,7 +4,6 @@ version = "0.1.0"
 authors = ["gilad.benor@gmail.com"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 default = ["sdl2-feature"] # "portaudio-feature"/"sdl2-feature"
 portaudio-feature = ["portaudio"]
@@ -13,14 +12,9 @@ sdl2-feature = ["sdl2"]
 
 [dependencies]
 portaudio = {version = "0.7", optional = true}
-crossbeam = "0.7"
-getch = "0.2.1"
 xmplayer = {path="../xmplayer"}
 display = {path="../display"}
-#tokio = { version = "0.2", features = ["full"] }
-#memmap = { git = "https://github.com/danburkert/memmap-rs" }
-#async-scoped = "0.4.1"
-crossterm = "0.17.5"
+crossterm = "0.29.0"
 
 
 # uncomment for termux
@@ -28,15 +22,13 @@ crossterm = "0.17.5"
 #termios = { path = "../vendor/termios-0.2.2" }
 
 [dependencies.sdl2]
-version = "0.35.2"
+version = "0.38.0"
 optional = true
-features = ["bundled"]
-#features = ["bundled","static-link","use-vcpkg"]
+features = ["bundled","static-link","use-vcpkg"]
 
 [package.metadata.vcpkg]
 dependencies = ["sdl2", "sdl2-image[libjpeg-turbo,tiff,libwebp]", "sdl2-ttf", "sdl2-gfx", "sdl2-mixer"]
 git = "https://github.com/microsoft/vcpkg"
-rev = "a0518036077baa4"
+rev = "2024.05.24" # release 2024.05.24 # to check for a new one, check https://github.com/microsoft/vcpkg/releases
 optional = true
-
 
