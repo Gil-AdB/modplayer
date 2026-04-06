@@ -86,8 +86,8 @@ set_screen_colors();
 // terminal_canvas.style.width = "1600px";
 // terminal_canvas.style.height = "800px";
 
-document.querySelector('#play').addEventListener('click', function () {
-    initPlayer();
+document.querySelector('#play').addEventListener('click', async function () {
+    await initPlayer();
     if (player.IsPlaying()) {
         player.Pause();
     } else {
@@ -95,23 +95,23 @@ document.querySelector('#play').addEventListener('click', function () {
     }
 });
 
-document.querySelector('#prev').addEventListener('click', function () {
-    initPlayer();
+document.querySelector('#prev').addEventListener('click', async function () {
+    await initPlayer();
     Prev()
 });
 
-document.querySelector('#next').addEventListener('click', function () {
-    initPlayer();
+document.querySelector('#next').addEventListener('click', async function () {
+    await initPlayer();
     Next()
 });
 
-document.querySelector('#file').addEventListener('change', function () {
-    initPlayer();
+document.querySelector('#file').addEventListener('change', async function () {
+    await initPlayer();
     loadFilesInput(document.querySelector('#file'));
 });
 
-document.querySelector('#terminal').addEventListener('drop', function (e) {
-    initPlayer();
+document.querySelector('#terminal').addEventListener('drop', async function (e) {
+    await initPlayer();
     dropHandler(e);
 });
 
@@ -119,10 +119,14 @@ document.querySelector('#terminal').addEventListener('dragover', function (e) {
     dragOverHandler(e);
 });
 
-function initAudio() {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const modplayerNode = audioContext.createScriptProcessor(4096, 0, 2);
-    const processor = new ModPlayerProcessor(audioContext.sampleRate,
+async function initAudio() {
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    await audioContext.audioWorklet.addModule('audio-worklet.js');
+    const modplayerNode = new AudioWorkletNode(audioContext, 'modplayer-worklet', {
+        outputChannelCount: [2]
+    });
+    
+    const processor = new ModPlayerProcessor(audioContext.sampleRate, modplayerNode.port,
         function (self) {
             if (self.IsPlaying()) {
                 document.querySelector('#play').value = "⏸";
@@ -136,53 +140,73 @@ function initAudio() {
                 document.querySelector('#play').value = "▶️";
             }
         });
-    modplayerNode.onaudioprocess = processor.process.bind(processor);
-    modplayerNode.connect(audioContext.destination)
+        
+    modplayerNode.connect(audioContext.destination);
     return processor;
 }
 
 let player = null;
+let channelCount = 0;
+let _initPlayerPromise = null;
 
-function initPlayer() {
+async function initPlayer() {
     if (!player) {
-        player = initAudio();
+        if (!_initPlayerPromise) {
+            _initPlayerPromise = initAudio();
+        }
+        player = await _initPlayerPromise;
     }
 }
 
 class ModPlayerProcessor {
-    constructor(sampleRate, state_change_cb, finished_cb) {
+    constructor(sampleRate, port, state_change_cb, finished_cb) {
         this.sampleRate = sampleRate;
+        this.port = port;
         this.playing = false;
+        
+        // Setup chunk rendering arrays
+        this.leftBuf = new Float32Array(4096);
+        this.rightBuf = new Float32Array(4096);
+
         if (state_change_cb) {
             this.state_change_cb = state_change_cb;
         }
         if (finished_cb) {
             this.finished_cb = finished_cb;
         }
+        
+        this.port.onmessage = (e) => {
+            if (e.data.type === 'needData' || e.data.type === 'starve') {
+                this.pumpAudio();
+            }
+        };
+        
+        // Fail-safe interval if worklet is busy
+        setInterval(() => this.pumpAudio(), 50);
     }
 
-    process(event) {
-        let rate = event.outputBuffer.sampleRate;
-        let left = event.outputBuffer.getChannelData(0);
-        let right = event.outputBuffer.getChannelData(1);
-
-        if (!this.playing) {
-            left.fill(0.0);
-            right.fill(0.0);
-            return true;
+    pumpAudio() {
+        if (!this.playing || !this.song) return;
+        
+        // Generate a chunk of audio
+        if (!this.song.get_next_tick(this.leftBuf, this.rightBuf, this.sampleRate)) {
+            this.playing = false;
+            this.finished_cb();
+            return;
         }
-
-        if (this && this.song) {
-            if (!this.song.get_next_tick(left, right, rate)) {
-                this.playing = false;
-                this.finished_cb();
-            }
-        }
-        return true;
+        
+        // Send chunk to worklet queue
+        this.port.postMessage({
+            type: 'audio',
+            left: this.leftBuf,
+            right: this.rightBuf,
+            length: this.leftBuf.length
+        });
     }
 
     Stop() {
         this.Pause();
+        this.port.postMessage({ type: 'stop' });
         if (this && this.song) {
             let song = this.song;
             this.song = null;
@@ -198,13 +222,14 @@ class ModPlayerProcessor {
     Play() {
         this.playing = true;
         this.state_change_cb(this);
+        this.pumpAudio();
     }
 
     Start(data) {
         this.Stop();
-        term.clear()
-        set_screen_colors();
+        term.clear();
         this.song = modplayer.SongJs.new(this.sampleRate, data);
+        channelCount = this.song.get_channel_count();
     }
 
     IsPlaying() {
@@ -218,8 +243,10 @@ class ModPlayerProcessor {
     }
 
     HandleKeyboardEvents(events) {
-        if (true === this.song.handle_input(events)) {
-            this.Stop();
+        if (this && this.song) {
+            if (true === this.song.handle_input(events)) {
+                this.Stop();
+            }
         }
     }
 }
@@ -335,7 +362,7 @@ function dragOverHandler(ev) {
 let posy = 0;
 top.term_writeln = function(str) {
     if (posy >= 50) return;
-    let isChannelRow = (str.startsWith("on ") || str.startsWith("off") || str.startsWith(" x ")) && str[3] === '|' && !str.startsWith("on |channel");
+    let isChannelRow = (posy >= 2 && posy < 2 + channelCount);
     for (let i = 0; i < 200; i++) {
         let cell = term.getCell(i, posy);
         cell.setBackground(wglt.Colors.BLACK);
@@ -355,7 +382,7 @@ top.term_writeln = function(str) {
 top.term_writeln_with_background = function(str, c) {
     if (posy >= 50) return;
     let bg = wglt.fromRgb(c.r, c.g, c.b);
-    let isChannelRow = (str.startsWith("on ") || str.startsWith("off") || str.startsWith(" x ")) && str[3] === '|' && !str.startsWith("on |channel");
+    let isChannelRow = (posy >= 2 && posy < 2 + channelCount);
     for (let i = 0; i < 200; i++) {
         let cell = term.getCell(i, posy);
         cell.setBackground(bg);

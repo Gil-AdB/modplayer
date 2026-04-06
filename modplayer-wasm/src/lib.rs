@@ -182,6 +182,10 @@ impl SongJs {
         self.song_tick = play_data.tick;
     }
 
+    pub fn get_channel_count(&self) -> usize {
+        self.song.get_channel_count()
+    }
+
     // true  - continue playing
     // false - song finished
     pub fn get_next_tick(&mut self, left: &mut [f32], right: &mut [f32], sample_rate: f32) -> bool {

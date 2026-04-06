@@ -52,6 +52,11 @@ impl PatternChange {
             pattern: 0
         }
     }
+
+    pub fn get_channel_count(&self) -> usize {
+        self.song_data.channel_count as usize
+    }
+
     fn reset(&mut self) {
         *self = Self::new();
     }
@@ -227,7 +232,7 @@ impl Init for PlayData {
             bpm: 0,
             speed: 0,
             channel_status: vec![],
-            filter: FilterType::Linear,
+            filter: FilterType::Cubic,
             user_data: Default::default()
         }
     }
@@ -426,7 +431,7 @@ impl Song {
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
-            filter: FilterType::Linear,
+            filter: FilterType::Cubic,
             display: true,
             frequency_tables: use_amiga,
             triple_buffer_writer,
@@ -484,7 +489,11 @@ impl Song {
         // Song::display(&play_data, 0);
     }
 
-    // pub fn get_next_tick(&mut self, buf: &mut [f32], rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
+    pub fn get_channel_count(&self) -> usize {
+        self.song_data.channel_count as usize
+    }
+
+    pub fn free(&mut self) {}
     //     buf.fill(0.0);
     //     self.bpm.update(self.bpm.bpm, self.rate);
     //     // let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };

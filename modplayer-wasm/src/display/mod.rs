@@ -144,7 +144,7 @@ impl Display {
             RGB { r: 225, g: 64, b: 0 },
         ];
         // let first_tick = play_data.tick == 0;
-        screen.add_line(format!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:5}", play_data.name,
+        screen.add_line(format!("'{}' duration in frames: {:5} duration in ms: {:5} tick: {:3} pos: {:3X}/{:<3X}  row: {:3X}/{:<3X} bpm: {:3} speed: {:3} filter: {:6}", play_data.name,
                  play_data.tick_duration_in_frames, play_data.tick_duration_in_ms, play_data.tick, play_data.song_position, play_data.song_length - 1, play_data.row,
                  play_data.pattern_len,
                  play_data.bpm, play_data.speed,

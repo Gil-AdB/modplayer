@@ -36,6 +36,6 @@ module.exports = (env, argv) => ({
         hot: true,
     },
     plugins: [
-        new CopyWebpackPlugin({patterns: ['index.html']}),
+        new CopyWebpackPlugin({patterns: ['index.html', 'audio-worklet.js']}),
     ]
 });
