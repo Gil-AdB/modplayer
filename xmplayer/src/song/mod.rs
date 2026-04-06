@@ -52,11 +52,6 @@ impl PatternChange {
             pattern: 0
         }
     }
-
-    pub fn get_channel_count(&self) -> usize {
-        self.song_data.channel_count as usize
-    }
-
     fn reset(&mut self) {
         *self = Self::new();
     }
