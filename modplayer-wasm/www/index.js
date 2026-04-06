@@ -19,7 +19,7 @@ class NonResizeableTerminal extends wglt.Terminal {
 const term = new NonResizeableTerminal(
     document.querySelector('#terminal'),
     200, 50,
-    { font: new wglt.Font(font.default, 8, 16) });
+    { font: new wglt.Font(font.default || font, 8, 16) });
 
 function set_line_colors(x, y, term) {
     const colors = [
@@ -43,13 +43,6 @@ function set_line_colors(x, y, term) {
 }
 function set_screen_colors() {
     term.fillRect(0, 0, 200, 50, 0, wglt.Colors.LIGHT_GRAY, wglt.Colors.BLACK);
-    for (let line = 3; line <= 35; line++) {
-        set_line_colors(57, line, term);
-        set_line_colors(102, line, term);
-        set_line_colors(115, line, term);
-        set_line_colors(128, line, term);
-        set_line_colors(141, line, term);
-    }
 }
 
 set_screen_colors();
@@ -341,13 +334,41 @@ function dragOverHandler(ev) {
 
 let posy = 0;
 top.term_writeln = function(str) {
-    term.drawString(0, posy, str);
+    if (posy >= 50) return;
+    let isChannelRow = (str.startsWith("on ") || str.startsWith("off") || str.startsWith(" x ")) && str[3] === '|' && !str.startsWith("on |channel");
+    for (let i = 0; i < 200; i++) {
+        let cell = term.getCell(i, posy);
+        cell.setBackground(wglt.Colors.BLACK);
+        cell.setForeground(wglt.Colors.LIGHT_GRAY);
+    }
+    term.drawString(0, posy, str.padEnd(200, ' '));
+    if (isChannelRow) {
+        set_line_colors(57, posy, term);
+        set_line_colors(102, posy, term);
+        set_line_colors(115, posy, term);
+        set_line_colors(128, posy, term);
+        set_line_colors(141, posy, term);
+    }
     posy = posy + 1;
 }
 
 top.term_writeln_with_background = function(str, c) {
-    term.fillRect(0, posy, 200, 1, 0, wglt.Colors.LIGHT_GRAY, wglt.fromRgb(c.r, c.g, c.b));
-    term.drawString(0, posy, str);
+    if (posy >= 50) return;
+    let bg = wglt.fromRgb(c.r, c.g, c.b);
+    let isChannelRow = (str.startsWith("on ") || str.startsWith("off") || str.startsWith(" x ")) && str[3] === '|' && !str.startsWith("on |channel");
+    for (let i = 0; i < 200; i++) {
+        let cell = term.getCell(i, posy);
+        cell.setBackground(bg);
+        cell.setForeground(wglt.Colors.LIGHT_GRAY);
+    }
+    term.drawString(0, posy, str.padEnd(200, ' '));
+    if (isChannelRow) {
+        set_line_colors(57, posy, term);
+        set_line_colors(102, posy, term);
+        set_line_colors(115, posy, term);
+        set_line_colors(128, posy, term);
+        set_line_colors(141, posy, term);
+    }
     posy = posy + 1;
 }
 

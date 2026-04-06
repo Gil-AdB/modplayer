@@ -522,8 +522,8 @@ impl Note {
     fn nearest_semi_tone_test(&self, period: u16, added_note: u8, use_amiga: TableType) -> (u16, u32) {
 
         let note2period = match use_amiga {
-            LinearFrequency => {&LINEAR_PERIODS},
-            AmigaFrequency => {&AMIGA_PERIODS},
+            TableType::LinearFrequency => {&LINEAR_PERIODS},
+            TableType::AmigaFrequency => {&AMIGA_PERIODS},
         };
 
         let mut needed_period = period as u16;
@@ -555,8 +555,8 @@ impl Note {
         let mut lo_period: u32 = 0;
 
         let note2period = match use_amiga {
-            LinearFrequency => {&LINEAR_PERIODS},
-            AmigaFrequency => {&AMIGA_PERIODS},
+            TableType::LinearFrequency => {&LINEAR_PERIODS},
+            TableType::AmigaFrequency => {&AMIGA_PERIODS},
         };
 
         for _ in 0..8 {

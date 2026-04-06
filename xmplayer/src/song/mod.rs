@@ -179,6 +179,23 @@ pub struct ChannelStatus {
     pub final_panning:                      u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FilterType {
+    None,
+    Linear,
+    Cubic,
+}
+
+impl std::fmt::Display for FilterType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FilterType::None => write!(f, "None"),
+            FilterType::Linear => write!(f, "Linear"),
+            FilterType::Cubic => write!(f, "Cubic"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct PlayData {
     pub name:                               String,
@@ -192,7 +209,7 @@ pub struct PlayData {
     pub bpm:                                u32,
     pub speed:                              u32,
     pub channel_status:                     Vec<ChannelStatus>,
-    pub filter:                             bool,
+    pub filter:                             FilterType,
     pub user_data:                          HashMap<String, UserData>,
 }
 
@@ -210,7 +227,7 @@ impl Init for PlayData {
             bpm: 0,
             speed: 0,
             channel_status: vec![],
-            filter: false,
+            filter: FilterType::Linear,
             user_data: Default::default()
         }
     }
@@ -324,7 +341,7 @@ pub struct Song {
     bpm:                        BPM,
     loop_pattern:               bool,
     pause:                      bool,
-    filter:                     bool,
+    filter:                     FilterType,
     display:                    bool,
     frequency_tables:           Box<AudioTables>,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
@@ -409,7 +426,7 @@ impl Song {
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
-            filter: true,
+            filter: FilterType::Linear,
             display: true,
             frequency_tables: use_amiga,
             triple_buffer_writer,
@@ -615,7 +632,13 @@ impl Song {
                     PlaybackCmd::DecSpeed => {self.speed -= 1;}
                     PlaybackCmd::LoopPattern => {self.loop_pattern = !self.loop_pattern;}
                     PlaybackCmd::PauseToggle => {self.pause = !self.pause;}
-                    PlaybackCmd::FilterToggle => {self.filter = !self.filter;}
+                    PlaybackCmd::FilterToggle => {
+                        self.filter = match self.filter {
+                            FilterType::None => FilterType::Linear,
+                            FilterType::Linear => FilterType::Cubic,
+                            FilterType::Cubic => FilterType::None,
+                        }
+                    }
                     PlaybackCmd::DisplayToggle => {self.display = !self.display;}
                     PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
                     PlaybackCmd::AmigaTable => {self.frequency_tables = AudioTables::calc_tables_amiga();}
@@ -1086,10 +1109,27 @@ impl Song {
                 }
 
                 let sample_data = sample.data[channel.voice.sample_position as usize];
-                let out_sample: f32 = if self.filter {
-                    Self::lerp(channel.voice.sample_position, sample_data, sample.data[channel.voice.sample_position as usize + 1])
-                } else {
-                    sample_data
+                let out_sample: f32 = match self.filter {
+                    FilterType::Linear => {
+                        let next_sample_data = if channel.voice.sample_position as usize + 1 < sample.data.len() {
+                            sample.data[channel.voice.sample_position as usize + 1]
+                        } else {
+                            0.0
+                        };
+                        Self::lerp(channel.voice.sample_position, sample_data, next_sample_data)
+                    },
+                    FilterType::Cubic => {
+                        let pos = channel.voice.sample_position as usize;
+                        channel.voice.spline_data.p0 = sample.data[pos.saturating_sub(1)];
+                        channel.voice.spline_data.p1 = sample_data;
+                        channel.voice.spline_data.p2 = sample.data[(pos + 1).min(sample.data.len() - 1)];
+                        channel.voice.spline_data.p3 = sample.data[(pos + 2).min(sample.data.len() - 1)];
+                        
+                        channel.voice.spline_data.interpolate(channel.voice.sample_position.fract())
+                    },
+                    FilterType::None => {
+                        sample_data
+                    }
                 };
                 // channel.last_sample = sample_data;
                 // channel.last_sample_pos = channel.sample_position;
@@ -1102,40 +1142,24 @@ impl Song {
                 // buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
 
                 // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
-                if sample.loop_type == LoopType::PingPongLoop && !channel.voice.ping {
-                    channel.voice.sample_position -= channel.voice.du;
-                } else {
-                    channel.voice.sample_position += channel.voice.du;
-                }
+                channel.voice.sample_position += channel.voice.du;
 
                 if channel.voice.sample_position as u32 >= sample.length ||
                     (sample.loop_type != LoopType::NoLoop && channel.voice.sample_position >= sample.loop_end as f32) {
                     channel.voice.loop_started = true;
                     match sample.loop_type {
-                        LoopType::PingPongLoop => {
-                            channel.voice.sample_position = (sample.loop_end - 1) as f32 - (channel.voice.sample_position - sample.loop_end as f32);
-                            channel.voice.ping = false;
-                            // channel_state.sample_position = (channel_state.sample.loop_end - 1) as f32;
-                            // channel_state.du = -channel_state.du;
-                        }
                         LoopType::NoLoop => {
                             channel.on = false;
                             channel.voice.volume.set_volume(0);
                             break;
                         }
-                        LoopType::ForwardLoop => {
+                        LoopType::ForwardLoop | LoopType::PingPongLoop => {
                             channel.voice.sample_position = (channel.voice.sample_position - sample.loop_end as f32) + sample.loop_start as f32;
                         }
                     }
                 }
 
                 if channel.voice.loop_started && channel.voice.sample_position < sample.loop_start as f32 {
-                    match sample.loop_type {
-                        LoopType::PingPongLoop => {
-                            channel.voice.ping = true;
-                        }
-                        _ => {}
-                    }
                     channel.voice.sample_position = sample.loop_start as f32 + (sample.loop_start as f32 - channel.voice.sample_position) as f32;
                 }
             }

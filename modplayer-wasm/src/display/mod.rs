@@ -188,21 +188,15 @@ impl Display {
 
         if play_data.song_position < play_data.song_length as usize && order[play_data.song_position] < patterns.len() as u8 {
             let pattern = &patterns[order[play_data.song_position] as usize];
-            let mut first_row;
-            let last_row;
-            if play_data.row < 10 {
-                first_row = 0;
-                last_row = 20;
+            let first_row = if pattern.rows.len() <= 20 {
+                0
+            } else if play_data.row + 10 > pattern.rows.len() {
+                pattern.rows.len().saturating_sub(20)
             } else {
-                first_row = play_data.row - 10;
-
-                if play_data.row + 10 > pattern.rows.len() {
-                    first_row = pattern.rows.len() - 20;
-                    last_row = pattern.rows.len();
-                } else {
-                   last_row = play_data.row + 10;
-                }
-            }
+                play_data.row.saturating_sub(10)
+            };
+            
+            let last_row = min(first_row + 20, pattern.rows.len());
             for i in first_row..last_row {
                 if i == play_data.row {
                     screen.add_line_with_color(pattern.rows[i].to_string(), RGB{

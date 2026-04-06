@@ -333,8 +333,8 @@ pub(crate) mod xm {
             Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek to file start")));}
         }
 
-        let file_len = match file.stream_len() {
-            Ok(m) => {m}
+        let file_len = match file.seek(SeekFrom::End(0)) {
+            Ok(m) => { let _ = file.seek(SeekFrom::Start(0)); m }
             Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
         };
 

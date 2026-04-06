@@ -166,11 +166,11 @@ impl SongJs {
             x1: 0,
             y1: 0,
             width: 200,
-            height: 35
+            height: 50
         };
 
-        let s = Display::move_to(1, 1);
-        term_writeln(s);
+        // let s = Display::move_to(1, 1);
+        // term_writeln(s);
 
         Display::display(play_data, &self.instruments, &self.patterns, &self.order, view_port, &mut |str| {
             //    result.push(str);

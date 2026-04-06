@@ -31,7 +31,7 @@ use std::ffi::{c_void, CStr};
 
 use std::sync::atomic::Ordering;
 use std::os::raw::c_char;
-use simple_error::{SimpleResult};
+use xmplayer::simple_error::SimpleResult;
 
 
 pub enum PlayerCmd {
@@ -94,7 +94,7 @@ impl App {
 }
 
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern fn Modplayer_Stop(app_ptr: *mut c_void) {
     if app_ptr == 0 as *mut c_void {return;}
     let leaked_pointer = app_ptr as *mut App;
@@ -103,7 +103,7 @@ extern fn Modplayer_Stop(app_ptr: *mut c_void) {
     unsafe { Box::from_raw(self_); }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern fn Modplayer_Start(app_ptr: *mut c_void) {
     dbg!("Modplayer_Start");
     if app_ptr == 0 as *mut c_void {return;}
@@ -112,7 +112,7 @@ extern fn Modplayer_Start(app_ptr: *mut c_void) {
     self_.start();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern fn Modplayer_SetOrder(app_ptr: *mut c_void, order: u32) {
     dbg!("Modplayer_SetOrder");
     if app_ptr == 0 as *mut c_void {return;}
@@ -121,7 +121,7 @@ extern fn Modplayer_SetOrder(app_ptr: *mut c_void, order: u32) {
     self_.set_order(order);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern fn Modplayer_Create(path: *const c_char) -> *mut c_void {
          match App::new(unsafe { CStr::from_ptr(path) }.to_str().unwrap().to_string()) {
          Ok(app) => {app}

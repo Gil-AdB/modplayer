@@ -1,67 +1,9 @@
-cargo-features = ["named-profiles"]
-
 [workspace]
-members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm"]
+members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm", "modplayer-lib"]
 
 [profile.release]
 debug = true
-
-
-[profile.release.modplayer-bin]
 lto = true
-
-[profile.release.package.modplayer-wasm]
-#wasm-opt = { opt-level = "z" }
-#wasm-snip = { snip-rust-fmt-code = true, snip-rust-panicking-code = true }
-wasm-bindgen = true
-debug = true
-# Should we enable wasm-bindgen's debug assertions in its generated JS glue?
-debug-js-glue = true
-# Should wasm-bindgen demangle the symbols in the "name" custom section?
-demangle-name-section = true
-# Should we emit the DWARF debug info custom sections?
-dwarf-debug-info = true
-
-#[profile.release]
-#debug = true
-#
-#[workspace.metadata.wasm-pack.profile.dev.wasm-bindgen]
-## Should we enable wasm-bindgen's debug assertions in its generated JS glue?
-#debug-js-glue = true
-## Should wasm-bindgen demangle the symbols in the "name" custom section?
-#demangle-name-section = true
-## Should we emit the DWARF debug info custom sections?
-#dwarf-debug-info = true
-#
-## `wasm-opt` is on by default in for the release profile, but it can be
-## disabled by setting it to `false`
-#[workspace.metadata.wasm-pack.profile.release]
-#wasm-opt = false
-#
-#[workspace.metadata.wasm-pack.profile.release.wasm-bindgen]
-##lto = true
-##panic = 'abort'
-##wasm-opt = ['-O4']
-#debug-js-glue = true
-#demangle-name-section = true
-#dwarf-debug-info = true
-#wasm-opt = false
-#[profile.custom.release-lto]
-#lto = true
-#panic = 'abort'
-#inherits = "release"
-
-#[profile.release]
-#lto = true
-#panic = 'abort'
-
-# [dependencies]
-# std = {default-features=false, features=["panic_immediate_abort"]}
-
-# [profile.release]
-# lto = true
-# panic = 'abort'
-
 
 # uncomment for termux
 #[patch.crates-io]
