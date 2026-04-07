@@ -3,7 +3,7 @@ use xmplayer::song::InterleavedBufferAdaptar;
 use xmplayer::song::CallbackState;
 
 fn render_test_file(path: &str, num_frames: usize) -> f64 {
-    let mut song_handle = match SongState::new(path.to_string()) {
+    let (mut song_handle, _consumer) = match SongState::new(path) {
         Ok(s) => s,
         Err(e) => panic!("Failed to load test file: {}", e),
     };

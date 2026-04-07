@@ -1,11 +1,9 @@
-pub(crate) mod module {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
     use std::io::{Read, Seek, SeekFrom};
-    use crate::io_helpers::{read_string, read_bytes};
+    use binary_reader_io::BinaryReader;
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
-    use crate::io_helpers as fio;
     use crate::channel_state::channel_state::{clamp};
     use crate::tables::AMIGA_PERIOD;
     use simple_error::{SimpleError, SimpleResult};
@@ -38,7 +36,7 @@ pub(crate) mod module {
             Err(e) => return Err(SimpleError::from(e))
         }
 
-        let id = read_bytes(file, 4);
+        let id = file.read_bytes(4).unwrap();
 
         if id == "M.K.".as_bytes() {
             num_channels = 4;
@@ -60,21 +58,21 @@ pub(crate) mod module {
             Err(e) => return Err(SimpleError::from(e))
         }
 
-        let name = read_string(file, 20);
+        let name = file.read_string(20);
 
         let mut instruments = read_instruments(file);
 
-        let song_length = fio::read_u8(file);
+        let song_length = file.read_u8().unwrap();
         dbg!(song_length);
 
-        let restart_position = fio::read_u8(file); // unused
+        let restart_position = file.read_u8().unwrap(); // unused
         dbg!(restart_position);
 
-        let mut pattern_order = fio::read_bytes(file, 128);
+        let mut pattern_order = file.read_bytes(128).unwrap();
         let pattern_count = pattern_order.iter().cloned().max().unwrap() + 1;
         dbg!(pattern_count);
 
-        let id = fio::read_string(file, 4);
+        let id = file.read_string(4);
         dbg!(&id);
 
         let mut patterns = read_patterns(file, pattern_count as usize, num_channels as usize);
@@ -142,7 +140,7 @@ pub(crate) mod module {
                 channels.reserve_exact(channel_count);
 
                 for _channel_idx in 0..channel_count {
-                    let data = fio::read_u32_be(file);
+                    let data = file.read_u32_be().unwrap();
                     let sample = (((data & 0xF0000000) >> 24) | ((data & 0xF000) >> 12)) as u8;
                     let period = ((data >> 16) & 0x0FFF) as u16;
                     let mut effect = ((data & 0xF00) >> 8) as u8;
@@ -218,9 +216,9 @@ pub(crate) mod module {
     }
 
     fn read_sample<R: Read>(file: &mut R) -> Sample {
-        let name = fio::read_string(file, 22);
-        let length = fio::read_u16_be(file) * 2;
-        let ft = fio::read_u8(file) & 0xf;
+        let name = file.read_string(22);
+        let length = file.read_u16_be().unwrap() * 2;
+        let ft = file.read_u8().unwrap() & 0xf;
         let sign = ((ft >> 3) * 0xF0) as i8;
         let mut finetune= ft as i8 | sign;
         finetune <<= 1;
@@ -232,9 +230,9 @@ pub(crate) mod module {
             panic!("bugbug");
         }
 
-        let volume = fio::read_u8(file);
-        let mut loop_start = fio::read_u16_be(file) * 2;
-        let mut loop_len = fio::read_u16_be(file) * 2;
+        let volume = file.read_u8().unwrap();
+        let mut loop_start = file.read_u16_be().unwrap() * 2;
+        let mut loop_len = file.read_u16_be().unwrap() * 2;
 
         if loop_len < 2 {
             loop_len = 2;
@@ -289,4 +287,3 @@ pub(crate) mod module {
         }
         instruments
     }
-}

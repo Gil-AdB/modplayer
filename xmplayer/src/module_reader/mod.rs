@@ -1,16 +1,16 @@
 use std::{fmt, fs};
 use simple_error::{SimpleResult, SimpleError};
 use crate::instrument::{Instrument, Sample};
-use crate::module_reader::module::module::read_mod;
-use crate::module_reader::s3m::s3m::read_s3m;
-use crate::module_reader::xm::xm::read_xm;
+use crate::module_reader::module::read_mod;
+use crate::module_reader::s3m::read_s3m;
+use crate::module_reader::xm::read_xm;
 use crate::pattern::Pattern;
 use crate::channel_state::channel_state::clamp;
-use crate::module_reader::stm::stm::read_stm;
-use crate::module_reader::it::it::read_it;
+use crate::module_reader::stm::read_stm;
+use crate::module_reader::it::read_it;
 use crate::channel_state::ChannelState;
 use crate::song_state::SongHandle;
-use std::io::{Cursor};
+use std::io::{Cursor, Seek, SeekFrom};
 
 mod xm;
 mod module;
@@ -133,26 +133,31 @@ pub fn read_module(path: &str) -> SimpleResult<SongData> {
 pub fn open_module(data: &[u8]) -> SimpleResult<SongData> {
     let mut buf = Cursor::new(data);
 
+    let _ = buf.seek(SeekFrom::Start(0));
     match read_xm(&mut buf) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
     }
 
+    let _ = buf.seek(SeekFrom::Start(0));
     match read_mod(&mut buf) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
     }
 
+    let _ = buf.seek(SeekFrom::Start(0));
     match read_stm(&mut buf) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
     }
 
+    let _ = buf.seek(SeekFrom::Start(0));
     match read_s3m(&mut buf) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
     }
 
+    let _ = buf.seek(SeekFrom::Start(0));
     read_it(&mut buf)
 }
 
@@ -161,7 +166,23 @@ pub fn print_module(handle: &SongHandle, patterns: impl Iterator<Item = String>)
     let _data = &handle.get().song_data;
 
     for pattern in patterns {
-        dbg!(&_data.patterns[_data.pattern_order[pattern.parse::<usize>().unwrap()] as usize]);
+        match pattern.parse::<usize>() {
+            Ok(idx) => {
+                if idx < _data.pattern_order.len() {
+                    let order_idx = _data.pattern_order[idx] as usize;
+                    if order_idx < _data.patterns.len() {
+                        dbg!(&_data.patterns[order_idx]);
+                    } else {
+                        println!("Pattern index {} out of bounds", order_idx);
+                    }
+                } else {
+                    println!("Order index {} out of bounds", idx);
+                }
+            }
+            Err(_) => {
+                println!("'{}' is not a valid pattern index. (Additional arguments after the filename are interpreted as patterns to debug-print).", pattern);
+            }
+        }
     }
     // println!("=====================================================================");
     // dbg!(&data.patterns[data.pattern_order[1] as usize]);

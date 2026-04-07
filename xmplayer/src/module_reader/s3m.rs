@@ -1,7 +1,6 @@
-pub(crate) mod s3m {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
     use std::io::{Read, Seek, SeekFrom};
-    use crate::io_helpers::{read_string, read_bytes, read_u8, BinaryReader, read_u32, read_u24};
+    use binary_reader_io::BinaryReader;
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
@@ -33,7 +32,7 @@ pub(crate) mod s3m {
 
         file.seek(SeekFrom::Start(44)).unwrap();
 
-        let id = read_bytes(file, 4);
+        let id = file.read_bytes(4).unwrap();
 
         if id != "SCRM".as_bytes() {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - signature"))); // Simple how exactly?
@@ -43,40 +42,40 @@ pub(crate) mod s3m {
 
         let name = file.read_string(28);
         dbg!(&name);
-        let sig = file.read_u8();
+        let sig = file.read_u8().unwrap();
         dbg!(sig);
-        let file_type = file.read_u8();
+        let file_type = file.read_u8().unwrap();
         dbg!(file_type);
         if file_type != 16 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format"))); // Simple how exactly?
         }
 
-        let _ = file.read_u16();
+        let _ = file.read_u16().unwrap();
 
-        let song_length = file.read_u16();
+        let song_length = file.read_u16().unwrap();
         dbg!(song_length);
 
         if song_length > 256 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - song length"))); // Simple how exactly?
         }
 
-        let instrument_count = file.read_u16();
+        let instrument_count = file.read_u16().unwrap();
 
         if instrument_count > 128 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - instruments"))); // Simple how exactly?
         }
 
-        let pattern_count = file.read_u16();
+        let pattern_count = file.read_u16().unwrap();
 
         if pattern_count > 256 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - patterns"))); // Simple how exactly?
         }
 
-        let _flags = file.read_u16();
+        let _flags = file.read_u16().unwrap();
 
-        let _cwtv = file.read_u16();
+        let _cwtv = file.read_u16().unwrap();
 
-        let _signed_samples = file.read_u16();
+        let _signed_samples = file.read_u16().unwrap();
 
         let signature = file.read_string(4);
 
@@ -84,21 +83,21 @@ pub(crate) mod s3m {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - signature"))); // Simple how exactly?
         }
 
-        let _global_volume = file.read_u8();
+        let _global_volume = file.read_u8().unwrap();
 
-        let speed = file.read_u8();
+        let speed = file.read_u8().unwrap();
 
-        let bpm = file.read_u8();
+        let bpm = file.read_u8().unwrap();
 
-        let _master_volume = file.read_u8();
+        let _master_volume = file.read_u8().unwrap();
 
-        let _ = file.read_u8();
+        let _ = file.read_u8().unwrap();
 
-        let _default_panning = file.read_u8();
+        let _default_panning = file.read_u8().unwrap();
 
         file.seek(SeekFrom::Current(10)).unwrap();
 
-        let channel_data = file.read_bytes(32);
+        let channel_data = file.read_bytes(32).unwrap();
         let mut channel_map = [255u8; 32];
 
         for i in 0..channel_data.len() {
@@ -108,11 +107,11 @@ pub(crate) mod s3m {
             }
         }
 
-        let mut pattern_order = file.read_bytes(song_length as usize);
+        let mut pattern_order = file.read_bytes(song_length as usize).unwrap();
         truncate_patterns(&mut pattern_order);
 
-        let instrument_ptrs = file.read_u16_vec(instrument_count as usize);
-        let pattern_ptrs = file.read_u16_vec(pattern_count as usize);
+        let instrument_ptrs = file.read_u16_vec(instrument_count as usize).unwrap();
+        let pattern_ptrs = file.read_u16_vec(pattern_count as usize).unwrap();
 
         // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
         let instruments = read_instruments(file, &instrument_ptrs)?;
@@ -179,7 +178,7 @@ pub(crate) mod s3m {
 
             let mut pattern = Patterns::new(row_count, channel_count);
 
-            let _size = file.read_u16();
+            let _size = file.read_u16().unwrap();
 
             let mut last_effect_param       = [0u8; 32];
             let mut last_effect             = [0u8; 32];
@@ -190,7 +189,7 @@ pub(crate) mod s3m {
                 let channels = &mut row.channels;
 
                 loop {
-                    let pattern_data = file.read_u8();
+                    let pattern_data = file.read_u8().unwrap();
                     if pattern_data == 0 { break; }
 
                     let channel_num = pattern_data & 31;
@@ -203,8 +202,8 @@ pub(crate) mod s3m {
                     let mut effect_param = 0u8;
 
                     if pattern_data & 32 == 32 {
-                        note = file.read_u8();
-                        instrument = file.read_u8();
+                        note = file.read_u8().unwrap();
+                        instrument = file.read_u8().unwrap();
 
                         if note == 255 {
                             note = 0;
@@ -217,13 +216,13 @@ pub(crate) mod s3m {
                     }
 
                     if pattern_data & 64 == 64 {
-                        volume = file.read_u8();
+                        volume = file.read_u8().unwrap();
                         if volume <= 64 {volume += 0x10} else { volume = 0;}
                     }
 
                     if pattern_data & 128 == 128 {
-                        effect = file.read_u8();
-                        effect_param = file.read_u8();
+                        effect = file.read_u8().unwrap();
+                        effect_param = file.read_u8().unwrap();
                     }
 
                     if channel_num >= channel_count as u8 { continue; }
@@ -462,23 +461,23 @@ pub(crate) mod s3m {
         for (instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
             let mut instrument = Instrument::new();
             file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16)).unwrap();
-            let _type_ = read_u8(file);
-            let _dos_name = read_string(file,12);
-            let sample_ptr = read_u24(file);
-            let sample_len = read_u32(file) & 0xFFFF;
-            let sample_loop_start = read_u32(file) & 0xFFFF;
-            let sample_loop_end = read_u32(file) & 0xFFFF;
-            let sample_volume = read_u8(file);
-            let _ = read_u8(file);
-            let sample_packing = read_u8(file);
+            let _type_ = file.read_u8().unwrap();
+            let _dos_name = file.read_string(12);
+            let sample_ptr = file.read_u24().unwrap();
+            let sample_len = file.read_u32().unwrap() & 0xFFFF;
+            let sample_loop_start = file.read_u32().unwrap() & 0xFFFF;
+            let sample_loop_end = file.read_u32().unwrap() & 0xFFFF;
+            let sample_volume = file.read_u8().unwrap();
+            let _ = file.read_u8().unwrap();
+            let sample_packing = file.read_u8().unwrap();
             if sample_packing != 0 {
                 return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other,"Unknown file format")));
             }
-            let sample_flags = read_u8(file);
-            let c2spd = read_u32(file) & 0xFFFF;
-            let _ = read_bytes(file, 12);
-            let sample_name = read_string(file, 28);
-            let sample_sig = read_string(file, 4);
+            let sample_flags = file.read_u8().unwrap();
+            let c2spd = file.read_u32().unwrap() & 0xFFFF;
+            let _ = file.read_bytes(12).unwrap();
+            let sample_name = file.read_string(28);
+            let sample_sig = file.read_string(4);
             if sample_sig != "SCRS" {
 //                panic!("unknown sample format!");
             }
@@ -507,4 +506,3 @@ pub(crate) mod s3m {
         }
         Ok(instruments)
     }
-}

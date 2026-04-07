@@ -2,7 +2,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::num::Wrapping;
 
 use crate::envelope::Envelope;
-use crate::io_helpers::{read_i16_vec, read_i8_vec, read_u8_vec};
+use binary_reader_io::BinaryReader;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopType {
@@ -103,7 +103,7 @@ impl Sample {
         file.seek(SeekFrom::Start((sample_ptr as u64)  * 16)).unwrap();
 
         if self.bitness == 8 {
-            self.data = Sample::upsamplei16(Sample::upsampleu8(read_u8_vec(file, self.length as usize)));
+            self.data = Sample::upsamplei16(Sample::upsampleu8(file.read_bytes(self.length as usize).unwrap_or_else(|_| vec![0u8; self.length as usize])));
         } else {
             panic!("Unknown S3M sample format");
             // self.data = Sample::upsamplei16(read_i16_vec(file, self.length as usize));
@@ -114,9 +114,9 @@ impl Sample {
     pub(crate) fn read_non_packed_data<R: Read>(&mut self, file: &mut R) {
         if self.length == 0 { return; }
         if self.bitness == 8 {
-            self.data = Sample::upsamplei16(Sample::upsamplei8(read_i8_vec(file, self.length as usize)));
+            self.data = Sample::upsamplei16(Sample::upsamplei8(file.read_i8_vec(self.length as usize).unwrap_or_else(|_| vec![0i8; self.length as usize])));
         } else {
-            self.data = Sample::upsamplei16(read_i16_vec(file, self.length as usize));
+            self.data = Sample::upsamplei16(file.read_i16_vec(self.length as usize).unwrap_or_else(|_| vec![0i16; self.length as usize]));
         }
         self.setup_loops_and_padding();
     }
@@ -124,9 +124,9 @@ impl Sample {
     pub(crate) fn read_data<R: Read>(&mut self, file: &mut R) {
         if self.length == 0 { return; }
         if self.bitness == 8 {
-            self.data = Sample::upsamplei16(Sample::upsamplei8(Sample::unpack_i8(read_i8_vec(file, self.length as usize))));
+            self.data = Sample::upsamplei16(Sample::upsamplei8(Sample::unpack_i8(file.read_i8_vec(self.length as usize).unwrap_or_else(|_| vec![0i8; self.length as usize]))));
         } else {
-            self.data = Sample::upsamplei16(Sample::unpack_i16(read_i16_vec(file, self.length as usize)));
+            self.data = Sample::upsamplei16(Sample::unpack_i16(file.read_i16_vec(self.length as usize).unwrap_or_else(|_| vec![0i16; self.length as usize])));
         }
         self.setup_loops_and_padding();
     }

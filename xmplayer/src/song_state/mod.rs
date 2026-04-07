@@ -2,44 +2,55 @@
 
 mod leak;
 
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use crate::song::{PlayData, Song, PlaybackCmd, CallbackState};
 use crate::module_reader::{SongData, read_module};
-use crate::producer_consumer_queue::{PCQHolder, ProducerConsumerQueue};
+use shared_sync_primitives::{ProducerConsumerQueue, Producer, Consumer};
 use std::sync::{mpsc, Mutex, Arc};
 use core::option::Option::None;
 use core::option::Option;
 use std::thread::{spawn, sleep, JoinHandle};
 use core::time::Duration;
-use crate::triple_buffer::State::StateNoChange;
 use crate::song::PlaybackCmd::Quit;
-use crate::triple_buffer::{TripleBufferReader, TripleBuffer};
+use shared_sync_primitives::{TripleBufferReader, TripleBuffer, State::StateNoChange};
 use std::sync::mpsc::{Sender, Receiver};
 use std::ops::{DerefMut};
 use crate::instrument::Instrument;
 use simple_error::{SimpleResult};
 use crate::song::InterleavedBufferAdaptar;
+use crate::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS};
 
-#[derive(Clone)]
+use std::cell::UnsafeCell;
+
 pub struct StructHolder<T> {
-    t: Arc<AtomicPtr<T>>,
+    t: Arc<UnsafeCell<T>>,
 }
+
+impl<T> Clone for StructHolder<T> {
+    fn clone(&self) -> Self {
+        Self { t: self.t.clone() }
+    }
+}
+
+// We implement Send and Sync to mimic the previous AtomicPtr behavior.
+// Users must ensure actual usage avoids data races.
+unsafe impl<T: Send> Send for StructHolder<T> {}
+unsafe impl<T: Sync> Sync for StructHolder<T> {}
 
 impl <T> StructHolder<T> {
     pub fn new(arg: Box<T>) -> Self {
-        Self { t: Arc::new(AtomicPtr::new(Box::into_raw(arg))) }
+        Self { t: Arc::new(UnsafeCell::new(*arg)) }
     }
 
     pub fn get_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.t.load(Ordering::Acquire) }
+        unsafe { &mut *self.t.get() }
     }
 
     pub fn get(&self) -> &T {
-        unsafe { &*self.t.load(Ordering::Acquire) }
+        unsafe { &*self.t.get() }
     }
 }
 
-#[derive(Clone)]
 pub struct SongState {
     pub stopped:                        Arc<AtomicBool>,
     triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
@@ -47,7 +58,7 @@ pub struct SongState {
     pub song:                           Arc<Mutex<Song>>,
     tx:                                 Sender<PlaybackCmd>,
     rx:                                 Arc<Mutex<Receiver<PlaybackCmd>>>,
-    q:                                  PCQHolder,
+    q:                                  Producer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>,
     display_cb:                         Option<fn (&PlayData, &Vec<Instrument>)>,
 
     self_ref:                           Option<StructHolder<SongState>>,
@@ -58,14 +69,16 @@ pub type SongHandle = StructHolder<SongState>;
 
 impl SongState {
 
-    pub fn new(path: String) -> SimpleResult<SongHandle> {
-        let song_data = read_module(path.as_str())?;
+    pub fn new(path: &str) -> SimpleResult<(SongHandle, Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>)> {
+        let song_data = read_module(path)?;
 
         let triple_buffer = TripleBuffer::<PlayData>::new();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
         let song = Arc::new(Mutex::new(Song::new(&song_data, triple_buffer_writer, 48000.0)));
         let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
         let stopped = Arc::new(AtomicBool::from(false));
+
+        let (producer, consumer) = ProducerConsumerQueue::<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>::new();
 
         let mut sh = StructHolder::new( Box::new( Self {
             stopped,
@@ -74,29 +87,29 @@ impl SongState {
             song,
             tx,
             rx: Arc::new(Mutex::new(rx)),
-            q: ProducerConsumerQueue::new(),
+            q: producer,
             display_cb: None,
             self_ref: None
         }));
 
         sh.get_mut().self_ref = Option::from(sh.clone());
-        Ok(sh)
+        Ok((sh, consumer))
     }
 
     pub fn set_order(&mut self, order: u32) {
-        self.q.get().drain();
         if let Ok(_) = self.tx.send(PlaybackCmd::SetPosition(order)) {}
     }
 
     fn callback(&mut self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();
-        self.q.get().produce(|buf: &mut [f32]| -> bool {
+        self.q.produce(|buf: &mut [f32]| -> bool {
             let mut adaptar = InterleavedBufferAdaptar{buf};
             if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { return false; }
             true
         });
         self.stopped.store(true, Ordering::Release);
+        self.q.stop();
     }
 
     // fn callback_planar(&mut self) {
@@ -133,7 +146,7 @@ impl SongState {
             display_thread = Option::from(spawn(move || {
                 let s = s2.get_mut();
                 let tb_guard = s.triple_buffer_reader.clone();
-                let mut triple_buffer_reader = tb_guard.lock().unwrap().get();
+                let mut triple_buffer_reader = tb_guard.lock().unwrap();
                 //         let mut triple_buffer_reader = triple_buffer_reader.lock().unwrap();
 
                 let mut song_row = 0;
@@ -156,10 +169,6 @@ impl SongState {
         (play_thread, display_thread)
     }
 
-    pub fn get_queue(&mut self) -> PCQHolder {
-        return self.q.clone();
-    }
-
     pub fn get_sender(&mut self) -> &mut Sender<PlaybackCmd> {
         return &mut self.tx;
     }
@@ -171,7 +180,7 @@ impl SongState {
     pub fn close(&mut self) {
         self.stopped.store(true, Ordering::Release);
         self.tx.send(Quit).unwrap();
-        self.q.get().quit();
+        self.q.stop();
         // if handle.0.is_some() {
         //     handle.0.unwrap().join().unwrap();
         // }

@@ -3,8 +3,8 @@ use portaudio as pa;
 type ErrorType = pa::Error;
 use portaudio::{NonBlocking, Output};
 use portaudio::stream::OutputSettings;
-use xmplayer::song_state::SongHandle;
-use xmplayer::producer_consumer_queue::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE};
+use shared_sync_primitives::Consumer;
+use xmplayer::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS};
 
 
 pub(crate) struct AudioOutput {
@@ -12,7 +12,7 @@ pub(crate) struct AudioOutput {
 }
 
 impl AudioOutput {
-    pub fn new(song_handle: &mut SongHandle, sample_rate: f32) -> Self {
+    pub fn new(mut consumer: Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>, sample_rate: f32) -> Self {
         // let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
         // let _pa = match pa_result {
         //     Ok(p) => p,
@@ -25,7 +25,7 @@ impl AudioOutput {
         let settings =
             pa.default_output_stream_settings(CHANNELS, sample_rate as f64, AUDIO_BUF_FRAMES as u32).unwrap();
 
-        let mut qclone = song_handle.get_mut().get_queue();
+
 
         // This routine will be called by the PortAudio engine when audio is needed. It may called at
         // interrupt level on some machines so don't do anything that could mess up the system like
@@ -33,7 +33,7 @@ impl AudioOutput {
         let callback = move |pa::OutputStreamCallbackArgs { buffer, frames, .. }| {
             if frames != AUDIO_BUF_FRAMES { panic!("unexpected frame size: {}", frames); }
 
-            if !qclone.get().consume(|buf: &[f32; AUDIO_BUF_SIZE]| { buffer.clone_from_slice(buf); }) {
+            if !consumer.consume(|buf: &[f32]| { buffer.clone_from_slice(buf); }) {
                 pa::Complete
             } else {
                 pa::Continue

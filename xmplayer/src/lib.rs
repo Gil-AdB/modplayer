@@ -2,16 +2,17 @@
 extern crate lazy_static;
 pub extern crate simple_error;
 
-pub mod io_helpers;
+pub const AUDIO_BUF_FRAMES: usize   = 1024;
+pub const AUDIO_BUF_SIZE: usize     = AUDIO_BUF_FRAMES * 2;
+pub const NUM_AUDIO_CHUNKS: usize   = 3;
+
 pub mod module_reader;
 pub mod envelope;
 pub mod instrument;
 pub mod channel_state;
 pub mod pattern;
-pub mod producer_consumer_queue;
 pub mod song;
 pub mod tables;
-pub mod triple_buffer;
 pub mod song_state;
 
 

@@ -21,6 +21,8 @@ sdl2-feature = ["sdl2"]
 portaudio = {version = "0.8", optional = true}
 crossbeam = "0.8.4"
 xmplayer = {path="../xmplayer"}
+shared-sync-primitives = {path="../shared-sync-primitives"}
+binary-reader-io = {path="../binary-reader-io"}
 
 [dependencies.sdl2]
 version = "0.38.0"

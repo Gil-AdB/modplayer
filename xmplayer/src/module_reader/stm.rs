@@ -1,11 +1,10 @@
-pub(crate) mod stm {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
     use std::io::{Read, Seek, SeekFrom};
-    use crate::io_helpers::{BinaryReader};
+    use binary_reader_io::BinaryReader;
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
-    use crate::{io_helpers as fio, module_reader};
+    use crate::{module_reader};
     use simple_error::{SimpleError, SimpleResult};
     use std::io;
     use std::cmp::min;
@@ -49,21 +48,21 @@ pub(crate) mod stm {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown stm tracker_name")));
         }
 
-        let id                  = file.read_u8();
+        let id                  = file.read_u8().unwrap();
         if id != 0x1A {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown stm signature")));
         }
 
-        let file_type = file.read_u8();
-        let _major = file.read_u8();
+        let file_type = file.read_u8().unwrap();
+        let _major = file.read_u8().unwrap();
         dbg!(_major);
-        let minor = file.read_u8();
+        let minor = file.read_u8().unwrap();
 
         if file_type != 2 || minor == 0 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown stm version")));
         }
 
-        let mut tempo = file.read_u8();
+        let mut tempo = file.read_u8().unwrap();
         let mut bpm = tempo;
         dbg!(bpm);
         if minor < 21 {bpm = to_bcd(tempo);} // to BCD?
@@ -74,8 +73,8 @@ pub(crate) mod stm {
 
         tempo = clamp(tempo >> 4, 1, 31);
 
-        let pattern_count   = file.read_u8();
-        let mut _global_volume = file.read_u8();
+        let pattern_count   = file.read_u8().unwrap();
+        let mut _global_volume = file.read_u8().unwrap();
         if minor > 10 {
             _global_volume = min(_global_volume, 64);
         }
@@ -86,7 +85,7 @@ pub(crate) mod stm {
 
         let mut instruments = read_instruments(file);
 
-        let mut pattern_order = fio::read_bytes(file, 128);
+        let mut pattern_order = file.read_bytes(128).unwrap();
 
         let song_length = pattern_order.iter().cloned().position(|x| {x >= 99}).unwrap();
 
@@ -166,7 +165,7 @@ pub(crate) mod stm {
                 channels.reserve_exact(channel_count);
 
                 for _channel_idx in 0..channel_count {
-                    let data = fio::read_u32(file);
+                    let data = file.read_u32().unwrap();
 
                     // 00000000 00000000 00000000 11111111
                     let mut note = (data & 0xFF) as u8;
@@ -243,14 +242,14 @@ pub(crate) mod stm {
     }
 
     fn read_instrument<R: Read>(file: &mut R) -> Sample {
-        let name          = fio::read_string(file, 12);
-        let _id                  = file.read_u8();
-        let _instrument_disk     = file.read_u8();  // yeah, whatever...?
-        let _                    = file.read_u16(); // reserved
+        let name          = file.read_string(12);
+        let _id                  = file.read_u8().unwrap();
+        let _instrument_disk     = file.read_u8().unwrap();  // yeah, whatever...?
+        let _                    = file.read_u16().unwrap(); // reserved
 
-        let length          = file.read_u16();
-        let mut loop_start      = file.read_u16();
-        let mut loop_end        = file.read_u16();
+        let length          = file.read_u16().unwrap();
+        let mut loop_start      = file.read_u16().unwrap();
+        let mut loop_end        = file.read_u16().unwrap();
         let mut loop_len        = loop_end - loop_start;
         let mut loop_type            = LoopType::NoLoop;
 
@@ -265,12 +264,12 @@ pub(crate) mod stm {
             loop_len    = 0;
         }
 
-        let volume           = file.read_byte();
-        let _                    = file.read_byte(); // reserved
+        let volume           = file.read_u8().unwrap();
+        let _                    = file.read_u8().unwrap(); // reserved
 
-        let c3freq              = file.read_u32();
-        let _                        = file.read_u16(); // reserved
-        let _length_in_paragraphs    = file.read_u16();
+        let c3freq              = file.read_u32().unwrap();
+        let _                        = file.read_u16().unwrap(); // reserved
+        let _length_in_paragraphs    = file.read_u16().unwrap();
 
         let (finetune, relative_note) = module_reader::c2spd_to_finetune_relnote(c3freq);
 
@@ -309,4 +308,3 @@ pub(crate) mod stm {
         }
         instruments
     }
-}
