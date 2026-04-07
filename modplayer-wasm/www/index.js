@@ -23,7 +23,7 @@ function set_screen_colors() {
 set_screen_colors();
 
 document.querySelector('#play').addEventListener('click', async function () {
-    await initPlayer();
+    try { await initPlayer(); } catch (e) { return; }
     if (player.IsPlaying()) {
         player.Pause();
     } else {
@@ -32,42 +32,89 @@ document.querySelector('#play').addEventListener('click', async function () {
 });
 
 document.querySelector('#prev').addEventListener('click', async function () {
-    await initPlayer();
+    try { await initPlayer(); } catch (e) { return; }
     Prev()
 });
 
 document.querySelector('#next').addEventListener('click', async function () {
-    await initPlayer();
+    try { await initPlayer(); } catch (e) { return; }
     Next()
 });
 
 document.querySelector('#file').addEventListener('change', async function () {
-    await initPlayer();
+    try { await initPlayer(); } catch (e) { return; }
     loadFilesInput(document.querySelector('#file'));
 });
 
-document.querySelector('#terminal').addEventListener('drop', async function (e) {
-    await initPlayer();
-    dropHandler(e);
-});
+window.addEventListener('dragover', function (e) { e.preventDefault(); }, false);
+window.addEventListener('drop', async function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Resume/Create AudioContext synchronously to satisfy browser user gesture policy
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
-document.querySelector('#terminal').addEventListener('dragover', function (e) {
-    dragOverHandler(e);
-});
+    // Extract File objects into a real Array synchronously.
+    if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+    var fileArray = [];
+    for (var i = 0; i < e.dataTransfer.files.length; i++) {
+        fileArray.push(e.dataTransfer.files[i]);
+    }
+    
+    try { await initPlayer(); } catch (err) { return; }
+    
+    // Build file list from captured File objects
+    filesList = [];
+    for (var i = 0; i < fileArray.length; i++) {
+        filesList.push({name: fileArray[i].name, url: window.URL.createObjectURL(fileArray[i])});
+    }
+    filesListPosition = 0;
+    loadFileInput(filesList[0]);
+}, false);
+
+let audioCtx = null;
+let player = null;
+let analyzer = null;
+let channelCount = 0;
+let filesList = [];
+let filesListPosition = 0;
+let viewMode = 0; // 0: Pattern, 1: Instruments, 2: Message, 3: Help
+let themeMode = 0; // 0: Pro, 1: Vibrant, 2: Obsidian, 3: Mono
+let visualMode = 0; // 0: Both(S), 1: Both(A), 2: Scope(S), 3: Scope(A), 4: FFT, 5: Off
+let scopeMode = 'global'; // 'global' or 'multi'
+let _initPlayerPromise = null;
+
+function unlockAudio() {
+    if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+    }
+}
+document.addEventListener('click', unlockAudio, { capture: true });
+document.addEventListener('keydown', unlockAudio, { capture: true });
+document.addEventListener('dragenter', unlockAudio, { capture: true });
+document.addEventListener('dragover', unlockAudio, { capture: true });
+document.addEventListener('drop', unlockAudio, { capture: true });
 
 async function initAudio() {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    await audioContext.audioWorklet.addModule('audio-worklet.js');
-    const modplayerNode = new AudioWorkletNode(audioContext, 'modplayer-worklet', {
+    if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    }
+    await audioCtx.resume();
+    
+    await audioCtx.audioWorklet.addModule('audio-worklet.js');
+    const modplayerNode = new AudioWorkletNode(audioCtx, 'modplayer-worklet', {
         outputChannelCount: [2]
     });
 
-    const analyzer = audioContext.createAnalyser();
-    analyzer.fftSize = 512;
-    modplayerNode.connect(analyzer);
-    analyzer.connect(audioContext.destination);
+    const analyzerNode = audioCtx.createAnalyser();
+    analyzerNode.fftSize = 512;
+    modplayerNode.connect(analyzerNode);
+    analyzerNode.connect(audioCtx.destination);
     
-    const processor = new ModPlayerProcessor(audioContext.sampleRate, modplayerNode.port,
+    const processor = new ModPlayerProcessor(audioCtx.sampleRate, modplayerNode.port,
         function (self) {
             if (self.IsPlaying()) {
                 document.querySelector('#play').value = "⏸";
@@ -81,22 +128,16 @@ async function initAudio() {
             }
         });
         
-    return { processor, analyzer };
+    return { processor, analyzer: analyzerNode };
 }
-
-let player = null;
-let analyzer = null;
-let channelCount = 0;
-let _initPlayerPromise = null;
-let viewMode = 0; // 0: Pattern, 1: Instruments, 2: Message, 3: Help
-let themeMode = 0; // 0: Pro, 1: Cyber, 2: Obsidian, 3: Mono
-let visualMode = 0; // 0: Both(S), 1: Both(A), 2: Scope(S), 3: Scope(A), 4: FFT, 5: Off
-let scopeMode = 'global'; // 'global' or 'multi'
 
 async function initPlayer() {
     if (!player) {
         if (!_initPlayerPromise) {
-            _initPlayerPromise = initAudio();
+            _initPlayerPromise = initAudio().catch(err => {
+                _initPlayerPromise = null;
+                throw err;
+            });
         }
         const res = await _initPlayerPromise;
         player = res.processor;
@@ -160,9 +201,14 @@ class ModPlayerProcessor {
 
     Start(data) {
         this.Stop();
+        this.lastBuffer = null; // Force full re-render on first frame
         term.clear();
-        this.song = modplayer.SongJs.new(this.sampleRate, data);
-        channelCount = this.song.get_channel_count();
+        try {
+            this.song = modplayer.SongJs.new(this.sampleRate, data);
+            channelCount = this.song.get_channel_count();
+        } catch (e) {
+            console.error("WASM Song Load Failed:", e);
+        }
     }
 
     IsPlaying() {
@@ -171,20 +217,43 @@ class ModPlayerProcessor {
 
     Display() {
         if (this && this.song) {
+            // Check for audio suspension
+            if (audioCtx && audioCtx.state === 'suspended') {
+                term.drawString(80, 25, " [ CLICK TO ACTIVATE AUDIO ] ", wglt.fromRgb(255,255,255), wglt.fromRgb(200,0,0));
+            }
+
             const buffer = this.song.display(viewMode, themeMode);
             const width = 200;
             const height = 50;
             const stride = 7; 
+            if (!this.lastBuffer) this.lastBuffer = new Uint8Array(buffer.length);
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
                     const offset = (y * width + x) * stride;
+                    
+                    // Optimization: Skip if cell hasn't changed (Unrolled for 7-byte stride)
+                    if (this.lastBuffer[offset] === buffer[offset] &&
+                        this.lastBuffer[offset + 1] === buffer[offset + 1] &&
+                        this.lastBuffer[offset + 2] === buffer[offset + 2] &&
+                        this.lastBuffer[offset + 3] === buffer[offset + 3] &&
+                        this.lastBuffer[offset + 4] === buffer[offset + 4] &&
+                        this.lastBuffer[offset + 5] === buffer[offset + 5] &&
+                        this.lastBuffer[offset + 6] === buffer[offset + 6]) {
+                        continue;
+                    }
+
+                    // Update cache
+                    this.lastBuffer[offset] = buffer[offset];
+                    this.lastBuffer[offset + 1] = buffer[offset + 1];
+                    this.lastBuffer[offset + 2] = buffer[offset + 2];
+                    this.lastBuffer[offset + 3] = buffer[offset + 3];
+                    this.lastBuffer[offset + 4] = buffer[offset + 4];
+                    this.lastBuffer[offset + 5] = buffer[offset + 5];
+                    this.lastBuffer[offset + 6] = buffer[offset + 6];
+
                     const charCode = buffer[offset];
-                    const fr = buffer[offset + 1];
-                    const fg = buffer[offset + 2];
-                    const fb = buffer[offset + 3];
-                    const br = buffer[offset + 4];
-                    const bg = buffer[offset + 5];
-                    const bb = buffer[offset + 6];
+                    const fr = buffer[offset + 1], fg = buffer[offset + 2], fb = buffer[offset + 3];
+                    const br = buffer[offset + 4], bg = buffer[offset + 5], bb = buffer[offset + 6];
 
                     const fgColor = wglt.fromRgb(fr, fg, fb);
                     const bgColor = wglt.fromRgb(br, bg, bb);
@@ -206,21 +275,40 @@ class ModPlayerProcessor {
     HandleKeyboardEvents(events) {
         if (this && this.song) {
             if (true === this.song.handle_input(events)) {
-                this.Stop();
+                if (this.playing) {
+                    this.Pause();
+                } else {
+                    this.Play();
+                }
             }
         }
     }
 }
 
-function loadFileInput(file) {
-    fetch(file.url).then(function (response) {
-        response.arrayBuffer().then(function (buf) {
-            var dataarr = new Uint8Array(buf);
-            document.getElementById('filename').innerText = file.name;
-            player.Start(dataarr);
-            player.Play();
-        });
-    });
+async function loadFileInput(file) {
+    if (!file) return;
+    try {
+        let buf;
+        if (file instanceof File) {
+            buf = await file.arrayBuffer();
+        } else if (file.url) {
+            const response = await fetch(file.url);
+            buf = await response.arrayBuffer();
+        } else {
+            console.error("Unknown file format:", file);
+            return;
+        }
+        
+        var dataarr = new Uint8Array(buf);
+        document.getElementById('filename').innerText = file.name;
+        
+        if (audioCtx && audioCtx.state === 'suspended') await audioCtx.resume();
+        
+        player.Start(dataarr);
+        player.Play();
+    } catch (err) {
+        console.error("Failed to load module:", err);
+    }
 }
 
 function loadFilesInput(fileInput) {
@@ -247,9 +335,6 @@ function Next() {
     return false;
 }
 
-var filesList;
-var filesListPosition;
-
 function fileHandlerCallback() {
     if (!filesList) return;
     if (filesListPosition < filesList.length) {
@@ -260,8 +345,17 @@ function fileHandlerCallback() {
 }
 
 function fileHandler(data) {
+    if (!data) return;
+    
+    // Support both DataTransfer (data.files) and FileList (data as list)
+    var files = data.files || data;
+    if (!files || files.length === 0) {
+        console.warn("fileHandler: No files found in data source");
+        return;
+    }
+    
     filesList = [];
-    let files = data.items ? Array.from(data.items).filter(i => i.kind === 'file').map(i => i.getAsFile()) : (data.files || data);
+    console.log("Processing files in handler:", files.length);
     for (var i = 0; i < files.length; ++i) {
         var file = files[i];
         if (!file) continue;
@@ -269,11 +363,6 @@ function fileHandler(data) {
     }
     filesListPosition = 0;
     fileHandlerCallback();
-}
-
-function dropHandler(ev) {
-    ev.preventDefault();
-    fileHandler(ev.dataTransfer);
 }
 
 function dragOverHandler(ev) {
@@ -351,13 +440,27 @@ function handleKeyboardEvents(e) {
         e.preventDefault();
     }
 
+    if (e.key === 'ArrowRight') {
+        if (player && player.song) player.song.scroll_x(10);
+        e.preventDefault();
+    }
+    if (e.key === 'ArrowLeft') {
+        if (player && player.song) player.song.scroll_x(-10);
+        e.preventDefault();
+    }
+
     events.push(e.key);
 }
 
 window.addEventListener('wheel', (e) => {
     if (player && player.song) {
-        const delta = Math.sign(e.deltaY);
-        player.song.scroll(delta);
+        if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+            const delta = Math.sign(e.deltaX) * 4;
+            player.song.scroll_x(delta);
+        } else {
+            const delta = Math.sign(e.deltaY);
+            player.song.scroll(delta);
+        }
     }
 }, { passive: true });
 
@@ -395,27 +498,29 @@ function drawOscilloscope(playData) {
     const oscCtx = canvas.getContext('2d');
     const width = canvas.width;
     const height = canvas.height;
-    oscCtx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    oscCtx.fillStyle = '#000';
     oscCtx.fillRect(0, 0, width, height);
 
     const channels = playData.channel_status;
     oscCtx.lineWidth = 2;
     const colors = [
-        ['#00ff00', '#ffff00', '#ff0000'], // Pro: G/Y/R
-        ['#00f2fe', '#7b27ff'], 
-        ['#ffff00', '#ff00ff'], 
-        ['#ff8c00', '#404040'], 
-        ['#00ff00', '#004000']
+        ['#00ff00', '#ffff00', '#ff0000'], // 0: Pro
+        ['#00f2fe', '#7b27ff'],            // 1: Cyberpunk
+        ['#ffff00', '#ff00ff'],            // 2: Obsidian
+        ['#ff8c00', '#404040']             // 3: Monochrome
     ];
-    const theme = (themeMode === 0) ? colors[0] : (colors[themeMode + 1] || colors[1]);
+    const theme = colors[themeMode] || colors[0];
     const grad = oscCtx.createLinearGradient(0, height, 0, 0); 
     if (themeMode === 0) {
-        grad.addColorStop(0, '#00ff00');
-        grad.addColorStop(0.5, '#ffff00');
-        grad.addColorStop(1, '#ff0000');
+        grad.addColorStop(0, '#ff0000');   // Top peak
+        grad.addColorStop(0.15, '#ffff00'); // Top warning
+        grad.addColorStop(0.5, '#00ff00'); // Center baseline
+        grad.addColorStop(0.85, '#ffff00'); // Bottom warning
+        grad.addColorStop(1, '#ff0000');   // Bottom peak
     } else {
-        grad.addColorStop(0, theme[0]); 
-        grad.addColorStop(1, theme[1] || theme[0]);
+        grad.addColorStop(0, theme[0]);
+        grad.addColorStop(0.5, theme[theme.length - 1]);
+        grad.addColorStop(1, theme[0]);
     }
     oscCtx.strokeStyle = grad;
     oscCtx.beginPath();
@@ -450,8 +555,9 @@ function drawMultiOscilloscope(playData) {
     oscCtx.fillStyle = '#000';
     oscCtx.fillRect(0, 0, width, height);
     const channels = playData.channel_status;
-    const cols = 8;
-    const rows = 4;
+    const n = channels.length;
+    const cols = Math.ceil(Math.sqrt(n));
+    const rows = Math.ceil(n / cols);
     const cellW = width / cols;
     const cellH = height / rows;
     const colors = [
@@ -459,11 +565,10 @@ function drawMultiOscilloscope(playData) {
         ['#00f2fe', '#7b27ff'], 
         ['#ffff00', '#ff00ff'], 
         ['#ff8c00', '#404040'],
-        ['#00ff00', '#004000']
+         
     ];
-    const theme = (themeMode === 0) ? colors[0] : (colors[themeMode + 1] || colors[1]);
+    const theme = colors[themeMode] || colors[0];
     oscCtx.lineWidth = 1;
-    oscCtx.strokeStyle = theme[0];
     oscCtx.font = '8px Share Tech Mono';
     oscCtx.fillStyle = '#a0a0c0';
 
@@ -474,8 +579,20 @@ function drawMultiOscilloscope(playData) {
         oscCtx.strokeRect(xBase, yBase, cellW, cellH);
         if (channels[i].on) {
             oscCtx.fillText((i + 1).toString(), xBase + 2, yBase + 8);
+            const grad = oscCtx.createLinearGradient(0, yBase + cellH, 0, yBase);
+            if (themeMode === 0) {
+                grad.addColorStop(0, '#ff0000');   // Top peak
+                grad.addColorStop(0.15, '#ffff00'); // Top warning
+                grad.addColorStop(0.5, '#00ff00'); // Center baseline
+                grad.addColorStop(0.85, '#ffff00'); // Bottom warning
+                grad.addColorStop(1, '#ff0000');   // Bottom peak
+            } else {
+                grad.addColorStop(0, theme[0]);
+                grad.addColorStop(0.5, theme[theme.length - 1]);
+                grad.addColorStop(1, theme[0]);
+            }
+            oscCtx.strokeStyle = grad;
             oscCtx.beginPath();
-            oscCtx.strokeStyle = theme[0];
             const bufferLength = 512;
             const sliceW = cellW / bufferLength;
             for (let s = 0; s < bufferLength; s++) {
@@ -499,20 +616,33 @@ function drawSpectrum() {
     const bufferLength = analyzer.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     analyzer.getByteFrequencyData(dataArray);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, width, height);
     const barWidth = (width / bufferLength) * 2.5;
+    
+    const colors = [
+        ['#00ff00', '#ffff00', '#ff0000'],
+        ['#00f2fe', '#7b27ff'], 
+        ['#ffff00', '#ff00ff'], 
+        ['#ff8c00', '#404040'],
+         
+    ];
+    const theme = colors[themeMode] || colors[0];
+    
+    const grad = ctx.createLinearGradient(0, height, 0, 0);
+    if (themeMode === 0) {
+        grad.addColorStop(0, '#00ff00');
+        grad.addColorStop(0.5, '#ffff00');
+        grad.addColorStop(1, '#ff0000');
+    } else {
+        grad.addColorStop(0, theme[theme.length - 1]);
+        grad.addColorStop(1, theme[0]);
+    }
+    
     let x = 0;
     for (let i = 0; i < bufferLength; i++) {
         const barHeight = (dataArray[i] / 255) * height;
-        if (themeMode === 0) {
-            const ratio = i / bufferLength;
-            if (ratio < 0.4) ctx.fillStyle = '#00ff00';
-            else if (ratio < 0.7) ctx.fillStyle = '#ffff00';
-            else ctx.fillStyle = '#ff0000';
-        } else {
-            ctx.fillStyle = `hsl(${200 + i}, 100%, 50%)`;
-        }
+        ctx.fillStyle = grad;
         ctx.fillRect(x, height - barHeight, barWidth - 1, barHeight);
         x += barWidth;
     }
@@ -530,12 +660,16 @@ function render(timestamp) {
     if (timestamp - lastTimestamp < timestep) return;
     lastTimestamp = timestamp;
     posy = 0;
-    if (player && player.IsPlaying()) {
-        player.Display();
-        const playData = player.song.get_play_data();
-        drawOscilloscope(playData);
-        drawMultiOscilloscope(playData);
-        drawSpectrum();
+    if (player && player.IsPlaying() && player.song) {
+        try {
+            player.Display();
+            const playData = player.song.get_play_data();
+            drawOscilloscope(playData);
+            drawMultiOscilloscope(playData);
+            drawSpectrum();
+        } catch (e) {
+            console.error("Display Loop Error:", e);
+        }
     }
 }
 

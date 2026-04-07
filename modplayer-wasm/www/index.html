@@ -20,12 +20,31 @@
                     <input type="button" id="prev" value="⏮" class="control-btn" title="Previous Pattern">
                     <input type="button" id="play" value="▶️" title="Play / Pause" />
                     <input type="button" id="next" value="⏭" class="control-btn" title="Next Pattern">
-                    <button id="scope-toggle" class="control-btn" title="Toggle Multi-Channel Scope">📡</button>
+                </div>
+                <div class="shortcuts-grid">
+                    <div class="shortcut-item"><span>Shift+O</span> Visualizer</div>
+                    <div class="shortcut-item"><span>Shift+P</span> Panning</div>
+                    <div class="shortcut-item"><span>Shift+T</span> Theme</div>
+                    <div class="shortcut-item"><span>F4</span> Help</div>
                 </div>
                 <a href="https://github.com/Diffuse2000/modplayer" target="_blank" class="github-link">GitHub</a>
             </div>
         </header>
 
+        <main class="main-content">
+            <div class="visualizers-container" style="display: none;">
+                <canvas id="oscilloscope" width="800" height="200"></canvas>
+                <canvas id="spectrum" width="800" height="200"></canvas>
+            </div>
+            
+            <canvas id="terminal" width="1600" height="800"></canvas>
+        </main>
+
+        <footer class="footer">
+            <div class="help-hint">
+                Press <span>F4</span> for Help & Shortcuts | <span>Shift+O</span> Toggle Scope | <span>Shift+P</span> Toggle Panning
+            </div>
+        </footer>
     </div>
 
     <script src="bootstrap.js"></script>

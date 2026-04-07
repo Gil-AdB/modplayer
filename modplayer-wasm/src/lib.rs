@@ -12,6 +12,7 @@ use std::convert::TryInto;
 use std::cmp::max;
 use wasm_bindgen::prelude::*;
 use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song};
+extern crate console_error_panic_hook;
 use xmplayer::song_state::{SongHandle};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver, Sender};
@@ -115,6 +116,7 @@ pub struct SongJs {
     patterns:                           Vec<Patterns>,
     order:                              Vec<u8>,
     scroll_offset:                      isize,
+    scroll_offset_x:                    isize,
     panning_display_mode:               u32,
 }
 
@@ -130,6 +132,7 @@ extern "C" {
 #[wasm_bindgen]
 impl SongJs {
     pub fn new(sample_rate:f32, data: &[u8]) -> Self {
+        console_error_panic_hook::set_once();
         let data = open_module(data).unwrap();
         let triple_buffer = TripleBuffer::<PlayData>::new();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
@@ -152,6 +155,7 @@ impl SongJs {
             patterns,
             order,
             scroll_offset: 0,
+            scroll_offset_x: 0,
             panning_display_mode: 1,
         }
     }
@@ -165,7 +169,7 @@ impl SongJs {
         let (play_data, _state) = tbr.read();
         
         let view_port = ViewPort {
-            x1: 0,
+            x1: self.scroll_offset_x,
             y1: self.scroll_offset,
             width: 200,
             height: 50
@@ -181,6 +185,10 @@ impl SongJs {
 
     pub fn scroll(&mut self, delta: isize) {
         self.scroll_offset = max(0, self.scroll_offset + delta);
+    }
+
+    pub fn scroll_x(&mut self, delta: isize) {
+        self.scroll_offset_x = max(0, self.scroll_offset_x + delta);
     }
 
     pub fn get_play_data(&self) -> JsValue {

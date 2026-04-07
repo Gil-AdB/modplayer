@@ -79,16 +79,6 @@ h1 {
   letter-spacing: -0.5px;
 }
 
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 8px 16px;
-  border-radius: 50px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
 input[type="button"] {
   background: transparent;
   border: none;
@@ -118,11 +108,6 @@ input[type="button"]:active {
   box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4);
 }
 
-#play:hover {
-  box-shadow: 0 6px 20px rgba(0, 242, 254, 0.6);
-  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
-}
-
 .track-info {
   font-family: 'Share Tech Mono', monospace;
   color: var(--accent-cyan);
@@ -134,34 +119,22 @@ input[type="button"]:active {
   white-space: nowrap;
 }
 
-#visualizers {
+.visualizers-container {
     display: flex;
-    gap: 12px;
+    gap: 16px;
+    margin-bottom: 24px;
     width: 100%;
-    margin-bottom: 8px;
 }
 
 #oscilloscope, #spectrum {
     flex: 1;
-    height: 100px;
+    height: 120px;
     background: rgba(0, 0, 0, 0.4);
     border-top: 1px solid rgba(0, 242, 254, 0.2);
     border-bottom: 2px solid rgba(0, 242, 254, 0.1);
     box-shadow: 0 0 15px rgba(0, 242, 254, 0.1) inset;
     filter: drop-shadow(0 0 4px rgba(0, 242, 254, 0.4));
     border-radius: 4px;
-}
-
-#status-bar {
-    display: flex;
-    justify-content: space-around;
-    padding: 6px;
-    background: rgba(0, 242, 254, 0.05);
-    border-top: 1px solid rgba(0, 242, 254, 0.1);
-    color: rgba(0, 242, 254, 0.8);
-    font-size: 11px;
-    font-family: 'Inter', sans-serif;
-    letter-spacing: 1px;
 }
 
 #terminal {
@@ -205,4 +178,37 @@ input[type="button"]:active {
   color: var(--accent-cyan);
   font-weight: 600;
   text-shadow: 0 0 10px rgba(0, 242, 254, 0.5);
+}
+
+.shortcuts-grid {
+  display: flex;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.shortcut-item {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.shortcut-item span {
+  background: rgba(0, 242, 254, 0.1);
+  color: var(--accent-cyan);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  border: 1px solid rgba(0, 242, 254, 0.2);
+  font-family: 'Share Tech Mono', monospace;
 }
