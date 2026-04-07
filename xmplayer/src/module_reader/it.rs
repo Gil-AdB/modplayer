@@ -1,27 +1,25 @@
-pub(crate) mod it {
-    use core::result::Result::{Err, Ok};
-    use std::io::{Read, Seek, SeekFrom};
-    use std::io;
+use core::result::Result::{Err, Ok};
+use std::io::{Read, Seek, SeekFrom};
+use std::io;
 
-    use simple_error::SimpleError;
+use simple_error::SimpleError;
 
-    use crate::envelope::{EnvelopePoint, EnvelopePoints};
-    use crate::instrument::{Instrument, LoopType, Sample};
-    use crate::io_helpers;
-    use crate::io_helpers::{BinaryReader, read_string};
-    use crate::module_reader::{Patterns, Row, SongData};
-    use crate::pattern::Pattern;
-    use crate::simple_error::SimpleResult;
+use crate::envelope::{EnvelopePoint, EnvelopePoints};
+use crate::instrument::{Instrument, LoopType, Sample};
+use binary_reader_io::BinaryReader;
+use crate::module_reader::{Patterns, Row, SongData};
+use crate::pattern::Pattern;
+use crate::simple_error::SimpleResult;
 
     fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize) -> Vec<Patterns> {
         let mut patterns: Vec<Patterns> = vec![];
         patterns.reserve_exact(pattern_count as usize);
 
         for _pattern_idx in 0..pattern_count {
-            let _pattern_header_size = io_helpers::read_u32(file);
-            let _pattern_type = io_helpers::read_u8(file);
-            let row_count = io_helpers::read_u16(file);
-            let pattern_size = io_helpers::read_u16(file);
+            let _pattern_header_size = file.read_u32().unwrap();
+            let _pattern_type = file.read_u8().unwrap();
+            let row_count = file.read_u16().unwrap();
+            let pattern_size = file.read_u16().unwrap();
 
             let mut pos = 0usize;
             if pattern_size == 0 {
@@ -45,28 +43,28 @@ pub(crate) mod it {
                 let mut channels: Vec<Pattern> = vec![];
                 channels.reserve_exact(channel_count);
                 for _channel_idx in 0..channel_count {
-                    let flags = io_helpers::read_u8(file);
+                    let flags = file.read_u8().unwrap();
                     channels.push(if flags & 0x80 == 0x80 {
                         pos += 1;
                         let note = if flags & 1 == 1 {
                             pos += 1;
-                            io_helpers::read_u8(file)
+                            file.read_u8().unwrap()
                         } else { 0 };
                         let instrument = if flags & 2 == 2 {
                             pos += 1;
-                            io_helpers::read_u8(file)
+                            file.read_u8().unwrap()
                         } else { 0 };
                         let volume = if flags & 4 == 4 {
                             pos += 1;
-                            io_helpers::read_u8(file)
+                            file.read_u8().unwrap()
                         } else { 0 };
                         let effect = if flags & 8 == 8 {
                             pos += 1;
-                            io_helpers::read_u8(file)
+                            file.read_u8().unwrap()
                         } else { 0 };
                         let effect_param = if flags & 16 == 16 {
                             pos += 1;
-                            io_helpers::read_u8(file)
+                            file.read_u8().unwrap()
                         } else { 0 };
                         Pattern {
                             note,
@@ -77,10 +75,10 @@ pub(crate) mod it {
                         }
                     } else {
                         let note = flags;
-                        let instrument = io_helpers::read_u8(file);
-                        let volume = io_helpers::read_u8(file);
-                        let effect = io_helpers::read_u8(file);
-                        let effect_param = io_helpers::read_u8(file);
+                        let instrument = file.read_u8().unwrap();
+                        let volume = file.read_u8().unwrap();
+                        let effect = file.read_u8().unwrap();
+                        let effect_param = file.read_u8().unwrap();
                         pos += 5;
 
                         Pattern {
@@ -107,8 +105,8 @@ pub(crate) mod it {
         let mut result = [EnvelopePoint::new(); 12];
 
         for point in &mut result {
-            point.frame = io_helpers::read_u16(file);
-            point.value = io_helpers::read_u16(file);
+            point.frame = file.read_u16().unwrap();
+            point.value = file.read_u16().unwrap();
         }
         result
     }
@@ -120,16 +118,16 @@ pub(crate) mod it {
         for sample_idx in 0..sample_count {
             println!("Reading sample #{} of {}", sample_idx, sample_count);
 
-            let mut length = io_helpers::read_u32(file);
-            let mut loop_start = io_helpers::read_u32(file);
-            let mut loop_len = io_helpers::read_u32(file);
-            let volume = io_helpers::read_u8(file);
-            let finetune = io_helpers::read_i8(file);
-            let flags = io_helpers::read_u8(file);
-            let panning = io_helpers::read_u8(file);
-            let relative_note = io_helpers::read_i8(file);
-            let _reserved = io_helpers::read_u8(file);
-            let name = io_helpers::read_string(file, 22);
+            let mut length = file.read_u32().unwrap();
+            let mut loop_start = file.read_u32().unwrap();
+            let mut loop_len = file.read_u32().unwrap();
+            let volume = file.read_u8().unwrap();
+            let finetune = file.read_i8().unwrap();
+            let flags = file.read_u8().unwrap();
+            let panning = file.read_u8().unwrap();
+            let relative_note = file.read_i8().unwrap();
+            let _reserved = file.read_u8().unwrap();
+            let name = file.read_string(22);
 
             let bitness = if (flags & 16) == 16 { 16 } else { 8 };
             if bitness == 16 { // length is in bits
@@ -182,33 +180,33 @@ pub(crate) mod it {
             if let Err(_) = file.seek(SeekFrom::Start(*instrument_ptr as u64)) {
                 return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Error in reading IT instrument - file offset")));
             }
-            let id = io_helpers::read_string(file, 4);
+            let id = file.read_string(4);
             if id != "IMPI" {
                 return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Error in reading IT instrument - wrong ID")));
             }
 
-            let _dos_name = io_helpers::read_string(file, 12);
-            let _zero = io_helpers::read_u8(file);
-            let _nna = io_helpers::read_u8(file);
-            let _dct = io_helpers::read_u8(file);
-            let _dca = io_helpers::read_u8(file);
-            let _fade_out = io_helpers::read_u16(file);
-            let _pps = io_helpers::read_i8(file);
-            let _ppc = io_helpers::read_u8(file);
-            let _gv = io_helpers::read_u8(file);
-            let _dfp = io_helpers::read_u8(file);
-            let _rvv = io_helpers::read_u8(file);
-            let _rpv = io_helpers::read_u8(file);
-            let _tv = io_helpers::read_u16(file);
-            let _nos = io_helpers::read_u8(file);
-            let _x = io_helpers::read_u8(file);
-            let name = io_helpers::read_string(file, 26);
-            let _ifc = io_helpers::read_u8(file);
-            let _ifr = io_helpers::read_u8(file);
-            let _mc = io_helpers::read_u8(file);
-            let _mp = io_helpers::read_u8(file);
-            let _mb = io_helpers::read_u16(file);
-            let _nsi = io_helpers::read_bytes(file, 240);
+            let _dos_name = file.read_string(12);
+            let _zero = file.read_u8().unwrap();
+            let _nna = file.read_u8().unwrap();
+            let _dct = file.read_u8().unwrap();
+            let _dca = file.read_u8().unwrap();
+            let _fade_out = file.read_u16().unwrap();
+            let _pps = file.read_i8().unwrap();
+            let _ppc = file.read_u8().unwrap();
+            let _gv = file.read_u8().unwrap();
+            let _dfp = file.read_u8().unwrap();
+            let _rvv = file.read_u8().unwrap();
+            let _rpv = file.read_u8().unwrap();
+            let _tv = file.read_u16().unwrap();
+            let _nos = file.read_u8().unwrap();
+            let _x = file.read_u8().unwrap();
+            let name = file.read_string(26);
+            let _ifc = file.read_u8().unwrap();
+            let _ifr = file.read_u8().unwrap();
+            let _mc = file.read_u8().unwrap();
+            let _mp = file.read_u8().unwrap();
+            let _mb = file.read_u16().unwrap();
+            let _nsi = file.read_bytes(240).unwrap();
 
             instrument.name = name.trim().to_string();
             instruments.push(instrument);
@@ -229,46 +227,46 @@ pub(crate) mod it {
         pattern_order.truncate(write_pos);
     }
 
-    fn read_it_header<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData>
+    fn read_it_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     {
-        let id = io_helpers::read_string(&mut file, 4);
+        let id = file.read_string(4);
         if id != "IMPM" {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Not an IT module")));
         }
 
-        let name = io_helpers::read_string(&mut file, 26);
-        let _ = io_helpers::read_u16(file);
-        let order_count = io_helpers::read_u16(file);
-        let instrument_count = io_helpers::read_u16(file);
-        let sample_count = io_helpers::read_u16(file);
-        let pattern_count = io_helpers::read_u16(file);
-        let _ = io_helpers::read_u16(file);
-        let compatible_with_version = io_helpers::read_u16(file);
+        let name = file.read_string(26);
+        let _ = file.read_u16().unwrap();
+        let order_count = file.read_u16().unwrap();
+        let instrument_count = file.read_u16().unwrap();
+        let sample_count = file.read_u16().unwrap();
+        let pattern_count = file.read_u16().unwrap();
+        let _ = file.read_u16().unwrap();
+        let compatible_with_version = file.read_u16().unwrap();
 
         if compatible_with_version < 0x200 {
             return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "IT module is not in a compatible format")));
         }
 
-        let flags = io_helpers::read_u16(file);
-        let special = io_helpers::read_u16(file);
-        let _ = io_helpers::read_u8(file);
-        let _ = io_helpers::read_u8(file);
-        let speed = io_helpers::read_u8(file);
-        let tempo = io_helpers::read_u8(file);
-        let _ = io_helpers::read_u8(file);
-        let _ = io_helpers::read_u8(file);
-        let message_length = io_helpers::read_u16(file);
-        let message_offset = io_helpers::read_u32(file);
-        let _ = io_helpers::read_u32(file);
-        let _ = io_helpers::read_u8_vec(file, 64);
-        let _ = io_helpers::read_u8_vec(file, 64);
+        let flags = file.read_u16().unwrap();
+        let special = file.read_u16().unwrap();
+        let _ = file.read_u8().unwrap();
+        let _ = file.read_u8().unwrap();
+        let _speed = file.read_u8().unwrap();
+        let tempo = file.read_u8().unwrap();
+        let _ = file.read_u8().unwrap();
+        let _ = file.read_u8().unwrap();
+        let message_length = file.read_u16().unwrap();
+        let message_offset = file.read_u32().unwrap();
+        let _ = file.read_u32().unwrap();
+        let _ = file.read_bytes(64).unwrap();
+        let _ = file.read_bytes(64).unwrap();
 
-        let mut pattern_order = io_helpers::read_bytes(file, order_count as usize);
+        let mut pattern_order = file.read_bytes(order_count as usize).unwrap();
         truncate_patterns(&mut pattern_order);
 
-        let instrument_ptrs = file.read_u32_vec(instrument_count as usize);
-        let _sample_ptrs = file.read_u32_vec(sample_count as usize); // samples not fully implemented yet
-        let pattern_ptrs = file.read_u32_vec(pattern_count as usize);
+        let instrument_ptrs = file.read_u32_vec(instrument_count as usize).map_err(|e| SimpleError::new(format!("{}", e)))?;
+        let _sample_ptrs = file.read_u32_vec(sample_count as usize).map_err(|e| SimpleError::new(format!("{}", e)))?; // samples not fully implemented yet
+        let pattern_ptrs = file.read_u32_vec(pattern_count as usize).map_err(|e| SimpleError::new(format!("{}", e)))?;
 
         let instruments = read_instruments(file, &instrument_ptrs)?;
 
@@ -285,7 +283,7 @@ pub(crate) mod it {
         let mut song_message = String::new();
         if (special & 1) == 1 && message_offset > 0 {
             let _ = file.seek(SeekFrom::Start(message_offset as u64));
-            song_message = io_helpers::read_string(file, message_length as usize);
+            song_message = file.read_string(message_length as usize);
         }
 
         Ok(SongData {
@@ -308,8 +306,7 @@ pub(crate) mod it {
         })
     }
 
-    pub fn read_it<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
+    pub(crate) fn read_it<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData> {
         let _ = file.seek(SeekFrom::Start(0));
-        read_it_header(&mut file)
+        read_it_header(file)
     }
-}

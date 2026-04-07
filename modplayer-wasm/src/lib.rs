@@ -20,12 +20,12 @@ use std::sync::Mutex;
 // use sdl2::{EventPump};
 use std::ffi::c_void;
 use std::time::{Duration};
-use xmplayer::triple_buffer::State::StateNoChange;
+use shared_sync_primitives::State::StateNoChange;
 use xmplayer::instrument::Instrument;
 use display::Display;
 use display::ViewPort;
 use xmplayer::module_reader::{open_module, Patterns};
-use xmplayer::triple_buffer::{TripleBufferReader, TripleBuffer};
+use shared_sync_primitives::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
 
 use crate::wasm_bindgen::JsCast;

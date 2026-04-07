@@ -63,33 +63,46 @@ struct App {
     song_row:       usize,
     song_tick:      u32,
     audio_output:   AudioOutput,
+    song_handle:    SongHandle,
+    play_thread: Option<std::thread::JoinHandle<()>>,
+    display_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl App {
     fn new(path: String) -> SimpleResult<*mut c_void> {
 
-        // let (tx, mut rx): (Sender<PlayerCmd>, Receiver<PlayerCmd>) = mpsc::channel();
         dbg!("start");
-        let song = SongState::new(path)?;
+        let (song, consumer) = SongState::new(&path)?;
         Ok(leak!(Self {
-            // tx: Box::new(tx),
-            // rx: Box::new(rx)
             song_row: 0,
             song_tick: 2000,
-            audio_output: AudioOutput::new(song, 48000.0),
+            audio_output: AudioOutput::new(consumer, 48000.0),
+            song_handle: song,
+            play_thread: None,
+            display_thread: None,
         }))
     }
 
     pub(crate) fn start(&mut self) {
+        let h = self.song_handle.get_mut().start(|_data, _instruments| {});
+        self.play_thread = h.0;
+        self.display_thread = h.1;
         self.audio_output.start_audio_output();
     }
 
     pub(crate) fn set_order(&mut self, order: u32) {
-        self.audio_output.set_order(order);
+        self.song_handle.get_mut().set_order(order);
     }
 
     fn close_audio(&mut self) {
         self.audio_output.close();
+        self.song_handle.get_mut().close();
+        if self.play_thread.is_some() {
+            self.play_thread.take().map(std::thread::JoinHandle::join);
+        }
+        if self.display_thread.is_some() {
+            self.display_thread.take().map(std::thread::JoinHandle::join);
+        }
     }
 }
 

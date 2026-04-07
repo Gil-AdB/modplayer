@@ -1,4 +1,3 @@
-
 use xmplayer::song::{PlaybackCmd, UserData};
 use xmplayer::module_reader::print_module;
 use std::env;
@@ -28,7 +27,7 @@ fn main() {
 
    // let data = read_module(path.as_str()).unwrap();
 
-    let mut song = match SongState::new(path) {
+    let (mut song, consumer) = match SongState::new(&path) {
         Ok(s) => {s}
         Err(e) => {dbg!(e);return;}
     };
@@ -36,7 +35,7 @@ fn main() {
     if env::args().len() > 2 {
         print_module(&song, env::args().skip(2));
     } else {
-        run(&mut song);
+        run(&mut song, consumer);
     }
 }
 
@@ -58,13 +57,13 @@ impl Drop for TerminalModeSetter {
 }
 
 
-fn run(song_data: &mut SongHandle) {
+fn run(song_data: &mut SongHandle, consumer: shared_sync_primitives::Consumer<f32, {xmplayer::AUDIO_BUF_SIZE}, {xmplayer::NUM_AUDIO_CHUNKS}>) {
     const CHANNELS: i32 = 2;
     const SAMPLE_RATE: f32 = 48_000.0;
 
     let _mode_setter = TerminalModeSetter::new();
 
-    let mut audio = AudioOutput::new(song_data, SAMPLE_RATE);
+    let mut audio = AudioOutput::new(consumer, SAMPLE_RATE);
 
     let handle = song_data.get_mut().start(|data, instruments| {
 

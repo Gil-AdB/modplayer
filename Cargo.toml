@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm", "modplayer-lib"]
+members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm", "modplayer-lib", "shared-sync-primitives", "binary-reader-io"]
 
 [profile.release]
 debug = true

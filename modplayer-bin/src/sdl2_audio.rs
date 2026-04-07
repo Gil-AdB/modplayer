@@ -1,11 +1,11 @@
-use xmplayer::song_state::SongHandle;
-use xmplayer::producer_consumer_queue::AUDIO_BUF_SIZE;
+use shared_sync_primitives::Consumer;
+use xmplayer::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS};
 use core::option::Option::{Some, None};
 
 use sdl2::{Error, AudioSubsystem, audio::{AudioSpecDesired, AudioCallback, AudioDevice}};
 
 struct AudioCB {
-   q: SongHandle
+   q: Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>
 }
 
 impl AudioCallback for AudioCB {
@@ -14,7 +14,7 @@ impl AudioCallback for AudioCB {
    fn callback(&mut self, out: &mut [f32]) {
        if out.len() != AUDIO_BUF_SIZE {panic!("unexpected frame size: {}", out.len());}
 
-       self.q.get_mut().get_queue().get().consume(|buf: &[f32]| { out.clone_from_slice(buf); });
+       self.q.consume(|buf: &[f32]| { out.clone_from_slice(buf); });
    }
 }
 
@@ -28,7 +28,7 @@ pub(crate) struct AudioOutput {
 }
 
 impl AudioOutput {
-    pub fn new(song_handle: &mut SongHandle, sample_rate: f32) -> Self {
+    pub fn new(consumer: Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>, sample_rate: f32) -> Self {
         let sdl_context = sdl2::init().unwrap();
         let audio = sdl_context.audio().unwrap();
         let desired_spec = AudioSpecDesired {
@@ -38,7 +38,7 @@ impl AudioOutput {
         };
 
         let audio_output = audio.open_playback(None, &desired_spec, |_spec| {
-            AudioCB{ q: song_handle.clone()}
+            AudioCB{ q: consumer }
         }).unwrap();
 
 
