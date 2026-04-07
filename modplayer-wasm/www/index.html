@@ -1,23 +1,32 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <h1>Rust Webassembly Mod Player</h1>
-    <a href="https://github.com/Diffuse2000/modplayer" target="_blank">Source</a>
-    <br>
-    <br>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ModPlayer - Advanced WASM Tracker</title>
 </head>
-
 <body>
-    <input type="file" id="file" multiple style="display: none"/>
-    <input type="button" id="load" value="⏏️" onclick="document.getElementById('file').click();" />
-    <input type="button" id="play" value="▶️"/>
-    <input type="button" id="prev" value="⏮"/>
-    <input type="button" id="next" value="⏭"/>
-    Module: <label id="filename"></label>
-    <canvas id="terminal" width="1600px" height="800px"></canvas>
+    <div class="app-shell">
+        <header class="header">
+            <div class="header-left">
+                <h1>WASM Mod Player</h1>
+                <span class="track-info">Module: <span id="filename">None Loaded</span></span>
+            </div>
+            
+            <div class="controls-container">
+                <input type="file" id="file" multiple style="display: none"/>
+                <input type="button" id="load" value="⏏️" onclick="document.getElementById('file').click();" title="Load Module" />
+                <div class="transport">
+                    <input type="button" id="prev" value="⏮" class="control-btn" title="Previous Pattern">
+                    <input type="button" id="play" value="▶️" title="Play / Pause" />
+                    <input type="button" id="next" value="⏭" class="control-btn" title="Next Pattern">
+                    <button id="scope-toggle" class="control-btn" title="Toggle Multi-Channel Scope">📡</button>
+                </div>
+                <a href="https://github.com/Diffuse2000/modplayer" target="_blank" class="github-link">GitHub</a>
+            </div>
+        </header>
+
+    </div>
 
     <script src="bootstrap.js"></script>
 </body>

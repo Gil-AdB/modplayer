@@ -148,7 +148,8 @@ pub(crate) mod s3m {
             bpm: bpm as u16,
             pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
             instruments,
-            use_amiga: true
+            use_amiga: true,
+            song_message: "".to_string(),
         })
     }
 

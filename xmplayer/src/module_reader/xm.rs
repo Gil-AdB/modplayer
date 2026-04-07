@@ -322,7 +322,8 @@ pub(crate) mod xm {
             bpm,
             pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
             instruments,
-            use_amiga: (flags & 1) != 1
+            use_amiga: (flags & 1) != 1,
+            song_message: "".to_string(),
         })
     }
 

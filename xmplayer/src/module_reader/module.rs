@@ -116,7 +116,8 @@ pub(crate) mod module {
             bpm: 125,
             pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
             instruments,
-            use_amiga: true
+            use_amiga: true,
+            song_message: "".to_string(),
         })
     }
 

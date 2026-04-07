@@ -1,4 +1,5 @@
 use std::cmp::min;
+use serde::Serialize;
 use std::sync::mpsc::Receiver;
 
 use crate::channel_state::{ChannelState, Voice};
@@ -162,7 +163,7 @@ pub enum PlaybackCmd {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct ChannelStatus {
     pub volume:                             f32,
     pub envelope_volume:                    f32,
@@ -177,9 +178,11 @@ pub struct ChannelStatus {
     pub note:                               String,
     pub period:                             u16,
     pub final_panning:                      u8,
+    pub oscilloscope:                       Vec<f32>,
+    pub instrument_name:                    String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum FilterType {
     None,
     Linear,
@@ -196,7 +199,7 @@ impl std::fmt::Display for FilterType {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct PlayData {
     pub name:                               String,
     pub tick_duration_in_frames:            usize,
@@ -210,6 +213,7 @@ pub struct PlayData {
     pub speed:                              u32,
     pub channel_status:                     Vec<ChannelStatus>,
     pub filter:                             FilterType,
+    pub song_message:                       String,
     pub user_data:                          HashMap<String, UserData>,
 }
 
@@ -228,6 +232,7 @@ impl Init for PlayData {
             speed: 0,
             channel_status: vec![],
             filter: FilterType::Cubic,
+            song_message: "".to_string(),
             user_data: Default::default()
         }
     }
@@ -318,7 +323,7 @@ impl<'a> PlanarBufferAdaptar<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum UserData {
     String(String),
     ISize(isize),
@@ -346,6 +351,7 @@ pub struct Song {
     frequency_tables:           Box<AudioTables>,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
     tick_state:                 TickState,
+    song_message:               String,
     user_data:                  HashMap<String, UserData>,
 }
 
@@ -379,6 +385,7 @@ impl Song {
             speed: song_data.tempo as u32,
             bpm: BPM::new(song_data.bpm as u32, sample_rate as f32),
             global_volume: GlobalVolume::new(),
+            song_message: "".to_string(),
             song_data: song_data.clone(),
             channels: vec![ChannelState {
                 // instrument: &song_data.instruments[0],
@@ -421,7 +428,9 @@ impl Song {
                 tremor_count: 0,
                 multi_retrig_count: 0,
                 multi_retrig_volume: 0,
-                last_played_note: 0
+                last_played_note: 0,
+                last_samples: [0.0; 512],
+                last_samples_pos: 0,
             }; song_data.channel_count as usize],
             loop_pattern: false,
             pattern_change: PatternChange::new(),
@@ -460,11 +469,17 @@ impl Song {
         play_data.pattern_len               = self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize].rows.len() - 1;
         play_data.bpm                       = self.bpm.bpm;
         play_data.speed                     = self.speed;
+        play_data.song_message              = self.song_data.song_message.clone();
         play_data.channel_status.clear();
         play_data.filter                    = self.filter;
         play_data.user_data                 = self.user_data.clone();
 
         for channel in &self.channels {
+            let instrument_name = if channel.voice.instrument < self.song_data.instruments.len() {
+                self.song_data.instruments[channel.voice.instrument].name.clone()
+            } else {
+                "".to_string()
+            };
             play_data.channel_status.push(ChannelStatus {
                 volume:             channel.voice.volume.volume as f32,
                 envelope_volume:    channel.voice.volume.envelope_vol as f32,
@@ -479,6 +494,8 @@ impl Song {
                 note:               channel.note.to_string(),
                 period:             channel.note.period,
                 final_panning:      channel.panning.final_panning,
+                oscilloscope:       channel.last_samples.to_vec(),
+                instrument_name
             });
         }
         // Song::display(&play_data, 0);
@@ -1139,6 +1156,11 @@ impl Song {
                 // channel.last_sample_pos = channel.sample_position;
 
                 let final_sample = out_sample / 4.0 * channel.voice.volume.output_volume;
+                
+                // Store in per-channel oscilloscope buffer
+                channel.last_samples[channel.last_samples_pos] = final_sample;
+                channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
+
                 buf.mix_sample(0, final_sample * vol_left, current_buf_position + i);
                 buf.mix_sample(1, final_sample * vol_right, current_buf_position + i);
 

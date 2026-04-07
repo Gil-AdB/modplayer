@@ -174,55 +174,51 @@ pub(crate) mod it {
         let mut instruments: Vec<Instrument> = vec![];
         let instrument_count = instrument_ptrs.len();
 
-        // Instruments are one based, go figure. We'll add an empty instrument as sample 0.
-        instruments.reserve_exact(instrument_count + 1 as usize);
-
+        instruments.reserve_exact(instrument_count + 1);
         instruments.push(Instrument::new());
 
-        for (_instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
-            let mut _instrument = Instrument::new();
-            if let Err(_pos) = file.seek(SeekFrom::Start(instrument_ptr as u64)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Error in reading IT instrument - file offset")));}
-            let id = read_string(file, 4);
+        for instrument_ptr in instrument_ptrs {
+            let mut instrument = Instrument::new();
+            if let Err(_) = file.seek(SeekFrom::Start(*instrument_ptr as u64)) {
+                return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Error in reading IT instrument - file offset")));
+            }
+            let id = io_helpers::read_string(file, 4);
             if id != "IMPI" {
                 return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Error in reading IT instrument - wrong ID")));
             }
 
-            let _dos_name = read_string(file, 12);
-            let _zero = file.read_u8();
-            let _new_note_action = file.read_u8();
-            let _duplicate_check_type = file.read_u8();
-            let _duplicate_check_action = file.read_u8();
-            let _fade_out = file.read_u16();
-            let _pitch_pan_separation = file.read_i8();
-            let _pitch_pan_center = file.read_u8();
-            let _global_volume = file.read_u8();
-            let _default_pan = file.read_u8();
-            let _random_volume_variation = file.read_u8();
-            let _random_panning_variation = file.read_u8();
-            let _tracker_version = file.read_u16();
-            let _number_of_samples = file.read_u8();
-            let _x = file.read_u8();
-            let _name = file.read_string(26);
-            let _initial_filter_cutoff = file.read_u8();
-            let _initial_filter_resonance = file.read_u8();
-            let _midi_channel = file.read_u8();
-            let _midi_program = file.read_u8();
-            let _midi_bank = file.read_u16();
-            let _note_sample_indexes = io_helpers::read_bytes(file, 240);
+            let _dos_name = io_helpers::read_string(file, 12);
+            let _zero = io_helpers::read_u8(file);
+            let _nna = io_helpers::read_u8(file);
+            let _dct = io_helpers::read_u8(file);
+            let _dca = io_helpers::read_u8(file);
+            let _fade_out = io_helpers::read_u16(file);
+            let _pps = io_helpers::read_i8(file);
+            let _ppc = io_helpers::read_u8(file);
+            let _gv = io_helpers::read_u8(file);
+            let _dfp = io_helpers::read_u8(file);
+            let _rvv = io_helpers::read_u8(file);
+            let _rpv = io_helpers::read_u8(file);
+            let _tv = io_helpers::read_u16(file);
+            let _nos = io_helpers::read_u8(file);
+            let _x = io_helpers::read_u8(file);
+            let name = io_helpers::read_string(file, 26);
+            let _ifc = io_helpers::read_u8(file);
+            let _ifr = io_helpers::read_u8(file);
+            let _mc = io_helpers::read_u8(file);
+            let _mp = io_helpers::read_u8(file);
+            let _mb = io_helpers::read_u16(file);
+            let _nsi = io_helpers::read_bytes(file, 240);
 
-            #[cfg(debug_assertions)]
-            {
-                eprintln!("IT instrument #{}: name={:?}, nna={}, dct={}, dca={}, fadeout={}, samples={}",
-                    _instrument_idx, _name, _new_note_action, _duplicate_check_type,
-                    _duplicate_check_action, _fade_out, _number_of_samples);
-            }
+            instrument.name = name.trim().to_string();
+            instruments.push(instrument);
         }
-        return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other,"Unimplemented")));
+        Ok(instruments)
     }
 
     fn truncate_patterns(pattern_order: &mut Vec<u8>) {
         let mut write_pos = 0;
-        for i in 0..pattern_order.len() as usize {
+        for i in 0..pattern_order.len() {
             if pattern_order[i] < 254 {
                 pattern_order[write_pos] = pattern_order[i];
                 write_pos += 1;
@@ -230,10 +226,8 @@ pub(crate) mod it {
                 break;
             }
         }
-
-        pattern_order.truncate(write_pos as usize);
+        pattern_order.truncate(write_pos);
     }
-
 
     fn read_it_header<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData>
     {
@@ -243,12 +237,12 @@ pub(crate) mod it {
         }
 
         let name = io_helpers::read_string(&mut file, 26);
-        let _philiht = io_helpers::read_u16(file);
+        let _ = io_helpers::read_u16(file);
         let order_count = io_helpers::read_u16(file);
         let instrument_count = io_helpers::read_u16(file);
         let sample_count = io_helpers::read_u16(file);
         let pattern_count = io_helpers::read_u16(file);
-        let created_with_tracker = io_helpers::read_u16(file);
+        let _ = io_helpers::read_u16(file);
         let compatible_with_version = io_helpers::read_u16(file);
 
         if compatible_with_version < 0x200 {
@@ -257,115 +251,65 @@ pub(crate) mod it {
 
         let flags = io_helpers::read_u16(file);
         let special = io_helpers::read_u16(file);
-        let global_volume = io_helpers::read_u16(file);
-        let mix_volume = io_helpers::read_u16(file);
-        let speed = io_helpers::read_u16(file);
-        let tempo = io_helpers::read_u16(file);
-        let panning_separation = io_helpers::read_u16(file);
-        let pitch_wheel_depth = io_helpers::read_u16(file);
+        let _ = io_helpers::read_u8(file);
+        let _ = io_helpers::read_u8(file);
+        let speed = io_helpers::read_u8(file);
+        let tempo = io_helpers::read_u8(file);
+        let _ = io_helpers::read_u8(file);
+        let _ = io_helpers::read_u8(file);
         let message_length = io_helpers::read_u16(file);
         let message_offset = io_helpers::read_u32(file);
-        let reserved = io_helpers::read_u32(file);
-        let channel_panning = io_helpers::read_u8_vec(file, 64);
-        let channel_volume = io_helpers::read_u8_vec(file, 64);
-
-        #[cfg(debug_assertions)]
-        {
-            eprintln!("IT: name={:?}, orders={}, instruments={}, samples={}, patterns={}",
-                name, order_count, instrument_count, sample_count, pattern_count);
-            eprintln!("  tracker={:#x}, compat={:#x}, flags={:#x}, special={:#x}",
-                created_with_tracker, compatible_with_version, flags, special);
-            eprintln!("  gvol={}, mvol={}, speed={}, tempo={}, pansep={}, pwd={}",
-                global_volume, mix_volume, speed, tempo, panning_separation, pitch_wheel_depth);
-        }
-
-        // suppress unused variable warnings in release builds
-        let _ = (special, global_volume, mix_volume, panning_separation, pitch_wheel_depth,
-                 message_length, message_offset, reserved, channel_panning, channel_volume,
-                 name, created_with_tracker, sample_count, pattern_count, speed, tempo, flags);
+        let _ = io_helpers::read_u32(file);
+        let _ = io_helpers::read_u8_vec(file, 64);
+        let _ = io_helpers::read_u8_vec(file, 64);
 
         let mut pattern_order = io_helpers::read_bytes(file, order_count as usize);
-
         truncate_patterns(&mut pattern_order);
 
         let instrument_ptrs = file.read_u32_vec(instrument_count as usize);
-        let _sample_ptrs = file.read_u32_vec(sample_count as usize);
-        let _pattern_ptrs = file.read_u32_vec(pattern_count as usize);
+        let _sample_ptrs = file.read_u32_vec(sample_count as usize); // samples not fully implemented yet
+        let pattern_ptrs = file.read_u32_vec(pattern_count as usize);
 
-        let _instruments = read_instruments(file, &instrument_ptrs)?;
+        let instruments = read_instruments(file, &instrument_ptrs)?;
 
-        return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other,"Unknown file format")));
+        let mut patterns: Vec<Patterns> = vec![];
+        for ptr in pattern_ptrs {
+            if ptr == 0 {
+                patterns.push(Patterns::new(64, 64));
+            } else {
+                let _ = file.seek(SeekFrom::Start(ptr as u64));
+                patterns.extend(read_patterns(file, 1, 64));
+            }
+        }
 
+        let mut song_message = String::new();
+        if (special & 1) == 1 && message_offset > 0 {
+            let _ = file.seek(SeekFrom::Start(message_offset as u64));
+            song_message = io_helpers::read_string(file, message_length as usize);
+        }
 
-        // let stream_position;
-        // if let Ok(pos) = file.seek(SeekFrom::Current(0)) { stream_position = pos; } else { stream_position = 20 }
-        //
-        //
-        // let mut patterns = read_patterns(file, pattern_count as usize, channel_count as usize);
-        //
-        // // fix empty patterns at end
-        // for idx in 0..pattern_order.len() {
-        //     if pattern_order[idx] >= patterns.len() as u8 {
-        //         pattern_order[idx] = patterns.len() as u8;
-        //     }
-        // }
-        // if song_length > pattern_order.len() as u16 {
-        //     song_length = pattern_order.len() as u16;
-        //     dbg!("Trimming song legth to {}", song_length);
-        // }
-        // // dbg!(&pattern_order);
-        //
-        // patterns.push(Patterns {
-        //     rows: vec![Row {
-        //         channels: vec![Pattern {
-        //             note: 0,
-        //             instrument: 0,
-        //             volume: 0,
-        //             effect: 0,
-        //             effect_param: 0
-        //         }; channel_count as usize]
-        //     }; 64]
-        // });
-        //
-        // let instruments = read_instruments(file, instrument_count as usize);
-        //
-        // Ok(SongData {
-        //     id: id.trim().to_string(),
-        //     name: name.trim().to_string(),
-        //     song_type: SongType::XM,
-        //     tracker_name: tracker_name.trim().to_string(),
-        //     song_length,
-        //     restart_position,
-        //     channel_count,
-        //     patterns,
-        //     instrument_count,
-        //     frequency_type: if (flags & 1) == 1 { FrequencyType::LINEAR } else { FrequencyType::AMIGA },
-        //     tempo,
-        //     bpm,
-        //     pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
-        //     instruments,
-        //     use_amiga: (flags & 1) != 1
-        // })
+        Ok(SongData {
+            id: id.trim().to_string(),
+            name: name.trim().to_string(),
+            song_type: crate::module_reader::SongType::IT,
+            tracker_name: "Impulse Tracker".to_string(),
+            song_length: pattern_order.len() as u16,
+            restart_position: 0,
+            channel_count: 64,
+            patterns,
+            instrument_count,
+            frequency_type: if (flags & 1) == 1 { crate::module_reader::FrequencyType::LINEAR } else { crate::module_reader::FrequencyType::AMIGA },
+            tempo: tempo as u16,
+            bpm: tempo as u16,
+            pattern_order,
+            instruments,
+            use_amiga: (flags & 1) != 1,
+            song_message,
+        })
     }
 
     pub fn read_it<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
         let _ = file.seek(SeekFrom::Start(0));
-
-        let file_len = match file.seek(SeekFrom::End(0)) {
-            Ok(m) => {
-                let _ = file.seek(SeekFrom::Start(0));
-                m
-            }
-            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
-        };
-
-        // println!("file length: {}", file_len);
-        if file_len < 0xC0 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "File is too small!")));
-        }
-
-        let song_data = read_it_header(&mut file);
-
-        song_data
+        read_it_header(&mut file)
     }
 }

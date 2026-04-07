@@ -1,0 +1,22 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node/WASM
+node_modules/
+dist/
+pkg/
+modplayer-wasm/pkg/
+modplayer-wasm/www/dist/
+modplayer-wasm/www/node_modules/
+modplayer-wasm/www/modplayer-wasm-app-*.tgz
+
+# OS
+.DS_Store
+**/.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

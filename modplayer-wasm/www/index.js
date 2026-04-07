@@ -1,13 +1,8 @@
 import './libs/bootstrap.min.css';
+import './style.css';
 import * as wglt from 'wglt';
 import * as modplayer from '../pkg/modplayer_wasm';
-// import * as Terminal from "terminal";
 let font = require("./8x16 Font.png");
-//import './libs/xterm.css';
-//import * as xterm from './libs/xterm';
-
-//let term = new xterm.Terminal({cols: 200, rows: 50, disableStdin: true});
-//term.open(document.getElementById('terminal'));
 
 class NonResizeableTerminal extends wglt.Terminal {
     constructor(canvas, width, height, options) {
@@ -21,70 +16,11 @@ const term = new NonResizeableTerminal(
     200, 50,
     { font: new wglt.Font(font.default || font, 8, 16) });
 
-function set_line_colors(x, y, term) {
-    const colors = [
-        wglt.fromRgb(0, 120, 0),
-        wglt.fromRgb(0, 140, 0),
-        wglt.fromRgb(0, 160, 0),
-        wglt.fromRgb(0, 180, 0),
-        wglt.fromRgb(180, 180, 0),
-        wglt.fromRgb(195, 195, 0),
-        wglt.fromRgb(210, 210, 0),
-        wglt.fromRgb(225, 225, 0),
-        wglt.fromRgb(225, 64, 0),
-        wglt.fromRgb(225, 64, 0),
-        wglt.fromRgb(225, 64, 0),
-        wglt.fromRgb(225, 64, 0),
-    ];
-
-    for (let i = 0; i < 12; i++) {
-        term.getCell(x + i, y).setForeground(colors[i]);
-    }
-}
 function set_screen_colors() {
     term.fillRect(0, 0, 200, 50, 0, wglt.Colors.LIGHT_GRAY, wglt.Colors.BLACK);
 }
 
 set_screen_colors();
-
-// function install_input_handler() {
-//     // let textarea = document.getElementsByClassName('xterm-helper-textarea')[0];
-//     // textarea.addEventListener('keydown', function(){
-//     //     this.outerHTML = this.outerHTML;
-//     // }, false);
-//     // textarea.addEventListener('keypress', function(){
-//     //     this.outerHTML = this.outerHTML;
-//     // }, false);
-//     // textarea.addEventListener('keyup', function(){
-//     //     this.outerHTML = this.outerHTML;
-//     // }, false);
-//
-// //     var keyboardEvent = document.createEvent('KeyboardEvent');
-// //     var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? 'initKeyboardEvent' : 'initKeyEvent';
-// //
-// //     keyboardEvent[initMethod](
-// //         'keyup', // event type: keydown, keyup, keypress
-// //         true, // bubbles
-// //         true, // cancelable
-// //         window, // view: should be window
-// //         false, // ctrlKey
-// //         false, // altKey
-// //         false, // shiftKey
-// //         false, // metaKey
-// //         40, // keyCode: unsigned long - the virtual key code, else 0
-// //         0, // charCode: unsigned long - the Unicode character associated with the depressed key, else 0
-// //     );
-// //     textarea.dispatchEvent(keyboardEvent);
-// //     window.addEventListener('resize', function(e) {
-// //                 e.stopPropagation();
-// //              }, false);
-// }
-//
-// // install_input_handler();
-
-// const terminal_canvas = document.querySelector('#terminal');
-// terminal_canvas.style.width = "1600px";
-// terminal_canvas.style.height = "800px";
 
 document.querySelector('#play').addEventListener('click', async function () {
     await initPlayer();
@@ -125,12 +61,16 @@ async function initAudio() {
     const modplayerNode = new AudioWorkletNode(audioContext, 'modplayer-worklet', {
         outputChannelCount: [2]
     });
+
+    const analyzer = audioContext.createAnalyser();
+    analyzer.fftSize = 512;
+    modplayerNode.connect(analyzer);
+    analyzer.connect(audioContext.destination);
     
     const processor = new ModPlayerProcessor(audioContext.sampleRate, modplayerNode.port,
         function (self) {
             if (self.IsPlaying()) {
                 document.querySelector('#play').value = "⏸";
-                //render();
             } else {
                 document.querySelector('#play').value = "▶️";
             }
@@ -141,20 +81,26 @@ async function initAudio() {
             }
         });
         
-    modplayerNode.connect(audioContext.destination);
-    return processor;
+    return { processor, analyzer };
 }
 
 let player = null;
+let analyzer = null;
 let channelCount = 0;
 let _initPlayerPromise = null;
+let viewMode = 0; // 0: Pattern, 1: Instruments, 2: Message, 3: Help
+let themeMode = 0; // 0: Pro, 1: Cyber, 2: Obsidian, 3: Mono
+let visualMode = 0; // 0: Both(S), 1: Both(A), 2: Scope(S), 3: Scope(A), 4: FFT, 5: Off
+let scopeMode = 'global'; // 'global' or 'multi'
 
 async function initPlayer() {
     if (!player) {
         if (!_initPlayerPromise) {
             _initPlayerPromise = initAudio();
         }
-        player = await _initPlayerPromise;
+        const res = await _initPlayerPromise;
+        player = res.processor;
+        analyzer = res.analyzer;
     }
 }
 
@@ -163,39 +109,24 @@ class ModPlayerProcessor {
         this.sampleRate = sampleRate;
         this.port = port;
         this.playing = false;
-        
-        // Setup chunk rendering arrays
         this.leftBuf = new Float32Array(4096);
         this.rightBuf = new Float32Array(4096);
-
-        if (state_change_cb) {
-            this.state_change_cb = state_change_cb;
-        }
-        if (finished_cb) {
-            this.finished_cb = finished_cb;
-        }
-        
+        if (state_change_cb) this.state_change_cb = state_change_cb;
+        if (finished_cb) this.finished_cb = finished_cb;
         this.port.onmessage = (e) => {
             if (e.data.type === 'needData' || e.data.type === 'starve') {
                 this.pumpAudio();
             }
         };
-        
-        // Fail-safe interval if worklet is busy
-        setInterval(() => this.pumpAudio(), 50);
     }
 
     pumpAudio() {
         if (!this.playing || !this.song) return;
-        
-        // Generate a chunk of audio
         if (!this.song.get_next_tick(this.leftBuf, this.rightBuf, this.sampleRate)) {
             this.playing = false;
             this.finished_cb();
             return;
         }
-        
-        // Send chunk to worklet queue
         this.port.postMessage({
             type: 'audio',
             left: this.leftBuf,
@@ -222,7 +153,9 @@ class ModPlayerProcessor {
     Play() {
         this.playing = true;
         this.state_change_cb(this);
-        this.pumpAudio();
+        for (let i = 0; i < 6; i++) {
+            this.pumpAudio();
+        }
     }
 
     Start(data) {
@@ -233,12 +166,40 @@ class ModPlayerProcessor {
     }
 
     IsPlaying() {
-        return this.playing;
+        return this.playing && !!this.song;
     }
 
     Display() {
         if (this && this.song) {
-            this.song.display();
+            const buffer = this.song.display(viewMode, themeMode);
+            const width = 200;
+            const height = 50;
+            const stride = 7; 
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const offset = (y * width + x) * stride;
+                    const charCode = buffer[offset];
+                    const fr = buffer[offset + 1];
+                    const fg = buffer[offset + 2];
+                    const fb = buffer[offset + 3];
+                    const br = buffer[offset + 4];
+                    const bg = buffer[offset + 5];
+                    const bb = buffer[offset + 6];
+
+                    const fgColor = wglt.fromRgb(fr, fg, fb);
+                    const bgColor = wglt.fromRgb(br, bg, bb);
+                    const char = String.fromCharCode(charCode);
+
+                    if (term.drawChar) {
+                        term.drawChar(x, y, char, fgColor, bgColor);
+                    } else {
+                        const cell = term.getCell(x, y);
+                        cell.setChar(char);
+                        cell.setForeground(fgColor);
+                        cell.setBackground(bgColor);
+                    }
+                }
+            }
         }
     }
 
@@ -263,15 +224,8 @@ function loadFileInput(file) {
 }
 
 function loadFilesInput(fileInput) {
-    let files;
-    if (fileInput.target && fileInput.target.files) {
-        files = fileInput.target.files;
-    } else {
-        files = fileInput.files;
-    }
-    if (files.length === 0) {
-        return;
-    }
+    let files = (fileInput.target && fileInput.target.files) ? fileInput.target.files : fileInput.files;
+    if (files.length === 0) return;
     fileHandler(files);
 }
 
@@ -297,140 +251,293 @@ var filesList;
 var filesListPosition;
 
 function fileHandlerCallback() {
-    if (!filesList) {
-        return;
-    }
-
+    if (!filesList) return;
     if (filesListPosition < filesList.length) {
         var file = filesList[filesListPosition];
-        if (!file) {
-            return;
-        }
-        console.log('... file[' + filesListPosition + '].name = ' + file.name);
+        if (!file) return;
         loadFileInput(file);
     }
 }
 
 function fileHandler(data) {
     filesList = [];
-    if (data.items) {
-        for (var i = 0; i < data.items.length; ++i) {
-            if (data.items[i].kind === 'file') {
-                var file = data.items[i].getAsFile();
-
-                console.log('... file[' + i + '].name = ' + file.name);
-                filesList.push({name: file.name, url: window.URL.createObjectURL(file)});
-            }
-        }
-    } else {
-        let files;
-        if (data.files) {
-            files = data.files;
-        } else {
-            files = data;
-        }
-        for (var i = 0; i < files.length; ++i) {
-            var file = files[i];
-            if (!file) {
-                continue;
-            }
-            console.log('... file[' + i + '].name = ' + file.name);
-            filesList.push({name: file.name, url: window.URL.createObjectURL(file)});
-        }
+    let files = data.items ? Array.from(data.items).filter(i => i.kind === 'file').map(i => i.getAsFile()) : (data.files || data);
+    for (var i = 0; i < files.length; ++i) {
+        var file = files[i];
+        if (!file) continue;
+        filesList.push({name: file.name, url: window.URL.createObjectURL(file)});
     }
-
     filesListPosition = 0;
     fileHandlerCallback();
 }
 
 function dropHandler(ev) {
-    console.log('File(s) dropped');
-
-// Prevent default behavior (Prevent file from being opened)
     ev.preventDefault();
-
     fileHandler(ev.dataTransfer);
 }
 
 function dragOverHandler(ev) {
-    console.log('File(s) in drop zone');
-
-// Prevent default behavior (Prevent file from being opened)
     ev.preventDefault();
 }
 
 let posy = 0;
 top.term_writeln = function(str) {
     if (posy >= 50) return;
-    let isChannelRow = (posy >= 2 && posy < 2 + channelCount);
     for (let i = 0; i < 200; i++) {
         let cell = term.getCell(i, posy);
         cell.setBackground(wglt.Colors.BLACK);
         cell.setForeground(wglt.Colors.LIGHT_GRAY);
     }
     term.drawString(0, posy, str.padEnd(200, ' '));
-    if (isChannelRow) {
-        set_line_colors(57, posy, term);
-        set_line_colors(102, posy, term);
-        set_line_colors(115, posy, term);
-        set_line_colors(128, posy, term);
-        set_line_colors(141, posy, term);
-    }
     posy = posy + 1;
 }
 
 top.term_writeln_with_background = function(str, c) {
     if (posy >= 50) return;
     let bg = wglt.fromRgb(c.r, c.g, c.b);
-    let isChannelRow = (posy >= 2 && posy < 2 + channelCount);
     for (let i = 0; i < 200; i++) {
         let cell = term.getCell(i, posy);
         cell.setBackground(bg);
         cell.setForeground(wglt.Colors.LIGHT_GRAY);
     }
     term.drawString(0, posy, str.padEnd(200, ' '));
-    if (isChannelRow) {
-        set_line_colors(57, posy, term);
-        set_line_colors(102, posy, term);
-        set_line_colors(115, posy, term);
-        set_line_colors(128, posy, term);
-        set_line_colors(141, posy, term);
-    }
     posy = posy + 1;
 }
 
-
 let events = [];
-window.onkeyup = handleKeyboardEvents;
+window.addEventListener('keydown', handleKeyboardEvents, true);
 function handleKeyboardEvents(e) {
+    if (e.key === 'F1') { viewMode = 0; e.preventDefault(); }
+    if (e.key === 'F2') { viewMode = 1; e.preventDefault(); }
+    if (e.key === 'F3') { viewMode = 2; e.preventDefault(); }
+    if (e.key === 'F4') { viewMode = 3; e.preventDefault(); }
+    
+    switch (e.code) {
+        case 'KeyT':
+            if (e.shiftKey) {
+                themeMode = (themeMode + 1) % 4;
+                e.preventDefault();
+            }
+            break;
+        case 'KeyP':
+            if (e.shiftKey) {
+                if (player && player.song) player.song.toggle_panning();
+                e.preventDefault();
+            }
+            break;
+        case 'KeyO':
+            if (e.shiftKey) {
+                visualMode = (visualMode + 1) % 6;
+                updateVisualizerLayout();
+                e.preventDefault();
+            }
+            break;
+    }
+
+    if (e.key === 'ArrowUp') {
+        if (player && player.song) player.song.scroll(-1);
+        e.preventDefault();
+    }
+    if (e.key === 'ArrowDown') {
+        if (player && player.song) player.song.scroll(1);
+        e.preventDefault();
+    }
+    if (e.key === 'PageUp') {
+        if (player && player.song) player.song.scroll(-20);
+        e.preventDefault();
+    }
+    if (e.key === 'PageDown') {
+        if (player && player.song) player.song.scroll(20);
+        e.preventDefault();
+    }
+
     events.push(e.key);
+}
+
+window.addEventListener('wheel', (e) => {
+    if (player && player.song) {
+        const delta = Math.sign(e.deltaY);
+        player.song.scroll(delta);
+    }
+}, { passive: true });
+
+function updateVisualizerLayout() {
+    const container = document.querySelector('.visualizers-container');
+    const scope = document.querySelector('#oscilloscope');
+    const spectrum = document.querySelector('#spectrum');
+    
+    if (visualMode === 5) {
+        container.style.display = 'none';
+        return;
+    }
+    
+    container.style.display = 'flex';
+    const showScope = [0, 1, 2, 3].includes(visualMode);
+    const showFFT = [0, 1, 4].includes(visualMode);
+    
+    scope.style.display = showScope ? 'block' : 'none';
+    spectrum.style.display = showFFT ? 'block' : 'none';
+    
+    if (showScope && showFFT) {
+        container.style.justifyContent = 'space-between';
+        scope.style.width = '49%';
+        spectrum.style.width = '49%';
+    } else {
+        container.style.justifyContent = 'center';
+        if (showScope) scope.style.width = '100%';
+        if (showFFT) spectrum.style.width = '100%';
+    }
+}
+
+function drawOscilloscope(playData) {
+    if (![0, 2].includes(visualMode)) return;
+    const canvas = document.querySelector('#oscilloscope');
+    const oscCtx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    oscCtx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    oscCtx.fillRect(0, 0, width, height);
+
+    const channels = playData.channel_status;
+    oscCtx.lineWidth = 2;
+    const colors = [
+        ['#00ff00', '#ffff00', '#ff0000'], // Pro: G/Y/R
+        ['#00f2fe', '#7b27ff'], 
+        ['#ffff00', '#ff00ff'], 
+        ['#ff8c00', '#404040'], 
+        ['#00ff00', '#004000']
+    ];
+    const theme = (themeMode === 0) ? colors[0] : (colors[themeMode + 1] || colors[1]);
+    const grad = oscCtx.createLinearGradient(0, height, 0, 0); 
+    if (themeMode === 0) {
+        grad.addColorStop(0, '#00ff00');
+        grad.addColorStop(0.5, '#ffff00');
+        grad.addColorStop(1, '#ff0000');
+    } else {
+        grad.addColorStop(0, theme[0]); 
+        grad.addColorStop(1, theme[1] || theme[0]);
+    }
+    oscCtx.strokeStyle = grad;
+    oscCtx.beginPath();
+
+    const bufferLength = 512;
+    const sliceWidth = width / bufferLength;
+    let x = 0;
+    for (let i = 0; i < bufferLength; i++) {
+        let v = 0;
+        let activeChannels = 0;
+        for (let c = 0; c < channels.length; c++) {
+            if (channels[c].on) {
+                v += channels[c].oscilloscope[i];
+                activeChannels++;
+            }
+        }
+        if (activeChannels > 0) v /= Math.sqrt(activeChannels);
+        const y = (v * 1.0 * height * 0.8 / 2) + height / 2;
+        if (i === 0) oscCtx.moveTo(x, y);
+        else oscCtx.lineTo(x, y);
+        x += sliceWidth;
+    }
+    oscCtx.stroke();
+}
+
+function drawMultiOscilloscope(playData) {
+    if (![1, 3].includes(visualMode)) return;
+    const canvas = document.querySelector('#oscilloscope');
+    const oscCtx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    oscCtx.fillStyle = '#000';
+    oscCtx.fillRect(0, 0, width, height);
+    const channels = playData.channel_status;
+    const cols = 8;
+    const rows = 4;
+    const cellW = width / cols;
+    const cellH = height / rows;
+    const colors = [
+        ['#00ff00', '#ffff00', '#ff0000'],
+        ['#00f2fe', '#7b27ff'], 
+        ['#ffff00', '#ff00ff'], 
+        ['#ff8c00', '#404040'],
+        ['#00ff00', '#004000']
+    ];
+    const theme = (themeMode === 0) ? colors[0] : (colors[themeMode + 1] || colors[1]);
+    oscCtx.lineWidth = 1;
+    oscCtx.strokeStyle = theme[0];
+    oscCtx.font = '8px Share Tech Mono';
+    oscCtx.fillStyle = '#a0a0c0';
+
+    for (let i = 0; i < Math.min(channels.length, cols * rows); i++) {
+        const xBase = (i % cols) * cellW;
+        const yBase = Math.floor(i / cols) * cellH;
+        oscCtx.strokeStyle = 'rgba(255,255,255,0.05)';
+        oscCtx.strokeRect(xBase, yBase, cellW, cellH);
+        if (channels[i].on) {
+            oscCtx.fillText((i + 1).toString(), xBase + 2, yBase + 8);
+            oscCtx.beginPath();
+            oscCtx.strokeStyle = theme[0];
+            const bufferLength = 512;
+            const sliceW = cellW / bufferLength;
+            for (let s = 0; s < bufferLength; s++) {
+                const v = channels[i].oscilloscope[s];
+                const y = (v * 1.0 * cellH * 0.7) + yBase + cellH / 2;
+                if (s === 0) oscCtx.moveTo(xBase, y);
+                else oscCtx.lineTo(xBase + s * sliceW, y);
+            }
+            oscCtx.stroke();
+        }
+    }
+}
+
+function drawSpectrum() {
+    if (![0, 1, 4].includes(visualMode)) return;
+    if (!analyzer) return;
+    const canvas = document.querySelector('#spectrum');
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    const bufferLength = analyzer.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    analyzer.getByteFrequencyData(dataArray);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(0, 0, width, height);
+    const barWidth = (width / bufferLength) * 2.5;
+    let x = 0;
+    for (let i = 0; i < bufferLength; i++) {
+        const barHeight = (dataArray[i] / 255) * height;
+        if (themeMode === 0) {
+            const ratio = i / bufferLength;
+            if (ratio < 0.4) ctx.fillStyle = '#00ff00';
+            else if (ratio < 0.7) ctx.fillStyle = '#ffff00';
+            else ctx.fillStyle = '#ff0000';
+        } else {
+            ctx.fillStyle = `hsl(${200 + i}, 100%, 50%)`;
+        }
+        ctx.fillRect(x, height - barHeight, barWidth - 1, barHeight);
+        x += barWidth;
+    }
 }
 
 let lastTimestamp = 0;
 const fps = 60;
-const timestep = 1000 / fps; // ms for each frame
+const timestep = 1000 / fps; 
 function render(timestamp) {
     window.requestAnimationFrame(render);
-
     if (events.length !== 0) {
-        if (player) {
-            player.HandleKeyboardEvents(events);
-        }
+        if (player) player.HandleKeyboardEvents(events);
         events = [];
     }
-
-    // skip if timestep ms hasn't passed since last frame
-    if (timestamp - lastTimestamp < timestep) {
-        return;
-    }
+    if (timestamp - lastTimestamp < timestep) return;
     lastTimestamp = timestamp;
-
     posy = 0;
     if (player && player.IsPlaying()) {
         player.Display();
+        const playData = player.song.get_play_data();
+        drawOscilloscope(playData);
+        drawMultiOscilloscope(playData);
+        drawSpectrum();
     }
-
 }
 
+updateVisualizerLayout();
 render();
-

@@ -9,6 +9,7 @@ mod leak;
 mod display;
 
 use std::convert::TryInto;
+use std::cmp::max;
 use wasm_bindgen::prelude::*;
 use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song};
 use xmplayer::song_state::{SongHandle};
@@ -113,6 +114,8 @@ pub struct SongJs {
     instruments:                        Vec<Instrument>,
     patterns:                           Vec<Patterns>,
     order:                              Vec<u8>,
+    scroll_offset:                      isize,
+    panning_display_mode:               u32,
 }
 
 use js_sys::{Array, JsString};
@@ -148,38 +151,42 @@ impl SongJs {
             instruments,
             patterns,
             order,
+            scroll_offset: 0,
+            panning_display_mode: 1,
         }
     }
 
-    pub fn display(&mut self) {
+    pub fn toggle_panning(&mut self) {
+        self.panning_display_mode = (self.panning_display_mode + 1) % 2;
+    }
+
+    pub fn display(&mut self, view_mode: u32, theme_id: u32) -> js_sys::Uint8Array {
         let mut tbr = self.triple_buffer_reader.lock().unwrap();
-        let (play_data, state) = tbr.read();
-        if StateNoChange == state {
-            return;
-        }
-
-        if !(play_data.tick != self.song_tick || play_data.row != self.song_row) {
-            return;
-        }
-
+        let (play_data, _state) = tbr.read();
+        
         let view_port = ViewPort {
             x1: 0,
-            y1: 0,
+            y1: self.scroll_offset,
             width: 200,
             height: 50
         };
 
-        // let s = Display::move_to(1, 1);
-        // term_writeln(s);
-
-        Display::display(play_data, &self.instruments, &self.patterns, &self.order, view_port, &mut |str| {
-            //    result.push(str);
-            term_writeln(str);
-        }, &mut |str, background| {
-            term_writeln_with_background(str, background);
-        });
+        let screen = Display::display(play_data, &self.instruments, &self.patterns, &self.order, view_port, view_mode, theme_id, self.scroll_offset, self.panning_display_mode);
+        
         self.song_row = play_data.row;
         self.song_tick = play_data.tick;
+        
+        js_sys::Uint8Array::from(&screen.to_binary()[..])
+    }
+
+    pub fn scroll(&mut self, delta: isize) {
+        self.scroll_offset = max(0, self.scroll_offset + delta);
+    }
+
+    pub fn get_play_data(&self) -> JsValue {
+        let mut tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, _state) = tbr.read();
+        serde_wasm_bindgen::to_value(play_data).unwrap()
     }
 
     pub fn get_channel_count(&self) -> usize {
