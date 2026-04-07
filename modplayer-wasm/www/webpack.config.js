@@ -1,8 +1,7 @@
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const path = require('path');
-const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
-module.exports = {
+module.exports = (env, argv) => ({
     module: {
         rules: [
             {
@@ -11,16 +10,15 @@ module.exports = {
             },
             {
                 test: /\.(png|jpe?g|gif)$/i,
-                loader: 'file-loader',
-                options: {
-                    outputPath: 'images',
+                type: 'asset/resource',
+                generator: {
+                    filename: 'images/[name][ext]',
                 },
             },
         ],
     },
     experiments: {
         syncWebAssembly: true,
-        // asyncWebAssembly: true,
     },
     entry: {
         bootstrap: "./bootstrap.js",
@@ -28,15 +26,17 @@ module.exports = {
     output: {
         path: path.resolve(__dirname, "dist"),
         filename: "bootstrap.js",
+        clean: true,
     },
-   mode: "production",
-   plugins: [
-       new CopyWebpackPlugin({patterns: ['index.html']}),
-       new MiniCssExtractPlugin()
-   ]
-    // mode: "production",
-    // plugins: [
-    //     new CopyWebpackPlugin(['index.html']),
-    //     new MiniCssExtractPlugin()
-    // ]
-};
+    mode: argv.mode || "development",
+    devtool: argv.mode === "production" ? false : "eval-source-map",
+    devServer: {
+        static: {
+            directory: path.join(__dirname),
+        },
+        hot: true,
+    },
+    plugins: [
+        new CopyWebpackPlugin({patterns: ['index.html', 'audio-worklet.js']}),
+    ]
+});

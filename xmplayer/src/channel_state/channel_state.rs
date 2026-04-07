@@ -1,6 +1,6 @@
 use crate::envelope::{Envelope, EnvelopePoint};
 use crate::tables;
-use crate::tables::{AudioTables};
+use crate::tables::{AudioTables, TableType, AMIGA_PERIODS, LINEAR_PERIODS};
 use std::num::Wrapping;
 use crate::instrument::VibratoEnvelope;
 
@@ -9,7 +9,7 @@ use crate::instrument::VibratoEnvelope;
 ///
 ///  If input is less than min then this returns min.
 ///  If input is greater than max then this returns max.
-///  Otherwise this returns input.
+///  Otherwise, this returns input.
 ///
 /// **Panics** in debug mode if `!(min <= max)`.
 #[inline]
@@ -520,30 +520,35 @@ impl Note {
 
     #[cfg(test)]
     fn nearest_semi_tone_test(&self, period: u16, added_note: u8, use_amiga: TableType) -> (u16, u32) {
-
         let note2period = match use_amiga {
-            LinearFrequency => {&LINEAR_PERIODS},
-            AmigaFrequency => {&AMIGA_PERIODS},
+            TableType::LinearFrequency => {&LINEAR_PERIODS},
+            TableType::AmigaFrequency => {&AMIGA_PERIODS},
         };
 
-        let mut needed_period = period as u16;
-        // needed_period = clamp(needed_period, 0, 1935);
-        if needed_period < note2period[8 * 12 * 16] {needed_period = note2period[8 * 12 * 16];}
-        if needed_period > note2period[0] {needed_period = note2period[0];}
-        let idx: isize = ((note2period.binary_search_by(|element| needed_period.cmp(element)).unwrap_or_else(|x| x)) & (!0xf)) as isize;
+        let fine_tune: u32 = (((self.finetune >> 3) + 16) << 1) as u32;
+        let mut hi_period: u32 = (8 * 12 * 16) * 2;
+        let mut lo_period: u32 = 0;
 
-        let ft = if self.finetune >= 0 && idx > 0 {self.finetune >> 3} else {(self.finetune >> 3) + 16};
+        for _ in 0..8 {
+            let tmp_period = (((lo_period + hi_period) >> 1) & 0xFFFFFFE0) as u32 + fine_tune;
 
-        let mut fixed_note_id = idx as isize + ft as isize + added_note as isize * 16;
-        // clamp to note 97
-        if fixed_note_id < 0 {fixed_note_id = 0}
-        if fixed_note_id > (8*12*16 + 15) {
-            fixed_note_id = 8 * 12 * 16 + 15;
+            let mut table_index = (tmp_period as i32 - 16) >> 1;
+            table_index = clamp(table_index, 0, 1935);
+
+            if period >= note2period[table_index as usize] as u16 {
+                hi_period = ((tmp_period - fine_tune) as u32 & 0xFFFFFFE0) as u32;
+            } else {
+                lo_period = ((tmp_period - fine_tune) as u32 & 0xFFFFFFE0) as u32;
+            }
         }
 
-        // actual allowed values
-        let clamped_note_idx = clamp(fixed_note_id, 0, 1935) as usize;
-        (note2period[clamped_note_idx], idx as u32)
+        let mut tmp_period = lo_period + fine_tune as u32 + ((added_note as u32) << 5);
+
+        if tmp_period >= (8*12*16+15)*2-1 {
+            tmp_period = (8 * 12 * 16 + 15) * 2;
+        }
+
+        (note2period[(tmp_period >>1) as usize], lo_period)
     }
 
     // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
@@ -555,8 +560,8 @@ impl Note {
         let mut lo_period: u32 = 0;
 
         let note2period = match use_amiga {
-            LinearFrequency => {&LINEAR_PERIODS},
-            AmigaFrequency => {&AMIGA_PERIODS},
+            TableType::LinearFrequency => {&LINEAR_PERIODS},
+            TableType::AmigaFrequency => {&AMIGA_PERIODS},
         };
 
         for _ in 0..8 {
@@ -643,12 +648,11 @@ mod tests {
                         println!("{}expected: {}, actual: {}, note {:3}, finetune {:3}, added_note:{:3}, {}, {}, {}, {}, {}",
                                  if expected.0 != actual.0 {"\x1b[38;2;255;0;0m"} else {""},
                                  expected.0, actual.0, note_idx, finetune, added_note, expected.0 != actual.0, actual.1, expected.1/2, expected.1/2 != actual.1, "\x1b[0m");
-                       // assert_eq!(actual.0, expected.0, "note: {}, finetune: {}, added_note: {}, table: {:?}", note_idx, finetune, added_note, t)
+                        assert_eq!(actual.0, expected.0, "note: {}, finetune: {}, added_note: {}, table: {:?}", note_idx, finetune, added_note, t)
                     }
                 }
             }
         }
-        assert!(false);
     }
 
     fn tremor_state(x: u8, y: u8, tick: i8) -> bool {

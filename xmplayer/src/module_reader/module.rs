@@ -14,8 +14,8 @@ pub(crate) mod module {
     pub fn read_mod<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
         if let Err(_res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
 
-        let file_len = match file.stream_len() {
-            Ok(m) => {m}
+        let file_len = match file.seek(SeekFrom::End(0)) {
+            Ok(m) => { let _ = file.seek(SeekFrom::Start(0)); m }
             Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
         };
 
@@ -116,7 +116,8 @@ pub(crate) mod module {
             bpm: 125,
             pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
             instruments,
-            use_amiga: true
+            use_amiga: true,
+            song_message: "".to_string(),
         })
     }
 

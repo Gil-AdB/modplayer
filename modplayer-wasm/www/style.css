@@ -1,0 +1,214 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600&family=Share+Tech+Mono&display=swap');
+
+:root {
+  --bg-color: #0a0b1e;
+  --panel-bg: rgba(26, 27, 58, 0.7);
+  --accent-cyan: #00f2fe;
+  --accent-purple: #7b27ff;
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0c0;
+  --glow-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
+}
+
+body {
+  background-color: var(--bg-color);
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(123, 39, 255, 0.15) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(0, 242, 254, 0.1) 0px, transparent 50%);
+  color: var(--text-primary);
+  font-family: 'Outfit', sans-serif;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.app-shell {
+  background: var(--panel-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-shadow: 0 40px 100px rgba(0, 0, 0, 0.5);
+  max-width: 95vw;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.controls-container {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 8px 16px;
+  border-radius: 50px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.5px;
+}
+
+input[type="button"] {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 20px;
+  cursor: pointer;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+input[type="button"]:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.1);
+}
+
+input[type="button"]:active {
+  transform: scale(0.95);
+}
+
+#play {
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+  box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4);
+}
+
+.track-info {
+  font-family: 'Share Tech Mono', monospace;
+  color: var(--accent-cyan);
+  font-size: 13px;
+  opacity: 0.8;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualizers-container {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+    width: 100%;
+}
+
+#oscilloscope, #spectrum {
+    flex: 1;
+    height: 120px;
+    background: rgba(0, 0, 0, 0.4);
+    border-top: 1px solid rgba(0, 242, 254, 0.2);
+    border-bottom: 2px solid rgba(0, 242, 254, 0.1);
+    box-shadow: 0 0 15px rgba(0, 242, 254, 0.1) inset;
+    filter: drop-shadow(0 0 4px rgba(0, 242, 254, 0.4));
+    border-radius: 4px;
+}
+
+#terminal {
+  width: 100% !important;
+  height: auto !important;
+  border-radius: 8px;
+  box-shadow: var(--glow-shadow);
+  border: 1px solid rgba(0, 242, 254, 0.2);
+}
+
+.github-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 12px;
+  transition: color 0.2s;
+  padding: 0 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.github-link:hover {
+  color: var(--accent-cyan);
+}
+
+.footer {
+  display: flex;
+  justify-content: center;
+  margin-top: -10px;
+}
+
+.help-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  letter-spacing: 0.5px;
+}
+
+.help-hint span {
+  color: var(--accent-cyan);
+  font-weight: 600;
+  text-shadow: 0 0 10px rgba(0, 242, 254, 0.5);
+}
+
+.shortcuts-grid {
+  display: flex;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.shortcut-item {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.shortcut-item span {
+  background: rgba(0, 242, 254, 0.1);
+  color: var(--accent-cyan);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  border: 1px solid rgba(0, 242, 254, 0.2);
+  font-family: 'Share Tech Mono', monospace;
+}
