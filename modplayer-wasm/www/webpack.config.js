@@ -26,9 +26,10 @@ module.exports = (env, argv) => ({
     output: {
         path: path.resolve(__dirname, "dist"),
         filename: "bootstrap.js",
+        clean: true,
     },
     mode: argv.mode || "development",
-    devtool: argv.mode === "production" ? "source-map" : "eval-source-map",
+    devtool: argv.mode === "production" ? false : "eval-source-map",
     devServer: {
         static: {
             directory: path.join(__dirname),
