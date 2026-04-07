@@ -49,3 +49,17 @@ fn test_milky() {
     println!("milky.xm RMS = {}", rms);
     assert!(rms > 0.0);
 }
+
+#[test]
+fn test_openmpt_spacedeb() {
+    let rms = render_test_file("test_data/spacedeb.mod", 44100 * 2);
+    println!("spacedeb.mod RMS = {}", rms);
+    assert!(rms > 0.0);
+}
+
+#[test]
+fn test_openmpt_amiga_limits() {
+    let rms = render_test_file("test_data/AmigaLimitsFinetune.mod", 44100 * 2);
+    println!("AmigaLimitsFinetune.mod RMS = {}", rms);
+    assert!(rms > 0.0);
+}
