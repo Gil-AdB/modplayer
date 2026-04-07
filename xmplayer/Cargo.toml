@@ -2,7 +2,7 @@
 name = "xmplayer"
 version = "0.1.0"
 authors = ["gilad.benor@gmail.com"]
-edition = "2018"
+edition = "2024"
 exclude = ["build/**/it.o"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,3 +23,4 @@ array-const-fn-init = "0.1.1"
 lazy_static = "1.4.0"
 array-init = "0.1.1"
 simple-error = "0.2.2"
+serde = { version = "1.0", features = ["derive"] }

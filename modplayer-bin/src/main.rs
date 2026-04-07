@@ -117,7 +117,7 @@ fn is_num (ch: char) -> bool {
 }
 
 
-fn mainloop(song_data: &mut SongState) -> std::result::Result<bool, crossterm::ErrorKind> {
+fn mainloop(song_data: &mut SongState) {
 
     if let Ok(size) = crossterm::terminal::size() {
         let tx = song_data.get_sender();
@@ -131,7 +131,7 @@ fn mainloop(song_data: &mut SongState) -> std::result::Result<bool, crossterm::E
     let mut last_char= '\0';
 
     loop {
-        if song_data.is_stopped() {return Ok(true);}
+        if song_data.is_stopped() {return;}
         // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
         if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
         if crossterm::event::poll(Duration::from_millis(100)).is_ok() {
@@ -266,5 +266,4 @@ fn mainloop(song_data: &mut SongState) -> std::result::Result<bool, crossterm::E
             continue;
         }
     }
-    Ok(true)
 }

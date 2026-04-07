@@ -23,7 +23,8 @@ enum SongType {
     XM,
     MOD,
     S3M,
-    STM
+    STM,
+    IT,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -37,7 +38,7 @@ pub(crate) fn is_note_valid(note: u8) -> bool {
 
 #[derive(Clone)]
 pub struct Row {
-    pub(crate) channels: Vec<Pattern>
+    pub channels: Vec<Pattern>
 }
 
 impl Row {
@@ -100,6 +101,7 @@ pub struct SongData {
     pub(crate)      pattern_order:      Vec<u8>,
     pub(crate)      instruments:        Vec<Instrument>,
     pub(crate)      use_amiga:          bool,
+    pub(crate)      song_message:       String,
 }
 
 impl SongData {

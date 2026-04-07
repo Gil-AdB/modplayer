@@ -9,10 +9,10 @@ pub(crate) mod channel_state;
 
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct SplineData {
-    p0: f32,
-    p1: f32,
-    p2: f32,
-    p3: f32,
+    pub(crate) p0: f32,
+    pub(crate) p1: f32,
+    pub(crate) p2: f32,
+    pub(crate) p3: f32,
 }
 
 impl SplineData {
@@ -24,26 +24,26 @@ impl SplineData {
             p3: 0.0
         }
     }
-    // pub fn interpolate(&self, t: f32) -> f32 {
-    //     let p0 = self.p0;
-    //     let p1 = self.p1;
-    //     let p2 = self.p2;
-    //     let p3 = self.p3;
-    //
-    //     let c3 =      -p0 + 3.0 * p1 - 3.0 * p2 + p3;
-    //     let c2 = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
-    //     let c1 =      -p0                  + p2;
-    //     let c0 =                  p1;
-    //
-    //     0.5 * (((c3 * t + c2) * t) + c1) * t + c0
-    // }
-    //
-    // pub fn push(&mut self, p: f32) {
-    //     self.p0 = self.p1;
-    //     self.p1 = self.p2;
-    //     self.p2 = self.p3;
-    //     self.p3 = p;
-    // }
+    pub fn interpolate(&self, t: f32) -> f32 {
+        let p0 = self.p0;
+        let p1 = self.p1;
+        let p2 = self.p2;
+        let p3 = self.p3;
+
+        let c3 =      -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+        let c2 = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
+        let c1 =      -p0                  + p2;
+        let c0 =                  p1;
+
+        0.5 * (((c3 * t + c2) * t) + c1) * t + c0
+    }
+
+    pub fn push(&mut self, p: f32) {
+        self.p0 = self.p1;
+        self.p1 = self.p2;
+        self.p2 = self.p3;
+        self.p3 = p;
+    }
 }
 
 #[derive(Clone,Copy,Debug)]
@@ -147,6 +147,8 @@ pub(crate) struct ChannelState {
     // pub(crate) last_sample:                    i16,
     // pub(crate) last_sample_pos:                f32,
     pub(crate) last_played_note:               u8,
+    pub(crate) last_samples:                   [f32; 512],
+    pub(crate) last_samples_pos:               usize,
 }
 
 impl ChannelState {

@@ -1,4 +1,5 @@
 use std::cmp::min;
+use serde::Serialize;
 use std::sync::mpsc::Receiver;
 
 use crate::channel_state::{ChannelState, Voice};
@@ -162,7 +163,7 @@ pub enum PlaybackCmd {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct ChannelStatus {
     pub volume:                             f32,
     pub envelope_volume:                    f32,
@@ -177,9 +178,28 @@ pub struct ChannelStatus {
     pub note:                               String,
     pub period:                             u16,
     pub final_panning:                      u8,
+    pub oscilloscope:                       Vec<f32>,
+    pub instrument_name:                    String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub enum FilterType {
+    None,
+    Linear,
+    Cubic,
+}
+
+impl std::fmt::Display for FilterType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FilterType::None => write!(f, "None"),
+            FilterType::Linear => write!(f, "Linear"),
+            FilterType::Cubic => write!(f, "Cubic"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
 pub struct PlayData {
     pub name:                               String,
     pub tick_duration_in_frames:            usize,
@@ -192,7 +212,8 @@ pub struct PlayData {
     pub bpm:                                u32,
     pub speed:                              u32,
     pub channel_status:                     Vec<ChannelStatus>,
-    pub filter:                             bool,
+    pub filter:                             FilterType,
+    pub song_message:                       String,
     pub user_data:                          HashMap<String, UserData>,
 }
 
@@ -210,7 +231,8 @@ impl Init for PlayData {
             bpm: 0,
             speed: 0,
             channel_status: vec![],
-            filter: false,
+            filter: FilterType::Cubic,
+            song_message: "".to_string(),
             user_data: Default::default()
         }
     }
@@ -301,7 +323,7 @@ impl<'a> PlanarBufferAdaptar<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum UserData {
     String(String),
     ISize(isize),
@@ -324,11 +346,12 @@ pub struct Song {
     bpm:                        BPM,
     loop_pattern:               bool,
     pause:                      bool,
-    filter:                     bool,
+    filter:                     FilterType,
     display:                    bool,
     frequency_tables:           Box<AudioTables>,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
     tick_state:                 TickState,
+    song_message:               String,
     user_data:                  HashMap<String, UserData>,
 }
 
@@ -362,6 +385,7 @@ impl Song {
             speed: song_data.tempo as u32,
             bpm: BPM::new(song_data.bpm as u32, sample_rate as f32),
             global_volume: GlobalVolume::new(),
+            song_message: "".to_string(),
             song_data: song_data.clone(),
             channels: vec![ChannelState {
                 // instrument: &song_data.instruments[0],
@@ -404,12 +428,14 @@ impl Song {
                 tremor_count: 0,
                 multi_retrig_count: 0,
                 multi_retrig_volume: 0,
-                last_played_note: 0
+                last_played_note: 0,
+                last_samples: [0.0; 512],
+                last_samples_pos: 0,
             }; song_data.channel_count as usize],
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
-            filter: true,
+            filter: FilterType::Cubic,
             display: true,
             frequency_tables: use_amiga,
             triple_buffer_writer,
@@ -443,11 +469,17 @@ impl Song {
         play_data.pattern_len               = self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize].rows.len() - 1;
         play_data.bpm                       = self.bpm.bpm;
         play_data.speed                     = self.speed;
+        play_data.song_message              = self.song_data.song_message.clone();
         play_data.channel_status.clear();
         play_data.filter                    = self.filter;
         play_data.user_data                 = self.user_data.clone();
 
         for channel in &self.channels {
+            let instrument_name = if channel.voice.instrument < self.song_data.instruments.len() {
+                self.song_data.instruments[channel.voice.instrument].name.clone()
+            } else {
+                "".to_string()
+            };
             play_data.channel_status.push(ChannelStatus {
                 volume:             channel.voice.volume.volume as f32,
                 envelope_volume:    channel.voice.volume.envelope_vol as f32,
@@ -462,12 +494,18 @@ impl Song {
                 note:               channel.note.to_string(),
                 period:             channel.note.period,
                 final_panning:      channel.panning.final_panning,
+                oscilloscope:       channel.last_samples.to_vec(),
+                instrument_name
             });
         }
         // Song::display(&play_data, 0);
     }
 
-    // pub fn get_next_tick(&mut self, buf: &mut [f32], rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
+    pub fn get_channel_count(&self) -> usize {
+        self.song_data.channel_count as usize
+    }
+
+    pub fn free(&mut self) {}
     //     buf.fill(0.0);
     //     self.bpm.update(self.bpm.bpm, self.rate);
     //     // let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
@@ -615,7 +653,13 @@ impl Song {
                     PlaybackCmd::DecSpeed => {self.speed -= 1;}
                     PlaybackCmd::LoopPattern => {self.loop_pattern = !self.loop_pattern;}
                     PlaybackCmd::PauseToggle => {self.pause = !self.pause;}
-                    PlaybackCmd::FilterToggle => {self.filter = !self.filter;}
+                    PlaybackCmd::FilterToggle => {
+                        self.filter = match self.filter {
+                            FilterType::None => FilterType::Linear,
+                            FilterType::Linear => FilterType::Cubic,
+                            FilterType::Cubic => FilterType::None,
+                        }
+                    }
                     PlaybackCmd::DisplayToggle => {self.display = !self.display;}
                     PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
                     PlaybackCmd::AmigaTable => {self.frequency_tables = AudioTables::calc_tables_amiga();}
@@ -1086,15 +1130,37 @@ impl Song {
                 }
 
                 let sample_data = sample.data[channel.voice.sample_position as usize];
-                let out_sample: f32 = if self.filter {
-                    Self::lerp(channel.voice.sample_position, sample_data, sample.data[channel.voice.sample_position as usize + 1])
-                } else {
-                    sample_data
+                let out_sample: f32 = match self.filter {
+                    FilterType::Linear => {
+                        let next_sample_data = if channel.voice.sample_position as usize + 1 < sample.data.len() {
+                            sample.data[channel.voice.sample_position as usize + 1]
+                        } else {
+                            0.0
+                        };
+                        Self::lerp(channel.voice.sample_position, sample_data, next_sample_data)
+                    },
+                    FilterType::Cubic => {
+                        let pos = channel.voice.sample_position as usize;
+                        channel.voice.spline_data.p0 = sample.data[pos.saturating_sub(1)];
+                        channel.voice.spline_data.p1 = sample_data;
+                        channel.voice.spline_data.p2 = sample.data[(pos + 1).min(sample.data.len() - 1)];
+                        channel.voice.spline_data.p3 = sample.data[(pos + 2).min(sample.data.len() - 1)];
+                        
+                        channel.voice.spline_data.interpolate(channel.voice.sample_position.fract())
+                    },
+                    FilterType::None => {
+                        sample_data
+                    }
                 };
                 // channel.last_sample = sample_data;
                 // channel.last_sample_pos = channel.sample_position;
 
                 let final_sample = out_sample / 4.0 * channel.voice.volume.output_volume;
+                
+                // Store in per-channel oscilloscope buffer
+                channel.last_samples[channel.last_samples_pos] = final_sample;
+                channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
+
                 buf.mix_sample(0, final_sample * vol_left, current_buf_position + i);
                 buf.mix_sample(1, final_sample * vol_right, current_buf_position + i);
 
@@ -1102,40 +1168,24 @@ impl Song {
                 // buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
 
                 // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
-                if sample.loop_type == LoopType::PingPongLoop && !channel.voice.ping {
-                    channel.voice.sample_position -= channel.voice.du;
-                } else {
-                    channel.voice.sample_position += channel.voice.du;
-                }
+                channel.voice.sample_position += channel.voice.du;
 
                 if channel.voice.sample_position as u32 >= sample.length ||
                     (sample.loop_type != LoopType::NoLoop && channel.voice.sample_position >= sample.loop_end as f32) {
                     channel.voice.loop_started = true;
                     match sample.loop_type {
-                        LoopType::PingPongLoop => {
-                            channel.voice.sample_position = (sample.loop_end - 1) as f32 - (channel.voice.sample_position - sample.loop_end as f32);
-                            channel.voice.ping = false;
-                            // channel_state.sample_position = (channel_state.sample.loop_end - 1) as f32;
-                            // channel_state.du = -channel_state.du;
-                        }
                         LoopType::NoLoop => {
                             channel.on = false;
                             channel.voice.volume.set_volume(0);
                             break;
                         }
-                        LoopType::ForwardLoop => {
+                        LoopType::ForwardLoop | LoopType::PingPongLoop => {
                             channel.voice.sample_position = (channel.voice.sample_position - sample.loop_end as f32) + sample.loop_start as f32;
                         }
                     }
                 }
 
                 if channel.voice.loop_started && channel.voice.sample_position < sample.loop_start as f32 {
-                    match sample.loop_type {
-                        LoopType::PingPongLoop => {
-                            channel.voice.ping = true;
-                        }
-                        _ => {}
-                    }
                     channel.voice.sample_position = sample.loop_start as f32 + (sample.loop_start as f32 - channel.voice.sample_position) as f32;
                 }
             }

@@ -2,7 +2,7 @@
 name = "display"
 version = "0.1.0"
 authors = ["gilad.benor@gmail.com"]
-edition = "2018"
+edition = "2024"
 
 [dependencies]
 xmplayer = {path="../xmplayer"}

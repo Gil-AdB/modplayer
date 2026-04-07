@@ -2,7 +2,7 @@
 name = "modplayer-bin"
 version = "0.1.0"
 authors = ["gilad.benor@gmail.com"]
-edition = "2018"
+edition = "2024"
 
 [features]
 default = ["sdl2-feature"] # "portaudio-feature"/"sdl2-feature"

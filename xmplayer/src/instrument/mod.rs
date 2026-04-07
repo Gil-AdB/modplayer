@@ -108,7 +108,7 @@ impl Sample {
             panic!("Unknown S3M sample format");
             // self.data = Sample::upsamplei16(read_i16_vec(file, self.length as usize));
         }
-        self.data.push(self.data[self.data.len() - 1]);
+        self.setup_loops_and_padding();
     }
 
     pub(crate) fn read_non_packed_data<R: Read>(&mut self, file: &mut R) {
@@ -118,7 +118,7 @@ impl Sample {
         } else {
             self.data = Sample::upsamplei16(read_i16_vec(file, self.length as usize));
         }
-        self.data.push(self.data[self.data.len() - 1]);
+        self.setup_loops_and_padding();
     }
 
     pub(crate) fn read_data<R: Read>(&mut self, file: &mut R) {
@@ -128,7 +128,32 @@ impl Sample {
         } else {
             self.data = Sample::upsamplei16(Sample::unpack_i16(read_i16_vec(file, self.length as usize)));
         }
-        self.data.push(self.data[self.data.len() - 1]);
+        self.setup_loops_and_padding();
+    }
+
+    pub(crate) fn setup_loops_and_padding(&mut self) {
+        if self.length == 0 || self.data.is_empty() { return; }
+
+        if self.loop_type == LoopType::PingPongLoop {
+            let mut reversed = Vec::new();
+            for i in (self.loop_start..self.loop_end).rev() {
+                reversed.push(self.data[i as usize]);
+            }
+            self.data.splice(self.loop_end as usize..self.loop_end as usize, reversed);
+            self.loop_end += self.loop_len;
+            self.length += self.loop_len;
+            self.loop_len *= 2;
+            self.loop_type = LoopType::ForwardLoop;
+        }
+
+        if self.loop_type == LoopType::ForwardLoop {
+            self.data.push(self.data[self.loop_start as usize]);
+            self.data.push(if self.loop_start + 1 < self.loop_end { self.data[(self.loop_start + 1) as usize] } else { self.data[self.loop_start as usize] });
+        } else {
+            let last = *self.data.last().unwrap();
+            self.data.push(last);
+            self.data.push(last);
+        }
     }
 }
 

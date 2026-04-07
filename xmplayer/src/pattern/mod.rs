@@ -3,16 +3,16 @@ use std::string::ToString;
 
 #[derive(Copy, Clone)]
 pub struct Pattern {
-    pub(crate) note: u8,
-    pub(crate) instrument: u8,
-    pub(crate) volume: u8,
-    pub(crate) effect: u8,
-    pub(crate) effect_param: u8,
+    pub note: u8,
+    pub instrument: u8,
+    pub volume: u8,
+    pub effect: u8,
+    pub effect_param: u8,
 }
 
 
 impl Pattern {
-    const NOTES: [&'static str; 12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
+    pub const NOTES: [&'static str; 12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
 
     pub(crate) fn new() -> Self {
         Self {
