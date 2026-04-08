@@ -18,7 +18,7 @@ use std::ops::{DerefMut};
 use crate::instrument::Instrument;
 use simple_error::{SimpleResult};
 use crate::song::InterleavedBufferAdaptar;
-use crate::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS};
+use crate::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS, AudioConsumer, AudioProducer};
 
 use std::cell::UnsafeCell;
 
@@ -58,7 +58,7 @@ pub struct SongState {
     pub song:                           Arc<Mutex<Song>>,
     tx:                                 Sender<PlaybackCmd>,
     rx:                                 Arc<Mutex<Receiver<PlaybackCmd>>>,
-    q:                                  Producer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>,
+    q:                                  AudioProducer,
     display_cb:                         Option<fn (&PlayData, &Vec<Instrument>)>,
 
     self_ref:                           Option<StructHolder<SongState>>,
@@ -69,7 +69,7 @@ pub type SongHandle = StructHolder<SongState>;
 
 impl SongState {
 
-    pub fn new(path: &str) -> SimpleResult<(SongHandle, Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>)> {
+    pub fn new(path: &str) -> SimpleResult<(SongHandle, AudioConsumer)> {
         let song_data = read_module(path)?;
 
         let triple_buffer = TripleBuffer::<PlayData>::new();
