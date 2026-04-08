@@ -184,18 +184,22 @@ impl Display {
         str.chars().map(|c| Cell { c, fg: color, bg: RGB { r: 0, g: 0, b: 0 } }).collect()
     }
 
+    #[allow(dead_code)]
     pub fn hide() -> String {
         "".to_string()
     }
 
+    #[allow(dead_code)]
     pub fn show() -> String {
         "".to_string()
     }
 
+    #[allow(dead_code)]
     pub fn move_to(_x: usize, _y:usize) -> String {
         "".to_string()
     }
 
+    #[allow(dead_code)]
     pub fn clear() -> String {
         "".to_string()
     }

@@ -85,6 +85,7 @@ impl Patterns {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SongData {
                     id:                 String,
    pub(crate)       name:               String,

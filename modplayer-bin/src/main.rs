@@ -21,7 +21,7 @@ use display::ViewPort;
 fn main() {
     if env::args().len() < 2 {return;}
 
-	dbg!(env::args());
+	let _ = dbg!(env::args());
 
     let path = env::args().nth(1).unwrap();
     //let file = File::open(path).expect("failed to open the file");
@@ -46,7 +46,7 @@ struct TerminalModeSetter {
 impl TerminalModeSetter {
     fn new() -> Self {
         if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
-        crossterm::terminal::enable_raw_mode();
+        let _ = crossterm::terminal::enable_raw_mode();
         TerminalModeSetter {}
     }
 }
@@ -59,7 +59,7 @@ impl Drop for TerminalModeSetter {
 
 
 fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
-    const CHANNELS: i32 = 2;
+    const _CHANNELS: i32 = 2;
     const SAMPLE_RATE: f32 = 48_000.0;
 
     let _mode_setter = TerminalModeSetter::new();

@@ -1,7 +1,7 @@
-use xmplayer::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS, AudioConsumer};
+use xmplayer::{AUDIO_BUF_SIZE, AudioConsumer};
 use core::option::Option::{Some, None};
 
-use sdl2::{Error, AudioSubsystem, audio::{AudioSpecDesired, AudioCallback, AudioDevice}};
+use sdl2::{AudioSubsystem, audio::{AudioSpecDesired, AudioCallback, AudioDevice}};
 
 struct AudioCB {
    q: AudioConsumer
@@ -17,11 +17,9 @@ impl AudioCallback for AudioCB {
    }
 }
 
-type ErrorType = Error;
-
 pub(crate) struct AudioOutput {
-    sdl_context: sdl2::Sdl,
-    audio: AudioSubsystem,
+    _sdl_context: sdl2::Sdl,
+    _audio: AudioSubsystem,
     // desired_spec: AudioSpecDesired,
     audio_output: AudioDevice<AudioCB>,
 }
@@ -42,8 +40,8 @@ impl AudioOutput {
 
 
         Self {
-            sdl_context,
-            audio,
+            _sdl_context: sdl_context,
+            _audio: audio,
             // desired_spec,
             audio_output
         }

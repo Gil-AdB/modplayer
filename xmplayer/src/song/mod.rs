@@ -354,6 +354,7 @@ pub struct Song {
     frequency_tables:           Box<AudioTables>,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
     tick_state:                 TickState,
+    #[allow(dead_code)]
     song_message:               String,
     user_data:                  HashMap<String, UserData>,
 }
@@ -460,7 +461,7 @@ impl Song {
     // }
 
     fn queue_display(&mut self) {
-        let mut play_data = self.triple_buffer_writer.write();
+        let play_data = self.triple_buffer_writer.write();
 
         play_data.name                      = self.name.clone();
         play_data.tick_duration_in_frames   = self.bpm.tick_duration_in_frames;
