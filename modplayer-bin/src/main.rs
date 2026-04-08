@@ -7,6 +7,7 @@ use std::io::{stdout, Write};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::event::KeyCode;
 use xmplayer::song_state::{SongState, SongHandle};
+use xmplayer::AudioConsumer;
 
 #[cfg(feature="sdl2-feature")] mod sdl2_audio;
 #[cfg(feature="sdl2-feature")] use sdl2_audio::AudioOutput;
@@ -57,7 +58,7 @@ impl Drop for TerminalModeSetter {
 }
 
 
-fn run(song_data: &mut SongHandle, consumer: shared_sync_primitives::Consumer<f32, {xmplayer::AUDIO_BUF_SIZE}, {xmplayer::NUM_AUDIO_CHUNKS}>) {
+fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
     const CHANNELS: i32 = 2;
     const SAMPLE_RATE: f32 = 48_000.0;
 

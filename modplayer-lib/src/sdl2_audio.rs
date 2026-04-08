@@ -1,13 +1,12 @@
 #[macro_use]
 
-use shared_sync_primitives::Consumer;
-use xmplayer::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS};
+use xmplayer::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS, AudioConsumer};
 use core::option::Option::{Some, None};
 
 use sdl2::{Error, AudioSubsystem, audio::{AudioSpecDesired, AudioCallback, AudioDevice}};
 
 struct AudioCB {
-   q: Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>
+   q: AudioConsumer
 }
 
 impl AudioCallback for AudioCB {
@@ -30,7 +29,7 @@ pub(crate) struct AudioOutput {
 }
 
 impl AudioOutput {
-    pub fn new(consumer: Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>, sample_rate: f32) -> Self {
+    pub fn new(consumer: AudioConsumer, sample_rate: f32) -> Self {
         let sdl_context = sdl2::init().unwrap();
         let audio = sdl_context.audio().unwrap();
         let desired_spec = AudioSpecDesired {

@@ -3,8 +3,7 @@ use portaudio as pa;
 type ErrorType = pa::Error;
 use portaudio::{NonBlocking, Output};
 use portaudio::stream::OutputSettings;
-use shared_sync_primitives::Consumer;
-use xmplayer::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS};
+use xmplayer::{AUDIO_BUF_FRAMES, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS, AudioConsumer};
 
 
 pub(crate) struct AudioOutput {
@@ -12,7 +11,7 @@ pub(crate) struct AudioOutput {
 }
 
 impl AudioOutput {
-    pub fn new(mut consumer: Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>, sample_rate: f32) -> Self {
+    pub fn new(mut consumer: AudioConsumer, sample_rate: f32) -> Self {
         // let pa_result: Result<pa::PortAudio, pa::Error> = pa::PortAudio::new();
         // let _pa = match pa_result {
         //     Ok(p) => p,

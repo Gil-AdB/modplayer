@@ -6,6 +6,9 @@ pub const AUDIO_BUF_FRAMES: usize   = 1024;
 pub const AUDIO_BUF_SIZE: usize     = AUDIO_BUF_FRAMES * 2;
 pub const NUM_AUDIO_CHUNKS: usize   = 3;
 
+pub type AudioConsumer = shared_sync_primitives::Consumer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>;
+pub type AudioProducer = shared_sync_primitives::Producer<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>;
+
 pub mod module_reader;
 pub mod envelope;
 pub mod instrument;
