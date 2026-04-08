@@ -4,7 +4,7 @@
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
-    use simple_error::{SimpleError, SimpleResult};
+    use crate::{SimpleError, SimpleResult};
     use std::io;
     use crate::module_reader;
 
@@ -22,95 +22,86 @@
     }
 
     pub fn read_s3m<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
-        if let Err(_res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
+        file.seek(SeekFrom::Start(0))?;
 
-        let file_len = match file.seek(SeekFrom::End(0)) {
-            Ok(m) => { let _ = file.seek(SeekFrom::Start(0)); m }
-            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
-        };
+        let file_len = file.seek(SeekFrom::End(0))?;
+        file.seek(SeekFrom::Start(0))?;
 
-        // println!("file length: {}", file_len);
         if file_len < 1084 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "File is too small!")));
+            return Err(SimpleError::new("File is too small!"));
         }
 
-        let song_data = read_s3m_header(&mut file);
-
-        song_data
+        read_s3m_header(&mut file)
     }
 
     fn read_s3m_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     {
         let mut num_channels = 0;
 
-        file.seek(SeekFrom::Start(44)).unwrap();
+        file.seek(SeekFrom::Start(44))?;
 
-        let id = file.read_bytes(4).unwrap();
+        let id = file.read_bytes(4)?;
 
         if id != "SCRM".as_bytes() {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - signature"))); // Simple how exactly?
+            return Err(SimpleError::new("Unknown s3m format - signature"));
         }
 
-        file.seek(SeekFrom::Start(0)).unwrap();
+        file.seek(SeekFrom::Start(0))?;
 
         let name = file.read_string(28);
-        dbg!(&name);
-        let sig = file.read_u8().unwrap();
-        dbg!(sig);
-        let file_type = file.read_u8().unwrap();
-        dbg!(file_type);
+        let _sig = file.read_u8()?;
+        let file_type = file.read_u8()?;
         if file_type != 16 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format"))); // Simple how exactly?
+            return Err(SimpleError::new("Unknown s3m format"));
         }
 
-        let _ = file.read_u16().unwrap();
+        let _ = file.read_u16()?;
 
-        let song_length = file.read_u16().unwrap();
-        dbg!(song_length);
+        let song_length = file.read_u16()?;
 
         if song_length > 256 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - song length"))); // Simple how exactly?
+            return Err(SimpleError::new("Unknown s3m format - song length"));
         }
 
-        let instrument_count = file.read_u16().unwrap();
+        let instrument_count = file.read_u16()?;
 
         if instrument_count > 128 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - instruments"))); // Simple how exactly?
+            return Err(SimpleError::new("Unknown s3m format - instruments"));
         }
 
-        let pattern_count = file.read_u16().unwrap();
+        let pattern_count = file.read_u16()?;
 
         if pattern_count > 256 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - patterns"))); // Simple how exactly?
+            return Err(SimpleError::new("Unknown s3m format - patterns"));
         }
 
-        let _flags = file.read_u16().unwrap();
+        let _flags = file.read_u16()?;
 
-        let _cwtv = file.read_u16().unwrap();
+        let _cwtv = file.read_u16()?;
 
-        let _signed_samples = file.read_u16().unwrap();
+        let _signed_samples = file.read_u16()?;
 
         let signature = file.read_string(4);
 
         if signature != "SCRM" {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown s3m format - signature"))); // Simple how exactly?
+            return Err(SimpleError::new("Unknown s3m format - signature"));
         }
 
-        let _global_volume = file.read_u8().unwrap();
+        let _global_volume = file.read_u8()?;
 
-        let speed = file.read_u8().unwrap();
+        let speed = file.read_u8()?;
 
-        let bpm = file.read_u8().unwrap();
+        let bpm = file.read_u8()?;
 
-        let _master_volume = file.read_u8().unwrap();
+        let _master_volume = file.read_u8()?;
 
-        let _ = file.read_u8().unwrap();
+        let _ = file.read_u8()?;
 
-        let _default_panning = file.read_u8().unwrap();
+        let _default_panning = file.read_u8()?;
 
-        file.seek(SeekFrom::Current(10)).unwrap();
+        file.seek(SeekFrom::Current(10))?;
 
-        let channel_data = file.read_bytes(32).unwrap();
+        let channel_data = file.read_bytes(32)?;
         let mut channel_map = [255u8; 32];
 
         for i in 0..channel_data.len() {
@@ -120,17 +111,15 @@
             }
         }
 
-        let mut pattern_order = file.read_bytes(song_length as usize).unwrap();
+        let mut pattern_order = file.read_bytes(song_length as usize)?;
         truncate_patterns(&mut pattern_order);
 
-        let instrument_ptrs = file.read_u16_vec(instrument_count as usize).unwrap();
-        let pattern_ptrs = file.read_u16_vec(pattern_count as usize).unwrap();
+        let instrument_ptrs = file.read_u16_vec(instrument_count as usize)?;
+        let pattern_ptrs = file.read_u16_vec(pattern_count as usize)?;
 
         // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
         let instruments = read_instruments(file, &instrument_ptrs)?;
-        let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map);
-
-
+        let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map)?;
 
         patterns.push(Patterns {
             rows: vec![Row {
@@ -143,7 +132,6 @@
                 }; num_channels as usize]
             }; 64]
         });
-
 
         Ok(SongData {
             id: String::from_utf8_lossy(id.as_ref()).trim().to_string(),
@@ -179,7 +167,7 @@
         pattern_order.truncate(write_pos as usize);
     }
 
-    fn read_patterns<R: Read + Seek>(file: &mut R, pattern_ptrs: &Vec<u16>, channel_count: usize, channel_map: &[u8; 32]) -> Vec<Patterns> {
+    fn read_patterns<R: Read + Seek>(file: &mut R, pattern_ptrs: &Vec<u16>, channel_count: usize, channel_map: &[u8; 32]) -> SimpleResult<Vec<Patterns>> {
         let pattern_count = pattern_ptrs.len();
         let mut patterns: Vec<Patterns> = vec![];
         patterns.reserve_exact(pattern_count);
@@ -187,11 +175,11 @@
 
         for pattern_ptr in pattern_ptrs.iter().cloned() {
             if pattern_ptr == 0 {continue;}
-            file.seek(SeekFrom::Start((pattern_ptr as u64)  * 16)).unwrap();
+            file.seek(SeekFrom::Start((pattern_ptr as u64)  * 16))?;
 
             let mut pattern = Patterns::new(row_count, channel_count);
 
-            let _size = file.read_u16().unwrap();
+            let _size = file.read_u16()?;
 
             let mut last_effect_param       = [0u8; 32];
             let mut last_effect             = [0u8; 32];
@@ -202,7 +190,7 @@
                 let channels = &mut row.channels;
 
                 loop {
-                    let pattern_data = file.read_u8().unwrap();
+                    let pattern_data = file.read_u8()?;
                     if pattern_data == 0 { break; }
 
                     let channel_num = pattern_data & 31;
@@ -215,8 +203,8 @@
                     let mut effect_param = 0u8;
 
                     if pattern_data & 32 == 32 {
-                        note = file.read_u8().unwrap();
-                        instrument = file.read_u8().unwrap();
+                        note = file.read_u8()?;
+                        instrument = file.read_u8()?;
 
                         if note == 255 {
                             note = 0;
@@ -229,13 +217,13 @@
                     }
 
                     if pattern_data & 64 == 64 {
-                        volume = file.read_u8().unwrap();
+                        volume = file.read_u8()?;
                         if volume <= 64 {volume += 0x10} else { volume = 0;}
                     }
 
                     if pattern_data & 128 == 128 {
-                        effect = file.read_u8().unwrap();
-                        effect_param = file.read_u8().unwrap();
+                        effect = file.read_u8()?;
+                        effect_param = file.read_u8()?;
                     }
 
                     if channel_num >= channel_count as u8 { continue; }
@@ -270,7 +258,7 @@
             patterns.push(pattern)
         }
 
-        patterns
+        Ok(patterns)
     }
 
     fn fix_effects(pattern : &mut Pattern, last_effect: &mut u8, last_effect_param: &mut u8, last_vibrato_param: &mut u8,last_instrument: &mut u8) {
@@ -473,27 +461,24 @@
 
         for (instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
             let mut instrument = Instrument::new();
-            file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16)).unwrap();
-            let _type_ = file.read_u8().unwrap();
+            file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16))?;
+            let _type_ = file.read_u8()?;
             let _dos_name = file.read_string(12);
-            let sample_ptr = file.read_u24_s3m().unwrap();
-            let sample_len = file.read_u32().unwrap() & 0xFFFF;
-            let sample_loop_start = file.read_u32().unwrap() & 0xFFFF;
-            let sample_loop_end = file.read_u32().unwrap() & 0xFFFF;
-            let sample_volume = file.read_u8().unwrap();
-            let _ = file.read_u8().unwrap();
-            let sample_packing = file.read_u8().unwrap();
+            let sample_ptr = file.read_u24_s3m()?;
+            let sample_len = file.read_u32()? & 0xFFFF;
+            let sample_loop_start = file.read_u32()? & 0xFFFF;
+            let sample_loop_end = file.read_u32()? & 0xFFFF;
+            let sample_volume = file.read_u8()?;
+            let _ = file.read_u8()?;
+            let sample_packing = file.read_u8()?;
             if sample_packing != 0 {
-                return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other,"Unknown file format")));
+                return Err(SimpleError::new("Unknown file format"));
             }
-            let sample_flags = file.read_u8().unwrap();
-            let c2spd = file.read_u32().unwrap() & 0xFFFF;
-            let _ = file.read_bytes(12).unwrap();
+            let sample_flags = file.read_u8()?;
+            let c2spd = file.read_u32()? & 0xFFFF;
+            let _ = file.read_bytes(12)?;
             let sample_name = file.read_string(28);
-            let sample_sig = file.read_string(4);
-            if sample_sig != "SCRS" {
-//                panic!("unknown sample format!");
-            }
+            let _sample_sig = file.read_string(4);
 
             let (finetune, relative_note) = module_reader::c2spd_to_finetune_relnote(c2spd);
 
@@ -511,7 +496,7 @@
                 name: sample_name.clone().to_string(),
                 data: vec![]
             };
-            sample.read_s3m_sample_data(file, sample_ptr);
+            sample.read_s3m_sample_data(file, sample_ptr)?;
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];

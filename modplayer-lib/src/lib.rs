@@ -1,4 +1,4 @@
-#[macro_use]
+// #[macro_use]
 
 // extern crate lazy_static;
 
@@ -31,7 +31,7 @@ use std::ffi::{c_void, CStr};
 
 use std::sync::atomic::Ordering;
 use std::os::raw::c_char;
-use xmplayer::simple_error::SimpleResult;
+use xmplayer::SimpleResult;
 
 
 pub enum PlayerCmd {
@@ -108,7 +108,7 @@ impl App {
 
 
 #[unsafe(no_mangle)]
-extern fn Modplayer_Stop(app_ptr: *mut c_void) {
+extern "C" fn Modplayer_Stop(app_ptr: *mut c_void) {
     if app_ptr == 0 as *mut c_void {return;}
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
@@ -117,7 +117,7 @@ extern fn Modplayer_Stop(app_ptr: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-extern fn Modplayer_Start(app_ptr: *mut c_void) {
+extern "C" fn Modplayer_Start(app_ptr: *mut c_void) {
     dbg!("Modplayer_Start");
     if app_ptr == 0 as *mut c_void {return;}
     let leaked_pointer = app_ptr as *mut App;
@@ -126,7 +126,7 @@ extern fn Modplayer_Start(app_ptr: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-extern fn Modplayer_SetOrder(app_ptr: *mut c_void, order: u32) {
+extern "C" fn Modplayer_SetOrder(app_ptr: *mut c_void, order: u32) {
     dbg!("Modplayer_SetOrder");
     if app_ptr == 0 as *mut c_void {return;}
     let leaked_pointer = app_ptr as *mut App;
@@ -135,7 +135,7 @@ extern fn Modplayer_SetOrder(app_ptr: *mut c_void, order: u32) {
 }
 
 #[unsafe(no_mangle)]
-extern fn Modplayer_Create(path: *const c_char) -> *mut c_void {
+extern "C" fn Modplayer_Create(path: *const c_char) -> *mut c_void {
          match App::new(unsafe { CStr::from_ptr(path) }.to_str().unwrap().to_string()) {
          Ok(app) => {app}
          Err(_) => {0 as * mut c_void}

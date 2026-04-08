@@ -1,24 +1,22 @@
 use std::io::{Read, Seek, SeekFrom};
-use core::result::Result::{Err, Ok};
 use crate::module_reader::{Patterns, Row, SongData, SongType, FrequencyType};
 use binary_reader_io::BinaryReader;
 use crate::pattern::Pattern;
 use crate::envelope::{EnvelopePoints, EnvelopePoint, Envelope};
 use crate::instrument::{Sample, LoopType, Instrument, VibratoEnvelope};
 use std::iter::FromIterator;
-use crate::simple_error::SimpleResult;
-use simple_error::SimpleError;
+use crate::{SimpleResult, SimpleError};
 use std::io;
 
-fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize) -> Vec<Patterns> {
+fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize) -> SimpleResult<Vec<Patterns>> {
     let mut patterns: Vec<Patterns> = vec![];
     patterns.reserve_exact(pattern_count as usize);
 
     for _pattern_idx in 0..pattern_count {
-        let _pattern_header_size = file.read_u32().unwrap();
-        let _pattern_type = file.read_u8().unwrap();
-        let row_count = file.read_u16().unwrap();
-        let pattern_size = file.read_u16().unwrap();
+        let _pattern_header_size = file.read_u32()?;
+        let _pattern_type = file.read_u8()?;
+        let row_count = file.read_u16()?;
+        let pattern_size = file.read_u16()?;
 
         let mut pos = 0usize;
         if pattern_size == 0 {
@@ -42,28 +40,28 @@ fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usi
             let mut channels: Vec<Pattern> = vec![];
             channels.reserve_exact(channel_count);
             for _channel_idx in 0..channel_count {
-                let flags = file.read_u8().unwrap();
+                let flags = file.read_u8()?;
                 channels.push(if flags & 0x80 == 0x80 {
                     pos += 1;
                     let note = if flags & 1 == 1 {
                         pos += 1;
-                        file.read_u8().unwrap()
+                        file.read_u8()?
                     } else { 0 };
                     let instrument = if flags & 2 == 2 {
                         pos += 1;
-                        file.read_u8().unwrap()
+                        file.read_u8()?
                     } else { 0 };
                     let volume = if flags & 4 == 4 {
                         pos += 1;
-                        file.read_u8().unwrap()
+                        file.read_u8()?
                     } else { 0 };
                     let effect = if flags & 8 == 8 {
                         pos += 1;
-                        file.read_u8().unwrap()
+                        file.read_u8()?
                     } else { 0 };
                     let effect_param = if flags & 16 == 16 {
                         pos += 1;
-                        file.read_u8().unwrap()
+                        file.read_u8()?
                     } else { 0 };
                     Pattern {
                         note,
@@ -74,10 +72,10 @@ fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usi
                     }
                 } else {
                     let note = flags;
-                    let instrument = file.read_u8().unwrap();
-                    let volume = file.read_u8().unwrap();
-                    let effect = file.read_u8().unwrap();
-                    let effect_param = file.read_u8().unwrap();
+                    let instrument = file.read_u8()?;
+                    let volume = file.read_u8()?;
+                    let effect = file.read_u8()?;
+                    let effect_param = file.read_u8()?;
                     pos += 5;
 
                     Pattern {
@@ -92,40 +90,38 @@ fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usi
             rows.push(Row { channels });
         }
         if pattern_size as usize != pos {
-            panic!("size {} != pos {}", pattern_size, pos)
+            return Err(SimpleError::from(format!("size {} != pos {}", pattern_size, pos)));
         }
         patterns.push(Patterns { rows })
     }
 
-    patterns
+    Ok(patterns)
 }
 
-fn read_envelope<R: Read>(file: &mut R) -> EnvelopePoints {
+fn read_envelope<R: Read>(file: &mut R) -> SimpleResult<EnvelopePoints> {
     let mut result = [EnvelopePoint::new(); 12];
 
     for point in &mut result {
-        point.frame = file.read_u16().unwrap();
-        point.value = file.read_u16().unwrap();
+        point.frame = file.read_u16()?;
+        point.value = file.read_u16()?;
     }
-    result
+    Ok(result)
 }
 
-fn read_samples<R: Read>(file: &mut R, sample_count: usize) -> Vec<Sample> {
+fn read_samples<R: Read>(file: &mut R, sample_count: usize) -> SimpleResult<Vec<Sample>> {
     let mut samples: Vec<Sample> = vec![];
     samples.reserve_exact(sample_count as usize);
 
-    for sample_idx in 0..sample_count {
-        println!("Reading sample #{} of {}", sample_idx, sample_count);
-
-        let mut length = file.read_u32().unwrap();
-        let mut loop_start = file.read_u32().unwrap();
-        let mut loop_len = file.read_u32().unwrap();
-        let volume = file.read_u8().unwrap();
-        let finetune = file.read_i8().unwrap();
-        let flags = file.read_u8().unwrap();
-        let panning = file.read_u8().unwrap();
-        let relative_note = file.read_i8().unwrap();
-        let _reserved = file.read_u8().unwrap();
+    for _sample_idx in 0..sample_count {
+        let mut length = file.read_u32()?;
+        let mut loop_start = file.read_u32()?;
+        let mut loop_len = file.read_u32()?;
+        let volume = file.read_u8()?;
+        let finetune = file.read_i8()?;
+        let flags = file.read_u8()?;
+        let panning = file.read_u8()?;
+        let relative_note = file.read_i8()?;
+        let _reserved = file.read_u8()?;
         let name = file.read_string(22);
 
         let bitness = if (flags & 16) == 16 { 16 } else { 8 };
@@ -161,13 +157,13 @@ fn read_samples<R: Read>(file: &mut R, sample_count: usize) -> Vec<Sample> {
     }
 
     for sample in &mut samples {
-        sample.read_data(file);
+        sample.read_data(file)?;
     }
 
-    samples
+    Ok(samples)
 }
 
-fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Vec<Instrument> {
+fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> SimpleResult<Vec<Instrument>> {
     let mut instruments: Vec<Instrument> = vec![];
 
     // Instruments are one based, go figure. We'll add an empty instrument as sample 0.
@@ -176,36 +172,36 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Ve
     instruments.push(Instrument::new());
 
     for instrument_idx in 0..instrument_count {
-        let instrument_pos = file.seek(SeekFrom::Current(0)).unwrap();
-        let header_size = file.read_u32().unwrap();
+        let instrument_pos = file.seek(SeekFrom::Current(0))?;
+        let header_size = file.read_u32()?;
         let name = file.read_string(22);
-        let _instrument_type = file.read_u8().unwrap();
-        let sample_count = file.read_u16().unwrap();
+        let _instrument_type = file.read_u8()?;
+        let sample_count = file.read_u16()?;
 
 
         if sample_count > 0 {
-            let _sample_size = file.read_u32().unwrap();
-            let sample_indexes = file.read_bytes(96).unwrap();
-            let volume_envelope = read_envelope(file);
-            let panning_envelope = read_envelope(file);
-            let volume_points = file.read_u8().unwrap();
-            let panning_points = file.read_u8().unwrap();
-            let volume_sustain_point = file.read_u8().unwrap();
-            let volume_loop_start_point = file.read_u8().unwrap();
-            let volume_loop_end_point = file.read_u8().unwrap();
-            let panning_sustain_point = file.read_u8().unwrap();
-            let panning_loop_start_point = file.read_u8().unwrap();
-            let panning_loop_end_point = file.read_u8().unwrap();
-            let volume_type = file.read_u8().unwrap();
-            let panning_type = file.read_u8().unwrap();
-            let vibrato_type = file.read_u8().unwrap();
-            let vibrato_sweep = file.read_u8().unwrap();
-            let vibrato_depth = file.read_u8().unwrap();
-            let vibrato_rate = file.read_u8().unwrap();
-            let volume_fadeout = file.read_u16().unwrap();
-            let _reserved = file.read_u16().unwrap();
+            let _sample_sig = file.read_string(4);
+            let sample_indexes = file.read_bytes(96)?;
+            let volume_envelope = read_envelope(file)?;
+            let panning_envelope = read_envelope(file)?;
+            let volume_points = file.read_u8()?;
+            let panning_points = file.read_u8()?;
+            let volume_sustain_point = file.read_u8()?;
+            let volume_loop_start_point = file.read_u8()?;
+            let volume_loop_end_point = file.read_u8()?;
+            let panning_sustain_point = file.read_u8()?;
+            let panning_loop_start_point = file.read_u8()?;
+            let panning_loop_end_point = file.read_u8()?;
+            let volume_type = file.read_u8()?;
+            let panning_type = file.read_u8()?;
+            let vibrato_type = file.read_u8()?;
+            let vibrato_sweep = file.read_u8()?;
+            let vibrato_depth = file.read_u8()?;
+            let vibrato_rate = file.read_u8()?;
+            let volume_fadeout = file.read_u16()?;
+            let _reserved = file.read_u16()?;
 
-            file.seek(SeekFrom::Start(instrument_pos + header_size as u64)).unwrap();
+            file.seek(SeekFrom::Start(instrument_pos + header_size as u64))?;
             instruments.push(Instrument {
                 name,
                 idx: (instrument_idx + 1) as u8,
@@ -214,14 +210,14 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Ve
                 panning_envelope: Envelope::create(panning_envelope,panning_points, panning_sustain_point, panning_loop_start_point, panning_loop_end_point,panning_type),
                 vibrato_envelope: VibratoEnvelope::create(vibrato_type, vibrato_sweep, vibrato_depth, vibrato_rate),
                 volume_fadeout,
-                samples: read_samples(file, sample_count as usize)
+                samples: read_samples(file, sample_count as usize)?
             });
         } else {
-            if let Err(e) = file.seek(SeekFrom::Start(instrument_pos + header_size as u64)) { std::panic::panic_any(e); }
+            file.seek(SeekFrom::Start(instrument_pos + header_size as u64))?;
             instruments.push(Instrument::new());
         }
     }
-    instruments
+    Ok(instruments)
 }
 
 fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
@@ -234,7 +230,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     dbg!(&id);
     let name = file.read_string(20);
     dbg!(&name);
-    let sig = file.read_u8().unwrap();
+    let sig = file.read_u8()?;
     if sig != 0x1a {
         return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Not an XM module")));
     }
@@ -242,43 +238,43 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     let tracker_name = file.read_string(20);
     dbg!(&tracker_name);
 
-    let ver = file.read_u16().unwrap();
+    let ver = file.read_u16()?;
     dbg!(format!("{:x}", ver));
 
 //    dbg!(file.seek(SeekFrom::Current(0)));
 
-        let header_size = file.read_u32().unwrap();
+        let header_size = file.read_u32()?;
         dbg!(header_size);
 
-        let mut song_length = file.read_u16().unwrap();
+        let mut song_length = file.read_u16()?;
         dbg!(song_length);
 
-        let restart_position = file.read_u16().unwrap();
+        let restart_position = file.read_u16()?;
         dbg!(restart_position);
 
-        let channel_count = file.read_u16().unwrap();
+        let channel_count = file.read_u16()?;
         dbg!(channel_count);
 
-        let pattern_count = file.read_u16().unwrap();
+        let pattern_count = file.read_u16()?;
         dbg!(pattern_count);
 
-        let instrument_count = file.read_u16().unwrap();
+        let instrument_count = file.read_u16()?;
         dbg!(instrument_count);
 
-        let flags = file.read_u16().unwrap();
+        let flags = file.read_u16()?;
         dbg!(flags);
 
-        let tempo = file.read_u16().unwrap();
+        let tempo = file.read_u16()?;
         dbg!(tempo);
 
-        let bpm = file.read_u16().unwrap();
+        let bpm = file.read_u16()?;
         dbg!(bpm);
         let stream_position;
         if let Ok(pos) = file.seek(SeekFrom::Current(0)) { stream_position = pos; } else { stream_position = 20 }
 
-        let mut pattern_order = file.read_bytes((60 + header_size - stream_position as u32) as usize).unwrap();
+        let mut pattern_order = file.read_bytes((60 + header_size - stream_position as u32) as usize)?;
 
-        let mut patterns = read_patterns(file, pattern_count as usize, channel_count as usize);
+        let mut patterns = read_patterns(file, pattern_count as usize, channel_count as usize)?;
 
         // fix empty patterns at end
         for idx in 0..pattern_order.len() {
@@ -304,7 +300,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
             }; 64]
         });
 
-        let instruments = read_instruments(file, instrument_count as usize);
+        let instruments = read_instruments(file, instrument_count as usize)?;
 
         Ok(SongData {
             id: id.trim().to_string(),
@@ -327,23 +323,14 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     }
 
     pub fn read_xm<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData> {
-        match file.seek(SeekFrom::Start(0))
-        {
-            Ok(_) => {}
-            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek to file start")));}
-        }
+        file.seek(SeekFrom::Start(0))?;
 
-        let file_len = match file.seek(SeekFrom::End(0)) {
-            Ok(m) => { let _ = file.seek(SeekFrom::Start(0)); m }
-            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
-        };
+        let file_len = file.seek(SeekFrom::End(0))?;
+        file.seek(SeekFrom::Start(0))?;
 
-        // println!("file length: {}", file_len);
         if file_len < 60 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "File is too small!")));
+            return Err(SimpleError::new("File is too small!"));
         }
 
-        let song_data = read_xm_header(file);
-
-        song_data
+        read_xm_header(file)
     }

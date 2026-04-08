@@ -1,6 +1,52 @@
 #[macro_use]
 extern crate lazy_static;
-pub extern crate simple_error;
+pub use simple_error::SimpleError as ExternalSimpleError;
+pub use simple_error::SimpleResult as ExternalSimpleResult;
+
+#[derive(Debug, Clone)]
+pub struct SimpleError {
+    message: String,
+}
+
+impl SimpleError {
+    pub fn new(message: &str) -> Self {
+        Self { message: message.to_string() }
+    }
+}
+
+impl std::fmt::Display for SimpleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for SimpleError {}
+
+impl From<std::io::Error> for SimpleError {
+    fn from(e: std::io::Error) -> Self {
+        Self { message: e.to_string() }
+    }
+}
+
+impl From<&str> for SimpleError {
+    fn from(s: &str) -> Self {
+        Self { message: s.to_string() }
+    }
+}
+
+impl From<String> for SimpleError {
+    fn from(s: String) -> Self {
+        Self { message: s }
+    }
+}
+
+impl From<ExternalSimpleError> for SimpleError {
+    fn from(e: ExternalSimpleError) -> Self {
+        Self { message: e.to_string() }
+    }
+}
+
+pub type SimpleResult<T> = Result<T, SimpleError>;
 
 pub const AUDIO_BUF_FRAMES: usize   = 1024;
 pub const AUDIO_BUF_SIZE: usize     = AUDIO_BUF_FRAMES * 2;

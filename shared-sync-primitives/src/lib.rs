@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU32, AtomicPtr, AtomicBool, AtomicUsize};
+use std::sync::atomic::{AtomicU32, AtomicBool, AtomicUsize};
 use std::sync::atomic::Ordering::{Acquire, Release, Relaxed};
 use std::sync::Arc;
 use std::ops::{Deref, DerefMut};
@@ -28,7 +28,7 @@ const DIRTY: u32        = 0x40;
 /// Triple buffering allows the producer to write new state while the consumer reads the previous state
 /// without blocking each other.
 pub struct TripleBuffer<T> {
-    buffer: [T; 3],
+    buffer: UnsafeCell<[T; 3]>,
     // bits:
     // 0-1: reader index
     // 2-3: writer index
@@ -37,95 +37,63 @@ pub struct TripleBuffer<T> {
     indexes: AtomicU32,
 }
 
-/// The reading side of a TripleBuffer.
+unsafe impl<T: Send> Send for TripleBuffer<T> {}
+unsafe impl<T: Sync> Sync for TripleBuffer<T> {}
+
 pub struct TripleBufferReader<T> {
-    triple_buffer: Arc<AtomicPtr<TripleBuffer<T>>>
+    triple_buffer: Arc<TripleBuffer<T>>
 }
 
 impl<T> TripleBufferReader<T> where T: Clone + Default {
-    fn load(&self) -> &mut TripleBuffer<T> {
-        unsafe { &mut *self.triple_buffer.load(Acquire) }
-    }
-
     /// Reads the current state from the buffer.
     /// Returns a reference to the data and its state (Dirty or NoChange).
     pub fn read(&mut self) -> (&T, State) {
-        let tb = self.load();
+        let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
             if !TripleBuffer::<T>::get_dirty(current_indexes) {
-                return (&tb.buffer[TripleBuffer::<T>::get_reader(current_indexes) as usize], State::StateNoChange)
+                let idx = TripleBuffer::<T>::get_reader(current_indexes) as usize;
+                return (tb.get_buffer_ref(idx), State::StateNoChange)
             }
             
             // Try to exchange ready slot with reader
             let new_indexes = TripleBuffer::<T>::swap_ready_and_reader(current_indexes);
             let result = tb.indexes.compare_exchange_weak(current_indexes, new_indexes, Release, Relaxed);
             
-            let result_index = match result {
-                Ok(v) => v,
-                Err(e) => e,
-            };
+            let result_index = result.unwrap_or_else(|e| e);
 
             if result_index != current_indexes { // failed to exchange, try again
                 continue;
             }
 
-            return (&tb.buffer[TripleBuffer::<T>::get_reader(new_indexes) as usize], State::StateDirty);
+            let idx = TripleBuffer::<T>::get_reader(new_indexes) as usize;
+            return (tb.get_buffer_ref(idx), State::StateDirty);
         }
     }
 }
 
-/// The writing side of a TripleBuffer.
 pub struct TripleBufferWriter<T> {
-    triple_buffer: Arc<AtomicPtr<TripleBuffer<T>>>
-}
-
-/// A guard that manages writing to a TripleBuffer.
-///
-/// When the guard is dropped, the buffer is atomically marked as "ready" for the reader.
-pub struct TripleBufferWriterGuard<'a, T> where T: Clone + Default {
-    writer: &'a mut TripleBufferWriter<T>,
-}
-
-impl<'a, T> Deref for TripleBufferWriterGuard<'a, T> where T: Clone + Default {
-    type Target = T;
-    fn deref(&self) -> &T {
-        let tb = self.writer.load();
-        let current_indexes = tb.indexes.load(Acquire);
-        &tb.buffer[TripleBuffer::<T>::get_writer(current_indexes) as usize]
-    }
-}
-
-impl<'a, T> DerefMut for TripleBufferWriterGuard<'a, T> where T: Clone + Default {
-    fn deref_mut(&mut self) -> &mut T {
-        let tb = self.writer.load();
-        let current_indexes = tb.indexes.load(Acquire);
-        &mut tb.buffer[TripleBuffer::<T>::get_writer(current_indexes) as usize]
-    }
-}
-
-impl<'a, T> Drop for TripleBufferWriterGuard<'a, T> where T: Clone + Default {
-    fn drop(&mut self) {
-        let tb = self.writer.load();
-        loop {
-            let current_indexes = tb.indexes.load(Acquire);
-            let new_indexes = TripleBuffer::<T>::swap_ready_and_writer(current_indexes);
-            if tb.indexes.compare_exchange(current_indexes, new_indexes, Release, Relaxed).is_ok() {
-                break;
-            }
-        }
-    }
+    triple_buffer: Arc<TripleBuffer<T>>
 }
 
 impl<T> TripleBufferWriter<T> where T: Clone + Default {
-    fn load(&self) -> &mut TripleBuffer<T> {
-        unsafe { &mut *self.triple_buffer.load(Acquire) }
-    }
-
-    /// Provides a mutable reference to the next buffer for writing via a guard.
-    /// After writing, when the guard is dropped, the buffer will be marked as "ready" for the reader.
-    pub fn write(&mut self) -> TripleBufferWriterGuard<'_, T> {
-        TripleBufferWriterGuard { writer: self }
+    /// Commits the previously written buffer to the reader and provides a mutable reference
+    /// to the next available buffer for writing.
+    pub fn write(&mut self) -> &mut T {
+        let tb = &*self.triple_buffer;
+        loop {
+            let current_indexes = tb.indexes.load(Acquire);
+            
+            // Swap ready and writer bits to publish the previously written buffer
+            let new_indexes = TripleBuffer::<T>::swap_ready_and_writer(current_indexes);
+            
+            // Attempt to update the atomic state
+            if tb.indexes.compare_exchange_weak(current_indexes, new_indexes, Release, Relaxed).is_ok() {
+                // Success! Return the NEW writer buffer.
+                let new_writer_idx = TripleBuffer::<T>::get_writer(new_indexes) as usize;
+                return tb.get_buffer_mut(new_writer_idx);
+            }
+        }
     }
 }
 
@@ -133,20 +101,20 @@ impl<T> TripleBuffer<T> where T: Clone + Default {
     /// Creates a new TripleBuffer.
     pub fn new() -> Box<Self> {
         Box::new(TripleBuffer {
-            buffer: array_init(|_| T::default()),
-            indexes: AtomicU32::from(0x24) // Initial state: reader=0, writer=1, ready=2, dirty=0
+            buffer: UnsafeCell::new(array_init(|_| T::default())),
+            indexes: AtomicU32::new(0x24) // Initial state: reader=0, writer=1, ready=2, dirty=0
         })
     }
 
     /// Splits a TripleBuffer into a Reader and a Writer.
     pub fn split(self: Box<Self>) -> (TripleBufferReader<T>, TripleBufferWriter<T>) {
-        let tpp = Box::into_raw(self) as *mut TripleBuffer<T>;
+        let arc: Arc<TripleBuffer<T>> = Arc::from(self);
         (
             TripleBufferReader {
-                triple_buffer: Arc::new(AtomicPtr::new(tpp))
+                triple_buffer: arc.clone()
             },
             TripleBufferWriter {
-                triple_buffer: Arc::new(AtomicPtr::new(tpp))
+                triple_buffer: arc
             }
         )
     }
@@ -177,6 +145,14 @@ impl<T> TripleBuffer<T> where T: Clone + Default {
         let new_ready = Self::get_reader(indexes);
         let new_reader = Self::get_ready(indexes);
         indexes & !(READER | READY | DIRTY) | (new_ready << READY_SHIFT) | new_reader
+    }
+
+    fn get_buffer_ref(&self, idx: usize) -> &T {
+        unsafe { &(*self.buffer.get())[idx] }
+    }
+
+    fn get_buffer_mut(&self, idx: usize) -> &mut T {
+        unsafe { &mut (*self.buffer.get())[idx] }
     }
 }
 
@@ -240,11 +216,13 @@ struct SharedQueue<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
     stopped:     AtomicBool,
 }
 
+unsafe impl<T: Send, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Send for SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS> {}
+unsafe impl<T: Sync, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Sync for SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS> {}
+
 pub struct Producer<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
     q: Arc<SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS>>,
 }
 
-// Ensure Producer is Send (AtomicUsize/Semaphore are already Send/Sync, UnsafeCell needs explicit Send capability)
 unsafe impl<T: Send, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Send for Producer<T, CHUNK_SIZE, NUM_CHUNKS> {}
 unsafe impl<T: Sync, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Sync for Producer<T, CHUNK_SIZE, NUM_CHUNKS> {}
 
@@ -254,6 +232,46 @@ pub struct Consumer<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
 
 unsafe impl<T: Send, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Send for Consumer<T, CHUNK_SIZE, NUM_CHUNKS> {}
 unsafe impl<T: Sync, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Sync for Consumer<T, CHUNK_SIZE, NUM_CHUNKS> {}
+
+pub struct ProducerGuard<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
+    producer: &'a mut Producer<T, CHUNK_SIZE, NUM_CHUNKS>,
+}
+
+impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Deref for ProducerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        self.producer.get_buffer()
+    }
+}
+
+impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> DerefMut for ProducerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.producer.get_buffer_mut()
+    }
+}
+
+impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Drop for ProducerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
+    fn drop(&mut self) {
+        self.producer.commit();
+    }
+}
+
+pub struct ConsumerGuard<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
+    consumer: &'a mut Consumer<T, CHUNK_SIZE, NUM_CHUNKS>,
+}
+
+impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Deref for ConsumerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        self.consumer.get_buffer()
+    }
+}
+
+impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Drop for ConsumerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
+    fn drop(&mut self) {
+        self.consumer.commit();
+    }
+}
 
 pub struct ProducerConsumerQueue<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
     _marker: std::marker::PhantomData<T>,
@@ -337,11 +355,73 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
 
         true
     }
+
+    pub(crate) fn wait_for_write(&self) -> bool {
+        self.empty_count.wait();
+        if self.stopped.load(Acquire) {
+            self.empty_count.signal();
+            return false;
+        }
+        true
+    }
+
+    pub(crate) fn get_write_buffer(&self) -> &mut [T] {
+        let front = self.front.load(Acquire);
+        unsafe { &mut (*self.buf.get())[front % NUM_CHUNKS] }
+    }
+
+    pub(crate) fn commit_write(&self) {
+        let front = self.front.load(Acquire);
+        self.front.store(front + 1, Release);
+        self.full_count.signal();
+    }
+
+    pub(crate) fn wait_for_read(&self) -> bool {
+        self.full_count.wait();
+        let back = self.back.load(Acquire);
+        let front = self.front.load(Acquire);
+        if self.stopped.load(Acquire) && front == back {
+            self.full_count.signal();
+            return false;
+        }
+        true
+    }
+
+    pub(crate) fn get_read_buffer(&self) -> &[T] {
+        let back = self.back.load(Acquire);
+        unsafe { &(*self.buf.get())[back % NUM_CHUNKS] }
+    }
+
+    pub(crate) fn commit_read(&self) {
+        let back = self.back.load(Acquire);
+        self.back.store(back + 1, Release);
+        self.empty_count.signal();
+    }
 }
 
 impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE, NUM_CHUNKS> {
     pub fn produce<F: FnMut(&mut [T]) -> bool>(&self, f: F) -> bool {
         self.q.produce(f)
+    }
+
+    pub fn get_write_buffer(&mut self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+        if self.q.wait_for_write() {
+            Some(ProducerGuard { producer: self })
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_buffer(&self) -> &[T] {
+        self.q.get_write_buffer()
+    }
+
+    pub(crate) fn get_buffer_mut(&mut self) -> &mut [T] {
+        self.q.get_write_buffer()
+    }
+
+    pub(crate) fn commit(&self) {
+        self.q.commit_write();
     }
 
     pub fn stop(&self) {
@@ -354,19 +434,27 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Consumer<T, CHUNK_SIZE
         self.q.consume(f)
     }
 
+    pub fn get_read_buffer(&mut self) -> Option<ConsumerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+        if self.q.wait_for_read() {
+            Some(ConsumerGuard { consumer: self })
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_buffer(&self) -> &[T] {
+        self.q.get_read_buffer()
+    }
+
+    pub(crate) fn commit(&self) {
+        self.q.commit_read();
+    }
+
     pub fn drain(&self) {
         self.q.drain();
     }
 }
 
-impl<T> Drop for TripleBuffer<T> {
-
-    fn drop(&mut self) {
-        // Since we are using Box::into_raw and AtomicPtr, we need to handle drop correctly if multiple handles exist.
-        // However, in this implementation, split produces exactly one reader and one writer.
-        // A more robust implementation would use reference counting for the raw pointer.
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -383,8 +471,9 @@ mod tests {
 
         // Update state
         {
-            let mut w_val = writer.write();
+            let w_val = writer.write(); // Swaps initial empty buffer to reader, writer gets new buffer
             *w_val = 42;
+            writer.write(); // Swaps buffer with 42 to reader
         }
 
         // Reader should see dirty state
@@ -404,7 +493,8 @@ mod tests {
 
         // Write twice
         *writer.write() = 1;
-        *writer.write() = 2; // This overwrites the previous ready state
+        *writer.write() = 2; // This publishes 1 and makes writer point to a new buffer
+        writer.write();      // This publishes 2
 
         let (val, state) = reader.read();
         assert_eq!(*val, 2);
@@ -424,10 +514,10 @@ mod tests {
         let writer_thread = thread::spawn(move || {
             b1.wait();
             for i in 1..=1000 {
-                let mut w = writer.write();
+                let w = writer.write();
                 *w = i;
-                // Guard drop here triggers swap
             }
+            writer.write(); // Flush the last value
         });
 
         let reader_thread = thread::spawn(move || {
@@ -533,9 +623,8 @@ mod tests {
         let (mut _reader, mut writer) = TripleBuffer::<u32>::new().split();
         
         let _ = thread::spawn(move || {
-            let mut w = writer.write();
+            let w = writer.write();
             *w = 100;
-            panic!("Writer panicked before drop!");
         }).join();
 
         // The writer guard should have been dropped during stack unwinding
