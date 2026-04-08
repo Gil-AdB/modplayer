@@ -5,7 +5,7 @@ mod leak;
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::song::{PlayData, Song, PlaybackCmd, CallbackState};
 use crate::module_reader::{SongData, read_module};
-use shared_sync_primitives::{ProducerConsumerQueue, Producer, Consumer};
+use shared_sync_primitives::{ProducerConsumerQueue};
 use std::sync::{mpsc, Mutex, Arc};
 use core::option::Option::None;
 use core::option::Option;
@@ -16,7 +16,7 @@ use shared_sync_primitives::{TripleBufferReader, TripleBuffer, State::StateNoCha
 use std::sync::mpsc::{Sender, Receiver};
 use std::ops::{DerefMut};
 use crate::instrument::Instrument;
-use simple_error::{SimpleResult};
+use crate::{SimpleResult};
 use crate::song::InterleavedBufferAdaptar;
 use crate::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS, AudioConsumer, AudioProducer};
 
@@ -103,11 +103,10 @@ impl SongState {
     fn callback(&mut self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();
-        self.q.produce(|buf: &mut [f32]| -> bool {
-            let mut adaptar = InterleavedBufferAdaptar{buf};
-            if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { return false; }
-            true
-        });
+        while let Some(mut buf) = self.q.get_write_buffer() {
+            let mut adaptar = InterleavedBufferAdaptar{buf: &mut *buf};
+            if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { break; }
+        }
         self.stopped.store(true, Ordering::Release);
         self.q.stop();
     }

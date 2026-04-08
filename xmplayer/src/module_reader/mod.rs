@@ -1,5 +1,5 @@
 use std::{fmt, fs};
-use simple_error::{SimpleResult, SimpleError};
+use crate::{SimpleResult};
 use crate::instrument::{Instrument, Sample};
 use crate::module_reader::module::read_mod;
 use crate::module_reader::s3m::read_s3m;
@@ -116,17 +116,7 @@ impl SongData {
 
 
 pub fn read_module(path: &str) -> SimpleResult<SongData> {
-
-    // let f = match File::open(path) {
-    //     Ok(f) => {f}
-    //     Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "failed to open the file")));}
-    // };
-
-    let data = match fs::read(path) {
-        Ok(d) => {d}
-        Err(e) => {return Err(SimpleError::from(e));}
-    };
-
+    let data = fs::read(path)?;
     open_module(data.as_slice())
 }
 
