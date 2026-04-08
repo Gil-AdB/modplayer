@@ -353,6 +353,7 @@ impl EnvelopeState {
 }
 
 #[derive(Clone,Copy,Debug)]
+#[allow(dead_code)]
 pub(crate) struct VibratoEnvelopeState {
     vibrato_sweep:  u16,
     vibrato_amp:    u16,
@@ -370,6 +371,7 @@ impl VibratoEnvelopeState {
 
     // This probably makes sense somehow, but I'm too tired to care
     // taken from ft2-clone
+    #[allow(dead_code)]
     pub(crate) fn handle(&mut self, env: &VibratoEnvelope, channel_sustained: bool) -> u16 {
         let mut _auto_vibrato_amp;
         if env.vibrato_depth > 0 {

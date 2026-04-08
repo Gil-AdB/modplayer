@@ -98,6 +98,7 @@ use crate::pattern::Pattern;
         Ok(patterns)
     }
 
+    #[allow(dead_code)]
     fn read_envelope<R: Read>(file: &mut R) -> EnvelopePoints {
         let mut result = [EnvelopePoint::new(); 12];
 
@@ -108,6 +109,7 @@ use crate::pattern::Pattern;
         result
     }
 
+    #[allow(dead_code)]
     fn read_samples<R: Read>(file: &mut R, sample_count: usize) -> SimpleResult<Vec<Sample>> {
         let mut samples: Vec<Sample> = vec![];
         samples.reserve_exact(sample_count as usize);

@@ -39,6 +39,7 @@ pub enum PlayerCmd {
     NewSong(String)
 }
 
+#[allow(dead_code)]
 struct AudioCB {
     q: SongHandle,
 }
@@ -59,6 +60,7 @@ impl AudioCallback for AudioCB {
     }
 }
 
+#[allow(dead_code)]
 struct App {
     song_row:       usize,
     song_tick:      u32,
@@ -113,7 +115,7 @@ extern "C" fn Modplayer_Stop(app_ptr: *mut c_void) {
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
     self_.close_audio();
-    unsafe { Box::from_raw(self_); }
+    let _ = unsafe { Box::from_raw(self_) };
 }
 
 #[unsafe(no_mangle)]
