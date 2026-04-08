@@ -8,6 +8,19 @@
     use std::io;
     use crate::module_reader;
 
+    pub(crate) trait S3MBinaryReader: BinaryReader {
+        fn read_u24_s3m(&mut self) -> io::Result<u32>;
+    }
+
+    impl<R: BinaryReader> S3MBinaryReader for R {
+        fn read_u24_s3m(&mut self) -> io::Result<u32> {
+            let mut buf = [0u8; 3];
+            self.read_exact(&mut buf)?;
+            // S3M mixed endianness: High byte followed by Little-Endian word
+            Ok(((buf[0] as u32) << 16) | ((buf[2] as u32) << 8) | (buf[1] as u32))
+        }
+    }
+
     pub fn read_s3m<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
         if let Err(_res) = file.seek(SeekFrom::Start(0)) {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't seek"))); }
 
@@ -505,4 +518,17 @@
             instruments.push(instrument);
         }
         Ok(instruments)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::io::Cursor;
+
+        #[test]
+        fn test_read_u24_s3m() {
+            let data = vec![0x01, 0x02, 0x03];
+            let mut reader = Cursor::new(&data);
+            assert_eq!(reader.read_u24_s3m().unwrap(), 0x010302);
+        }
     }

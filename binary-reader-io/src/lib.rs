@@ -34,20 +34,9 @@ pub trait BinaryReader: Read {
     fn read_u24(&mut self) -> Result<u32> {
         ReadBytesExt::read_u24::<LittleEndian>(self)
     }
-
     /// Reads a 24-bit unsigned integer (Big Endian).
     fn read_u24_be(&mut self) -> Result<u32> {
         ReadBytesExt::read_u24::<BigEndian>(self)
-    }
-
-    /// Reads an S3M-style 24-bit parapointer.
-    /// This is a high byte followed by a 16-bit little-endian word.
-    fn read_u24_s3m(&mut self) -> Result<u32> {
-        let mut buf = [0u8; 3];
-        self.read_exact(&mut buf)?;
-        // Original logic: (buf[0] << 16) | (buf[2] << 8) | buf[1]
-        // buf[0] is High, buf[1] is Low-Low, buf[2] is Low-High
-        Ok(((buf[0] as u32) << 16) | ((buf[2] as u32) << 8) | (buf[1] as u32))
     }
 
     /// Reads a 32-bit unsigned integer (Little Endian).
@@ -133,9 +122,6 @@ mod tests {
         // u24 LE/BE
         assert_eq!(BinaryReader::read_u24(&mut Cursor::new(&data)).unwrap(), 0x030201);
         assert_eq!(BinaryReader::read_u24_be(&mut Cursor::new(&data)).unwrap(), 0x010203);
-        
-        // u24 S3M mixed
-        assert_eq!(BinaryReader::read_u24_s3m(&mut Cursor::new(&data)).unwrap(), 0x010302);
         
         // u32 LE/BE
         assert_eq!(BinaryReader::read_u32(&mut Cursor::new(&data)).unwrap(), 0x04030201);
