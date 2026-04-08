@@ -463,7 +463,7 @@
             file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16)).unwrap();
             let _type_ = file.read_u8().unwrap();
             let _dos_name = file.read_string(12);
-            let sample_ptr = file.read_u24().unwrap();
+            let sample_ptr = file.read_u24_s3m().unwrap();
             let sample_len = file.read_u32().unwrap() & 0xFFFF;
             let sample_loop_start = file.read_u32().unwrap() & 0xFFFF;
             let sample_loop_end = file.read_u32().unwrap() & 0xFFFF;
