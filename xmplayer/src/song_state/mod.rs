@@ -88,6 +88,10 @@ impl SongState {
         if let Ok(_) = self.tx.send(PlaybackCmd::SetPosition(order)) {}
     }
 
+    pub fn set_loop(&mut self, loop_song: bool) {
+        if let Ok(_) = self.tx.send(PlaybackCmd::SetLoop(loop_song)) {}
+    }
+
     fn callback(&mut self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();

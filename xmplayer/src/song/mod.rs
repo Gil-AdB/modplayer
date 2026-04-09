@@ -160,6 +160,7 @@ pub enum PlaybackCmd {
     SpeedDown,
     SpeedReset,
     SetPosition(u32),
+    SetLoop(bool),
 }
 
 
@@ -353,6 +354,8 @@ pub struct Song {
     tick_state:                 TickState,
     song_message:               String,
     user_data:                  HashMap<String, UserData>,
+    loop_song:                  bool,
+    visited_order_indices:      Vec<bool>,
 }
 
 impl Song {
@@ -444,7 +447,13 @@ impl Song {
                 current_buf_position: 0,
                 current_tick_position: 0
             },
-            user_data: HashMap::new()
+            user_data: HashMap::new(),
+            loop_song: true,
+            visited_order_indices: {
+                let mut v = vec![false; song_data.pattern_order.len()];
+                if v.len() > 0 { v[0] = true; }
+                v
+            },
         }
     }
 
@@ -704,7 +713,12 @@ impl Song {
                         self.pattern_change.pattern = order as u8;
                         self.pattern_change.pattern_jump = true;
                         self.pattern_change.row = 0;
+                        self.visited_order_indices.fill(false);
                         self.next_tick();
+                    }
+                    PlaybackCmd::SetLoop(loop_song) => {
+                        self.loop_song = loop_song;
+                        self.visited_order_indices.fill(false);
                     }
                 }
             }
@@ -719,19 +733,21 @@ impl Song {
 
     fn next_tick(&mut self) -> bool {
         if self.song_position >= self.song_data.song_length as usize {
-            return false;
+            if self.loop_song {
+                self.song_position = self.song_data.restart_position as usize;
+            } else {
+                return false;
+            }
         }
 
         self.tick += 1;
         if self.tick >= self.speed {
+            let previous_position = self.song_position;
             if self.pattern_change.pattern_break || self.pattern_change.pattern_jump {
                 if !self.pattern_change.pattern_jump {
                     self.next_pattern();
                 } else {
                     self.song_position = self.pattern_change.pattern as usize;
-                    if self.song_position >=  self.song_data.song_length as usize {
-                        return false;
-                    }
                 }
                 self.row = self.pattern_change.row as usize;
             } else {
@@ -741,8 +757,24 @@ impl Song {
                     self.next_pattern();
                 }
             }
-            // if self.song_position >= self.song_data.song_length as usize { self.song_position = self.song_data.restart_position as usize; }
-            if self.song_position >= self.song_data.song_length as usize { return false; }
+
+            if self.song_position >= self.song_data.song_length as usize {
+                if self.loop_song {
+                    self.song_position = self.song_data.restart_position as usize;
+                } else {
+                    return false;
+                }
+            }
+
+            if !self.loop_song && self.song_position != previous_position {
+                if self.song_position < self.visited_order_indices.len() && self.visited_order_indices[self.song_position] {
+                    return false;
+                }
+                if self.song_position < self.visited_order_indices.len() {
+                    self.visited_order_indices[self.song_position] = true;
+                }
+            }
+
             self.tick = 0;
             self.pattern_change.reset();
         }
@@ -752,6 +784,9 @@ impl Song {
     fn next_pattern(&mut self) {
         if !self.loop_pattern {
             self.song_position = self.song_position + 1;
+            if self.loop_song && self.song_position >= self.song_data.song_length as usize {
+                self.song_position = self.song_data.restart_position as usize;
+            }
         }
     }
 
@@ -1192,4 +1227,91 @@ impl Song {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::module_reader::{SongData, SongType, FrequencyType, Patterns, Row};
+    use crate::triple_buffer::TripleBuffer;
+    use crate::pattern::Pattern;
+    use std::sync::mpsc;
+
+    fn create_mock_song_data() -> SongData {
+        SongData {
+            id: "MOCK".to_string(),
+            name: "Mock Song".to_string(),
+            song_type: SongType::MOD,
+            tracker_name: "Mock Tracker".to_string(),
+            song_length: 2,
+            restart_position: 0,
+            channel_count: 1,
+            patterns: vec![
+                Patterns { rows: vec![Row { channels: vec![Pattern::new()] }; 1] },
+                Patterns { rows: vec![Row { channels: vec![Pattern::new()] }; 1] },
+            ],
+            instrument_count: 1,
+            frequency_type: FrequencyType::AMIGA,
+            tempo: 1,
+            bpm: 125,
+            pattern_order: vec![0, 1],
+            instruments: vec![Instrument::new()],
+            use_amiga: true,
+            song_message: "".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_song_finishes_when_loop_off() {
+        let song_data = create_mock_song_data();
+        let (_reader, writer) = TripleBuffer::new().split();
+        let mut song = Song::new(&song_data, writer, 44100.0);
+        song.loop_song = false;
+
+        // Pattern 0, Row 0, Tick 0 is initial state (effectively)
+        // next_tick advances it.
+        // speed is 1, so every next_tick call advances a row/pattern.
+
+        // Advance to Pattern 1, Row 0
+        assert!(song.next_tick());
+        assert_eq!(song.song_position, 1);
+
+        // Advance to Pattern 2 (End) -> should return false because !loop_song and it's the end
+        assert!(!song.next_tick());
+    }
+
+    #[test]
+    fn test_song_loops_when_loop_on() {
+        let song_data = create_mock_song_data();
+        let (_reader, writer) = TripleBuffer::new().split();
+        let mut song = Song::new(&song_data, writer, 44100.0);
+        song.loop_song = true;
+
+        // Advance to Pattern 1, Row 0
+        assert!(song.next_tick());
+        assert_eq!(song.song_position, 1);
+
+        // Advance to Pattern 2 (End) -> should loop to restart_position (0)
+        assert!(song.next_tick());
+        assert_eq!(song.song_position, 0);
+    }
+
+    #[test]
+    fn test_song_finishes_on_backward_jump_when_loop_off() {
+        let song_data = create_mock_song_data();
+        let (_reader, writer) = TripleBuffer::new().split();
+        let mut song = Song::new(&song_data, writer, 44100.0);
+        song.loop_song = false;
+
+        // Advance to Pattern 1, Row 0
+        assert!(song.next_tick());
+        assert_eq!(song.song_position, 1);
+
+        // Mock a pattern jump back to 0
+        song.pattern_change.pattern = 0;
+        song.pattern_change.pattern_jump = true;
+
+        // Advance -> should return false because 0 was already visited
+        assert!(!song.next_tick());
+    }
 }

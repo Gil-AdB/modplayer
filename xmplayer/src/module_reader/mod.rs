@@ -19,7 +19,7 @@ mod stm;
 mod it;
 
 #[derive(Debug, Copy, Clone)]
-enum SongType {
+pub(crate) enum SongType {
     XM,
     MOD,
     S3M,
@@ -28,7 +28,7 @@ enum SongType {
 }
 
 #[derive(Debug, Copy, Clone)]
-enum FrequencyType {
+pub(crate) enum FrequencyType {
     AMIGA,
     LINEAR
 }
@@ -86,16 +86,16 @@ impl Patterns {
 
 #[derive(Debug, Clone)]
 pub struct SongData {
-                    id:                 String,
+    pub(crate)      id:                 String,
    pub(crate)       name:               String,
-                    song_type:          SongType,
-                    tracker_name:       String,
+    pub(crate)      song_type:          SongType,
+    pub(crate)      tracker_name:       String,
     pub(crate)      song_length:        u16,
     pub(crate)      restart_position:   u16,
     pub(crate)      channel_count:      u16,
     pub(crate)      patterns:           Vec<Patterns>,
-                    instrument_count:   u16,
-                    frequency_type:     FrequencyType,
+    pub(crate)      instrument_count:   u16,
+    pub(crate)      frequency_type:     FrequencyType,
     pub(crate)      tempo:              u16,
     pub(crate)      bpm:                u16,
     pub(crate)      pattern_order:      Vec<u8>,
