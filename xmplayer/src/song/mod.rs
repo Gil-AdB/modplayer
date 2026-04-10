@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::num::Wrapping;
 use std::borrow::Borrow;
 
-struct BPM {
+pub struct BPM {
     pub bpm:                    u32,
     tick_duration_in_ms:        f32,
     tick_duration_in_frames:    usize,
@@ -40,7 +40,7 @@ impl BPM {
     }
 }
 
-struct PatternChange {
+pub struct PatternChange {
     pattern_break:  bool,
     pattern_jump:   bool,
     row:            u8,
@@ -100,8 +100,8 @@ pub fn fill<T>(arr: &mut [T], value: T)
 
 
 
-pub(crate) struct GlobalVolume {
-    pub(crate) volume:            u32,
+pub struct GlobalVolume {
+    pub volume:            u32,
     pub(crate) last_volume_slide: u8,
     pub(crate) song_type:         Option<SongType>,
 }
@@ -238,6 +238,7 @@ pub struct PlayData {
     pub channel_status:                     Vec<ChannelStatus>,
     pub filter:                             FilterType,
     pub song_message:                       String,
+    pub virtual_channels:                   usize,
     pub user_data:                          HashMap<String, UserData>,
 }
 
@@ -257,6 +258,7 @@ impl Default for PlayData {
             channel_status: vec![],
             filter: FilterType::Cubic,
             song_message: "".to_string(),
+            virtual_channels: 0,
             user_data: Default::default()
         }
     }
@@ -268,7 +270,7 @@ enum BufferState {
     NextTick,
 }
 
-struct TickState {
+pub struct TickState {
     state:                  BufferState,
     current_buf_position:   usize,
     current_tick_position:  usize,
@@ -377,12 +379,40 @@ pub struct Song {
     pub frequency_tables:           Box<AudioTables>,
     pub triple_buffer_writer:       TripleBufferWriter<PlayData>,
     pub tick_state:                 TickState,
-    #[allow(dead_code)]
     pub song_message:               String,
     pub user_data:                  HashMap<String, UserData>,
+    pub(crate) old_effects:         bool,
+    pub(crate) compatible_g:        bool,
 }
 
 impl Song {
+    fn apply_it_action(voices: &mut [Voice], voice_idx: usize, action: u8, instrument: &Instrument) {
+        let voice = &mut voices[voice_idx];
+        match action {
+            0 => { // Cut
+                voice.on = false;
+                voice.volume.output_volume = 0.0;
+            }
+            1 => { // Continue
+                // Do nothing
+            }
+            2 => { // Note Off
+                if instrument.volume_envelope.on {
+                    voice.sustained = false;
+                } else {
+                    // IT: If no volume envelope is active, Note Off = Cut
+                    voice.on = false;
+                    voice.volume.output_volume = 0.0;
+                }
+            }
+            3 => { // Note Fade
+                voice.sustained = false;
+                voice.volume.fadeout_speed = (instrument.volume_fadeout as i32) << 6;
+            }
+            _ => {}
+        }
+    }
+
     // fn get_buffer(&mut self) -> Vec<f32> {
     //     let mut result: Vec<f32> = vec![];
     //     result.reserve_exact(BUFFER_SIZE);
@@ -436,10 +466,12 @@ impl Song {
             speed: song_data.tempo as u32,
             bpm: BPM::new(song_data.bpm as u32, sample_rate as f32),
             global_volume: GlobalVolume::new(),
-            song_message: "".to_string(),
+            song_message: song_data.song_message.clone(),
             song_data: song_data.clone(),
             channels,
             voices,
+            old_effects: song_data.old_effects,
+            compatible_g: song_data.compatible_g,
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
@@ -482,6 +514,17 @@ impl Song {
         play_data.channel_status.clear();
         play_data.filter                    = self.filter;
         play_data.user_data                 = self.user_data.clone();
+
+        let active_voices = self.voices.iter().filter(|v| v.on).count();
+        let mut host_voices = 0;
+        for channel in &self.channels {
+            if let Some(v_idx) = channel.voice_idx {
+                if self.voices[v_idx].on {
+                    host_voices += 1;
+                }
+            }
+        }
+        play_data.virtual_channels = active_voices.saturating_sub(host_voices);
 
         for (i, channel) in self.channels.iter().enumerate() {
             let (instrument, sample, volume, envelope_vol, global_vol, fadeout_vol, sample_position, note_str, period, final_panning, instrument_name) = 
@@ -823,23 +866,65 @@ impl Song {
                 }
 
                 if is_note_valid(note) {
-                    // New Note Action (NNA) logic
-                    if let Some(old_v_idx) = channel.voice_idx {
-                        let instrument = &instruments[voices[old_v_idx].instrument];
-                        match instrument.nna {
-                            0 => { // Note Cut
-                                voices[old_v_idx].on = false;
+                    // IT Duplicate Check (DCT/DCA)
+                    if let SongType::IT = self.song_data.song_type {
+                        if inst_idx != 0 {
+                            let new_inst = &instruments[inst_idx];
+                            let mut dca_applied = false;
+
+                            // Check all active voices for duplicates on this host channel
+                            for vi in 0..voices.len() {
+                                let v = &mut voices[vi];
+                                if !v.on || v.channel_idx != i { continue; }
+
+                                match new_inst.dct {
+                                    1 => { // Note match
+                                        if v.last_played_note == note {
+                                            Song::apply_it_action(voices, vi, new_inst.dca, new_inst);
+                                            dca_applied = true;
+                                        }
+                                    }
+                                    2 => { // Sample match
+                                        // Find sample index for new note
+                                        let sample_idx = if (note as usize - 1) < new_inst.sample_indexes.len() {
+                                            new_inst.sample_indexes[note as usize - 1].1
+                                        } else { 0 };
+                                        
+                                        if sample_idx > 0 && v.sample == (sample_idx - 1) as usize && v.instrument == inst_idx {
+                                            Song::apply_it_action(voices, vi, new_inst.dca, new_inst);
+                                            dca_applied = true;
+                                        }
+                                    }
+                                    3 => { // Instrument match
+                                        if v.instrument == inst_idx {
+                                            Song::apply_it_action(voices, vi, new_inst.dca, new_inst);
+                                            dca_applied = true;
+                                        }
+                                    }
+                                    _ => {}
+                                }
                             }
-                            1 => { // Note Off
-                                voices[old_v_idx].key_off(instruments, pattern.is_note_delay(self.song_data.song_type));
+
+                            // If no DCT matched, apply NNA to current voice if it exists
+                            if !dca_applied {
+                                if let Some(v_idx) = channel.voice_idx {
+                                    if voices[v_idx].on {
+                                        Song::apply_it_action(voices, v_idx, new_inst.nna, new_inst);
+                                    }
+                                }
                             }
-                            2 => { // Note Fade
+                        }
+                    } else if let Some(old_v_idx) = channel.voice_idx {
+                        // Standard XM/S3M/MOD NNA (Cut/Off/Fade) - simplified
+                        let instrument_nna = &instruments[voices[old_v_idx].instrument];
+                        match instrument_nna.nna {
+                            0 => { voices[old_v_idx].on = false; }
+                            1 => { voices[old_v_idx].key_off(instruments, pattern.is_note_delay(self.song_data.song_type)); }
+                            2 => {
                                 voices[old_v_idx].sustained = false;
-                                voices[old_v_idx].volume.fadeout_speed = instruments[voices[old_v_idx].instrument].volume_fadeout as i32;
+                                voices[old_v_idx].volume.fadeout_speed = (instrument_nna.volume_fadeout as i32) << 6;
                             }
-                            _ => { // Note Off (default)
-                                voices[old_v_idx].key_off(instruments, pattern.is_note_delay(self.song_data.song_type));
-                            }
+                            _ => { voices[old_v_idx].key_off(instruments, pattern.is_note_delay(self.song_data.song_type)); }
                         }
                     }
 
@@ -847,10 +932,13 @@ impl Song {
                     let note_idx = (note - 1) as usize;
                     let mut trigger_voice = false;
                     let mut final_sample_idx = 0;
+                    let mut mapped_note = note;
 
-                    if note_idx < instruments[inst_idx].sample_indexes.len() {
-                        let sample_idx = instruments[inst_idx].sample_indexes[note_idx].1 as usize;
+                    if inst_idx != 0 && note_idx < instruments[inst_idx].sample_indexes.len() {
+                        let it_mapping = instruments[inst_idx].sample_indexes[note_idx];
+                        let sample_idx = it_mapping.1 as usize;
                         if let SongType::IT = self.song_data.song_type {
+                            mapped_note = it_mapping.0 + 1; // IT notes are 0..119, Pattern notes are 1..120
                             if sample_idx > 0 {
                                 final_sample_idx = sample_idx - 1;
                                 if final_sample_idx < instruments[inst_idx].samples.len() {
@@ -869,19 +957,19 @@ impl Song {
                         // Find free voice or steal quietest
                         let mut v_idx = 0;
                         let mut found = false;
-                        for (vi, v) in voices.iter().enumerate() {
-                            if !v.on { v_idx = vi; found = true; break; }
+                        for vi in 0..voices.len() {
+                            if !voices[vi].on { v_idx = vi; found = true; break; }
                         }
                         if !found {
-                            // Steal quietest voice
                             let mut min_vol = 1_000_000.0f32;
-                            for (vi, v) in voices.iter().enumerate() {
-                                if v.volume.output_volume < min_vol {
-                                    min_vol = v.volume.output_volume;
+                            for vi in 0..voices.len() {
+                                if voices[vi].volume.output_volume < min_vol {
+                                    min_vol = voices[vi].volume.output_volume;
                                     v_idx = vi;
                                 }
                             }
                         }
+                        
                         let mut clone_voice = None;
                         if pattern.instrument == 0 {
                             if let Some(old_idx) = channel.voice_idx {
@@ -894,6 +982,7 @@ impl Song {
                         voice.channel_idx = i;
                         voice.instrument = inst_idx;
                         voice.sample = final_sample_idx;
+                        voice.last_played_note = mapped_note;
                         
                         if let Some(old_voice) = clone_voice {
                             voice.volume = old_voice.volume;
@@ -919,29 +1008,30 @@ impl Song {
                         channel.last_played_note = note;
                         channel.on = true;
                         
+                        // We need to borrow voice again because trigger_note might have changed it
                         let voice = &mut voices[v_idx];
                         let sample = &instruments[inst_idx].samples[final_sample_idx];
-                        let real_note = (note as i16 + sample.relative_note as i16) as u8;
-                        channel.note.set_note(real_note, sample.finetune, note, self.frequency_tables.borrow());
+                        voice.surround = sample.surround;
+                        let real_note = (mapped_note as i16 + sample.relative_note as i16) as u8;
+                        channel.note.set_note(real_note, sample.finetune, mapped_note, self.frequency_tables.borrow());
                         channel.update_frequency_voice(voice, self.rate, false, self.frequency_tables.borrow());
                     }
                 }
 
-                let is_note_off = match self.song_data.song_type {
-                    SongType::IT => note == 255,
-                    _ => note == 97,
-                };
-
-                if is_note_off { // Note off
-                   if let Some(v_idx) = channel.voice_idx {
-                       voices[v_idx].key_off(&instruments, pattern.is_note_delay(self.song_data.song_type));
-                   }
-                }
-                
-                if self.song_data.song_type == SongType::IT && note == 254 { // Note cut (IT only)
+                if note == 97 { // Note Off
+                    if let Some(v_idx) = channel.voice_idx {
+                        voices[v_idx].key_off(&instruments, pattern.is_note_delay(self.song_data.song_type));
+                    }
+                } else if note == 121 { // Note Cut
                     if let Some(v_idx) = channel.voice_idx {
                         voices[v_idx].on = false;
                         voices[v_idx].volume.output_volume = 0.0;
+                    }
+                } else if note == 122 { // Note Fade
+                    if let Some(v_idx) = channel.voice_idx {
+                        voices[v_idx].sustained = false;
+                        let instrument_nna = &instruments[voices[v_idx].instrument];
+                        voices[v_idx].volume.fadeout_speed = (instrument_nna.volume_fadeout as i32) << 6;
                     }
                 }
             }
@@ -956,7 +1046,7 @@ impl Song {
             });
                 
             if !first_tick && (pattern.has_vibrato(self.song_data.song_type) || pattern.effect == 0x4 || pattern.effect == 0x6) {
-                channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_vibrato_speed(), pattern.get_vibrato_depth());
+                channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_vibrato_speed(), pattern.get_vibrato_depth(), self.old_effects, self.frequency_tables.borrow());
             }
 
                 match self.song_data.song_type {
@@ -982,11 +1072,11 @@ impl Song {
                             0x70..=0x7f => { channel.volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() as i8); }
                             0x80..=0x8f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -(pattern.get_volume_param() as i8)); }
                             0x90..=0x9f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() as i8); }
-                            0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param()); }
-                            0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0); }
+                            0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param(), self.old_effects, self.frequency_tables.borrow()); }
+                            0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0, self.old_effects, self.frequency_tables.borrow()); }
                             0xd0..=0xdf => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() << 4); }
                             0xe0..=0xef => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param()); }
-                            0xf0..=0xff => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param()); }
+                            0xf0..=0xff => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param(), self.compatible_g, self.frequency_tables.borrow()); }
                             _ => {}
                         }
                     }
@@ -1000,8 +1090,8 @@ impl Song {
                             0x03 => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); } // C: Pattern Break
                             0x05 => { channel.porta_down(self.song_data.song_type, first_tick, pattern.effect_param); } // E: Porta Down
                             0x06 => { channel.porta_up(self.song_data.song_type, first_tick, pattern.effect_param); } // F: Porta Up
-                            0x07 => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param); } // G: Porta Note
-                            0x08 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y()); } // H: Vibrato
+                            0x07 => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, self.compatible_g, self.frequency_tables.borrow()); } // G: Porta Note
+                            0x08 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), self.old_effects, self.frequency_tables.borrow()); } // H: Vibrato
                             0x0A => { channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y()); } // J: Arpeggio
                             0x0F => { /* O: Offset - to be implemented */ }
                             0x14 => { if first_tick { self.bpm.update(pattern.effect_param as u32, self.rate); } } // T: Set Tempo
@@ -1038,10 +1128,10 @@ impl Song {
                         match pattern.effect {
                             0x1 => { channel.porta_up(self.song_data.song_type, first_tick, pattern.effect_param); }
                             0x2 => { channel.porta_down(self.song_data.song_type, first_tick, pattern.effect_param); }
-                            0x3 => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
-                            0x4 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y()); }
-                            0x5 => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, 0); channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
-                            0x6 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0); channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
+                            0x3 => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, self.compatible_g, self.frequency_tables.borrow()); }
+                            0x4 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), self.old_effects, self.frequency_tables.borrow()); }
+                            0x5 => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, 0, self.compatible_g, self.frequency_tables.borrow()); channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
+                            0x6 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, self.old_effects, self.frequency_tables.borrow()); channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
                             0x7 => { channel.tremolo(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y()); }
                             0xA => { channel.volume_slide_main(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param); }
                             0xB => { self.pattern_change.set_jump(first_tick, pattern.effect_param); } // B: Pattern Jump
@@ -1087,13 +1177,20 @@ impl Song {
         // 2. Process all active voices (Envelopes and Final Volume)
         let divisor = if self.song_data.song_type == SongType::IT { 128.0 } else { 64.0 };
         let global_vol_f32 = self.global_volume.volume as f32 / divisor;
-        for voice in &mut self.voices {
+        for (v_idx, voice) in self.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
             let channel_vol_f32 = self.channels[voice.channel_idx].channel_volume as f32 / 64.0;
             voice.update_envelopes(instruments, self.rate);
             voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
             
-            if !voice.sustained && voice.volume.fadeout_vol == 0 {
+            // Deactivate voice if it's silent and has no chance of making sound
+            // Background voices (not the current voice of the channel) are killed if silent.
+            let is_host_voice = self.channels[voice.channel_idx].voice_idx == Some(v_idx);
+            
+            if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
+                voice.on = false;
+            } else if !is_host_voice && voice.volume.output_volume < 0.00001 {
+                // Background voice is silent - kill it to prevent virtual channel leak
                 voice.on = false;
             }
         }
