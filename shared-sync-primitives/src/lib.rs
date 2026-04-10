@@ -522,12 +522,14 @@ mod tests {
 
         let reader_thread = thread::spawn(move || {
             b2.wait();
-            let mut last_val = 0;
-            while last_val < 1000 {
+            let mut last_val: Option<u32> = None;
+            while last_val.unwrap_or(0) < 1000 {
                 let (val, state) = reader.read();
                 if state == State::StateDirty {
-                    assert!(*val > last_val, "Read value {} not greater than last {}", *val, last_val);
-                    last_val = *val;
+                    if let Some(lv) = last_val {
+                        assert!(*val > lv, "Read value {} not greater than last {}", *val, lv);
+                    }
+                    last_val = Some(*val);
                 }
             }
         });
