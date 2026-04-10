@@ -425,12 +425,11 @@ impl VibratoEnvelopeState {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Note {
-               note:            u8,
-               finetune:        i8,
-    pub(crate) period:          u16,
-               original_note:   u8,
-
+pub struct Note {
+    pub note:            u8,
+    pub finetune:        i8,
+    pub period:          u16,
+    pub original_note:   u8,
 }
 
 impl Note {
@@ -621,12 +620,11 @@ impl Note {
     pub(crate) fn frequency(&self, period_shift: i16, semitone: bool, frequency_tables: &AudioTables) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
-        let period:u16;
-        if semitone {
-            period = self.relocate_ton(self.period as u16, period_shift as u8, frequency_tables);
-            // period = self.nearest_semi_tone(self.period as u16, period_shift as u8, use_amiga);
+        let period: u16;
+        if period_shift != 0 {
+            period = self.relocate_ton(self.period, period_shift as u8, frequency_tables);
         } else {
-            period = (Wrapping(self.period) - Wrapping((period_shift * 16 * 4) as u16)).0;
+            period = self.period;
         }
         // }
 

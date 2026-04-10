@@ -36,6 +36,7 @@ pub struct Sample {
     pub panning: u8,
     pub relative_note: i8,
     pub name: String,
+    pub global_volume: u8,
     pub data: Vec<f32>
 }
 
@@ -53,7 +54,8 @@ impl Sample {
             panning: 0,
             relative_note: 0,
             name: "".to_string(),
-            data: vec![]
+            global_volume: 64,
+            data: vec![],
         }
     }
 
@@ -201,6 +203,10 @@ pub struct Instrument {
     pub nna: u8,
     pub dct: u8,
     pub dca: u8,
+    pub global_volume: u8,
+    pub initial_filter_cutoff: u8,
+    pub initial_filter_resonance: u8,
+    pub is_filter_envelope: bool,
     pub samples: Vec<Sample>,
 }
 
@@ -218,6 +224,10 @@ impl Instrument {
             nna: 0,
             dct: 0,
             dca: 0,
+            global_volume: 64,
+            initial_filter_cutoff: 127,
+            initial_filter_resonance: 0,
+            is_filter_envelope: false,
             samples: vec![Sample::new(); 1]
         }
     }

@@ -1,6 +1,7 @@
 use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState};
 use crate::instrument::Instruments;
 use crate::tables::AudioTables;
+use crate::module_reader::SongType;
 // use crate::module_reader::is_note_valid;
 // use std::num::Wrapping;
 // use std::cmp::{min, max};
@@ -69,9 +70,32 @@ pub(crate) struct Voice {
     pub(crate) tremolo_state:                  TremoloState,
     pub(crate) frequency_shift:                f32,
     pub(crate) panning:                        Panning,
-    
+    pub(crate) instrument_global_volume:       u8,
+    pub(crate) sample_global_volume:           u8,
+    pub(crate) filter_cutoff:                  u8,
+    pub(crate) filter_resonance:               u8,
+    pub(crate) filter_state:                   ResonantFilter,
     pub(crate) on:                             bool,
     pub(crate) channel_idx:                    usize, // The logical channel that "owns" or "started" this voice
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResonantFilter {
+    pub(crate) a: f32,
+    pub(crate) b: f32,
+    pub(crate) c: f32,
+    pub(crate) history: [f32; 2],
+}
+
+impl ResonantFilter {
+    pub(crate) fn new() -> Self {
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            history: [0.0; 2],
+        }
+    }
 }
 
 impl Voice {
@@ -95,6 +119,11 @@ impl Voice {
             tremolo_state: TremoloState::new(),
             frequency_shift: 0.0,
             panning: Panning::new(),
+            instrument_global_volume: 64,
+            sample_global_volume: 64,
+            filter_cutoff: 127,
+            filter_resonance: 0,
+            filter_state: ResonantFilter::new(),
             on: false,
             channel_idx: 0,
         }
@@ -132,18 +161,47 @@ impl Voice {
         self.du = self.frequency / rate;
     }
 
-    pub(crate) fn update_envelopes(&mut self, instruments: &Instruments) {
+    pub(crate) fn update_envelopes(&mut self, instruments: &Instruments, rate: f32) {
         let instrument = &instruments[self.instrument];
         
         let envelope_volume = self.volume_envelope_state.handle(&instrument.volume_envelope, self.sustained, 64, false);
         let envelope_panning = self.panning_envelope_state.handle(&instrument.panning_envelope, self.sustained, 32, true);
-        // let envelope_pitch = self.pitch_envelope_state.handle(&instrument.pitch_envelope, self.sustained, 0, false);
 
         self.panning.update_envelope_panning(envelope_panning);
         self.volume.envelope_vol = envelope_volume as i32;
+
+        let mut final_cutoff = self.filter_cutoff as i32;
+        if instrument.is_filter_envelope {
+            let envelope_filter = self.pitch_envelope_state.handle(&instrument.pitch_envelope, self.sustained, 32, false);
+            // IT filter envelopes are centered around 32 (range 0..64)
+            // They add/subtract from the current cutoff.
+            final_cutoff += (envelope_filter as i32 - 32 * 256) / 256;
+        }
+
+        self.update_filter(rate, final_cutoff.clamp(0, 127) as u8);
     }
 
-    pub(crate) fn update_output_volume(&mut self, global_volume: f32) {
+    pub(crate) fn update_filter(&mut self, rate: f32, cutoff: u8) {
+        if cutoff >= 127 {
+            self.filter_state.a = 1.0;
+            self.filter_state.b = 0.0;
+            self.filter_state.c = 0.0;
+            return;
+        }
+
+        // IT cutoff scale is roughly logarithmic. 
+        // We'll map 0..127 to roughly 100Hz .. 10kHz
+        let cutoff_freq = 110.0 * (2.0f32).powf(cutoff as f32 * 5.0 / 127.0);
+        let p = 2.0 * (std::f32::consts::PI * cutoff_freq / rate).sin();
+        let r = 1.0 - (self.filter_resonance as f32 / 128.0); // Simple damping
+
+        // State Variable Filter coefficients
+        // We'll store them in a, b, c for the mixing loop
+        self.filter_state.a = p;
+        self.filter_state.b = r;
+    }
+
+    pub(crate) fn update_output_volume(&mut self, global_volume: f32, channel_volume: f32, divisor: f32) {
         if !self.sustained {
             if self.volume.fadeout_vol - self.volume.fadeout_speed * 2 < 0 {
                 self.volume.fadeout_vol = 0;
@@ -155,6 +213,9 @@ impl Voice {
         self.volume.output_volume = (self.volume.fadeout_vol as f32 / 65536.0) * 
                                     (self.volume.envelope_vol as f32 / 16384.0) * 
                                     (self.volume.get_volume() as f32 / 64.0) * 
+                                    (self.instrument_global_volume as f32 / divisor) *
+                                    (self.sample_global_volume as f32 / 64.0) *
+                                    channel_volume *
                                     global_volume;
     }
 
@@ -168,6 +229,13 @@ impl Voice {
         self.volume.fadeout_vol = 65536;
         
         let instrument = &instruments[self.instrument];
+        self.instrument_global_volume = instrument.global_volume;
+        self.filter_cutoff = instrument.initial_filter_cutoff;
+        self.filter_resonance = instrument.initial_filter_resonance;
+        if self.sample < instrument.samples.len() {
+            self.sample_global_volume = instrument.samples[self.sample].global_volume;
+        }
+
         self.volume_envelope_state.reset(0, &instrument.volume_envelope);
         self.panning_envelope_state.reset(0, &instrument.panning_envelope);
         self.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
@@ -175,26 +243,27 @@ impl Voice {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct ChannelState {
-    pub(crate) voice_idx:                      Option<usize>, // Which voice is currently "active" for this channel
-    pub(crate) last_instrument:                usize,
-    pub(crate) last_sample:                    usize,
-    pub(crate) note:                           Note,
-    pub(crate) frequency:                      f32,
-    pub(crate) volume:                         Volume,
-    pub(crate) panning:                        Panning,
-    pub(crate) on:                             bool,
-    pub(crate) last_porta_up:                  u16,
-    pub(crate) last_porta_down:                u16,
-    pub(crate) last_fine_porta_up:             u16,
-    pub(crate) last_fine_porta_down:           u16,
-    pub(crate) last_volume_slide:              u8,
-    pub(crate) last_fine_volume_slide_up:      u8,
-    pub(crate) last_fine_volume_slide_down:    u8,
-    pub(crate) porta_to_note:                  PortaToNoteState,
-    pub(crate) last_sample_offset:             u32,
-    pub(crate) last_panning_speed:             u8,
-    pub(crate) force_off:                      bool,
+pub struct ChannelState {
+    pub voice_idx:                      Option<usize>, // Which voice is currently "active" for this channel
+    pub last_instrument:                usize,
+    pub last_sample:                    usize,
+    pub note:                           Note,
+    pub frequency:                      f32,
+    pub volume:                         Volume,
+    pub panning:                        Panning,
+    pub on:                             bool,
+    pub last_porta_up:                  u16,
+    pub last_porta_down:                u16,
+    pub last_fine_porta_up:             u16,
+    pub last_fine_porta_down:           u16,
+    pub channel_volume:                 u8,
+    pub last_volume_slide:              u8,
+    pub last_fine_volume_slide_up:      u8,
+    pub last_fine_volume_slide_down:    u8,
+    pub porta_to_note:                  PortaToNoteState,
+    pub last_sample_offset:             u32,
+    pub last_panning_speed:             u8,
+    pub force_off:                      bool,
     pub(crate) glissando:                      bool,
     pub(crate) vibrato_control:                u8,
     pub(crate) tremolo_control:                u8,
@@ -223,6 +292,7 @@ impl ChannelState {
             last_porta_down: 0,
             last_fine_porta_up: 0,
             last_fine_porta_down: 0,
+            channel_volume: 64,
             last_volume_slide: 0,
             last_fine_volume_slide_up: 0,
             last_fine_volume_slide_down: 0,
@@ -284,38 +354,44 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn porta_up(&mut self, first_tick: bool, amount: u8) {
+    pub(crate) fn porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
         if first_tick {
             if amount != 0 {
                 self.last_porta_up = (amount as u16) * 4;
             }
         } else {
             self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(self.last_porta_up)).0;
-            if (self.note.period as i16) < 1 {
-                self.note.period = 1;
+            let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
+            if (self.note.period as i16) < min_period {
+                self.note.period = min_period as u16;
             }
         }
     }
 
-    pub(crate) fn porta_down(&mut self, first_tick: bool, amount: u8) {
+    pub(crate) fn porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
         if first_tick {
             if amount != 0 {
                 self.last_porta_down = (amount as u16) * 4;
             }
         } else {
             self.note.period += self.last_porta_down;
-            if (self.note.period as i16) > 31999 {
-                self.note.period = 31999;
+            let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
+            if self.note.period > max_period {
+                self.note.period = max_period;
             }
         }
     }
 
-    pub(crate) fn fine_porta_up(&mut self, first_tick: bool, amount: u8) {
+    pub(crate) fn fine_porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
         if first_tick {
             if amount != 0 {
                 self.last_fine_porta_up = (amount as u16) * 4;
             }
             self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(self.last_fine_porta_up)).0;
+            let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
+            if (self.note.period as i16) < min_period {
+                self.note.period = min_period as u16;
+            }
         }
     }
 
@@ -343,25 +419,35 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn fine_porta_down(&mut self, first_tick: bool, amount: u8) {
+    pub(crate) fn fine_porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
         if first_tick {
             if amount != 0 {
                 self.last_fine_porta_down = (amount as u16) * 4;
             }
             self.note.period += self.last_fine_porta_down;
-            if (self.note.period as i16) > 31999 {
-                self.note.period = 31999;
+            let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
+            if self.note.period > max_period {
+                self.note.period = max_period;
             }
         }
     }
 
-    pub(crate) fn porta_to_note(&mut self, _voice: Option<&mut Voice>, first_tick: bool, amount: u8) {
+    pub(crate) fn porta_to_note(&mut self, song_type: SongType, _voice: Option<&mut Voice>, first_tick: bool, amount: u8) {
         if first_tick {
             if amount != 0 {
                 self.porta_to_note.speed = amount;
             }
         } else {
             self.porta_to_note.next_tick(&mut self.note);
+            
+            // Apply limits
+            let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
+            let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
+            if (self.note.period as i16) < min_period {
+                self.note.period = min_period as u16;
+            } else if self.note.period > max_period {
+                self.note.period = max_period;
+            }
         }
     }
 
@@ -396,23 +482,49 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn panning_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
+    pub(crate) fn channel_volume_slide(&mut self, first_tick: bool, param: u8) {
         if first_tick {
-            if param != 0 {
-                self.last_panning_speed = param;
+            // Fine slides handled in first tick if needed
+            let up = (param >> 4) as i32;
+            let down = (param & 0xf) as i32;
+            if up == 0xf && down != 0 {
+                self.channel_volume = (self.channel_volume as i32 + down).min(64) as u8;
+            } else if down == 0xf && up != 0 {
+                self.channel_volume = (self.channel_volume as i32 - up).max(0) as u8;
             }
         } else {
-            let left = (self.last_panning_speed >> 4) as i32;
-            let right = (self.last_panning_speed & 0xf) as i32;
-            
-            if let Some(v) = voice {
-                let mut pan = v.panning.panning as i32;
-                if left != 0 {
-                    pan -= left;
-                } else {
-                    pan += right;
+            let up = (param >> 4) as i32;
+            let down = (param & 0xf) as i32;
+            if up != 0x0 && up != 0xf && down == 0 {
+                self.channel_volume = (self.channel_volume as i32 + up).min(64) as u8;
+            } else if down != 0x0 && down != 0xf && up == 0 {
+                self.channel_volume = (self.channel_volume as i32 - down).max(0) as u8;
+            }
+        }
+    }
+
+    pub(crate) fn panning_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
+        if first_tick {
+            let right = (param >> 4) as i32;
+            let left = (param & 0xf) as i32;
+            if right == 0xf && left != 0 {
+                if let Some(v) = voice {
+                    v.panning.set_panning(v.panning.panning as i32 - (left << 2));
                 }
-                v.panning.set_panning(pan);
+            } else if left == 0xf && right != 0 {
+                if let Some(v) = voice {
+                    v.panning.set_panning(v.panning.panning as i32 + (right << 2));
+                }
+            }
+        } else {
+            let right = (param >> 4) as i32;
+            let left = (param & 0xf) as i32;
+            if let Some(v) = voice {
+                if right != 0 && right != 0xf && left == 0 {
+                    v.panning.set_panning(v.panning.panning as i32 + (right << 2));
+                } else if left != 0 && left != 0xf && right == 0 {
+                    v.panning.set_panning(v.panning.panning as i32 - (left << 2));
+                }
             }
         }
     }
