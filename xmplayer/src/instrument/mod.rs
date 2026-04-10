@@ -40,7 +40,7 @@ pub struct Sample {
 }
 
 impl Sample {
-    fn new() -> Sample {
+    pub fn new() -> Sample {
         Sample {
             length: 0,
             loop_start: 0,
@@ -57,21 +57,21 @@ impl Sample {
         }
     }
 
-    fn unpack_i16(mut data: Vec<i16>) -> Vec<i16> {
+    pub fn unpack_i16(mut data: Vec<i16>) -> Vec<i16> {
         for i in 1..data.len() {
             data[i] = (Wrapping(data[i - 1]) + Wrapping(data[i])).0;
         }
         data
     }
 
-    fn unpack_i8(mut data: Vec<i8>) -> Vec<i8> {
+    pub fn unpack_i8(mut data: Vec<i8>) -> Vec<i8> {
         for i in 1..data.len() {
             data[i] = (Wrapping(data[i - 1]) + Wrapping(data[i])).0;
         }
         data
     }
 
-    fn upsamplei8(data: Vec<i8>) -> Vec<i16> {
+    pub fn upsamplei8(data: Vec<i8>) -> Vec<i16> {
         let mut result = vec!(0i16; data.len());
         result.reserve_exact(data.len() as usize);
         for i in 0..data.len() {
@@ -80,7 +80,7 @@ impl Sample {
         result
     }
 
-    fn upsampleu8(data: Vec<u8>) -> Vec<i16> {
+    pub fn upsampleu8(data: Vec<u8>) -> Vec<i16> {
         let mut result = vec!(0i16; data.len());
         result.reserve_exact(data.len() as usize);
         for i in 0..data.len() {
@@ -90,7 +90,7 @@ impl Sample {
     }
 
 
-    fn upsamplei16(data: Vec<i16>) -> Vec<f32> {
+    pub fn upsamplei16(data: Vec<i16>) -> Vec<f32> {
         let mut result = vec!(0.0f32; data.len());
         result.reserve_exact(data.len() as usize);
         for i in 0..data.len() {
@@ -192,12 +192,15 @@ impl VibratoEnvelope {
 pub struct Instrument {
     pub name: String,
     pub idx: u8,
-    pub sample_indexes: Vec<u8>,
+    pub sample_indexes: Vec<(u8, u8)>, // (note, sample_idx) - Keyboard mapping
     pub volume_envelope: Envelope,
     pub panning_envelope: Envelope,
+    pub pitch_envelope: Envelope,
     pub vibrato_envelope: VibratoEnvelope,
     pub volume_fadeout: u16,
-
+    pub nna: u8,
+    pub dct: u8,
+    pub dca: u8,
     pub samples: Vec<Sample>,
 }
 
@@ -206,11 +209,15 @@ impl Instrument {
         Instrument {
             name: "".to_string(),
             idx: 0,
-            sample_indexes: vec![0u8; 96],
+            sample_indexes: vec![(0u8, 0u8); 120],
             volume_envelope: Envelope::new(),
             panning_envelope: Envelope::new(),
+            pitch_envelope: Envelope::new(),
             vibrato_envelope: VibratoEnvelope::new(),
             volume_fadeout: 0,
+            nna: 0,
+            dct: 0,
+            dca: 0,
             samples: vec![Sample::new(); 1]
         }
     }

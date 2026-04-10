@@ -8,7 +8,7 @@ use crate::pattern::Pattern;
 use crate::channel_state::channel_state::clamp;
 use crate::module_reader::stm::read_stm;
 use crate::module_reader::it::read_it;
-use crate::channel_state::ChannelState;
+use crate::channel_state::Voice;
 use crate::song_state::SongHandle;
 use std::io::{Cursor, Seek, SeekFrom};
 
@@ -17,8 +17,9 @@ mod module;
 mod s3m;
 mod stm;
 mod it;
+mod it_compression;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum SongType {
     XM,
     MOD,
@@ -33,7 +34,7 @@ pub(crate) enum FrequencyType {
     LINEAR
 }
 pub(crate) fn is_note_valid(note: u8) -> bool {
-    note > 0 && note < 97
+    note > 0 && note < 121
 }
 
 #[derive(Clone)]
@@ -103,6 +104,8 @@ pub struct SongData {
     pub(crate)      instruments:        Vec<Instrument>,
     pub(crate)      use_amiga:          bool,
     pub(crate)      song_message:       String,
+    pub(crate)      initial_channel_volume: [u8; 64],
+    pub(crate)      initial_channel_panning: [u8; 64],
 }
 
 impl Default for SongData {
@@ -137,12 +140,12 @@ impl Default for FrequencyType {
 }
 
 impl SongData {
-    pub(crate) fn get_sample<>(&self, channel: &ChannelState) -> &Sample {
-        &self.get_instrument(channel).samples[channel.voice.sample]
+    pub(crate) fn get_sample<>(&self, voice: &Voice) -> &Sample {
+        &self.instruments[voice.instrument].samples[voice.sample]
     }
 
-    pub(crate) fn get_instrument(&self, channel: &ChannelState) -> &Instrument {
-        &self.instruments[channel.voice.instrument]
+    pub(crate) fn get_instrument(&self, voice: &Voice) -> &Instrument {
+        &self.instruments[voice.instrument]
     }
 }
 

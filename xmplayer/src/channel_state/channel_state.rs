@@ -46,6 +46,22 @@ impl PortaToNoteState {
             speed: 0
         }
     }
+
+    pub(crate) fn next_tick(&mut self, current_note: &mut Note) {
+        if self.speed == 0 || self.target_note.period == 0 { return; }
+        
+        if current_note.period < self.target_note.period {
+            current_note.period = (std::num::Wrapping(current_note.period) + std::num::Wrapping(self.speed as u16 * 4)).0;
+            if current_note.period > self.target_note.period {
+                current_note.period = self.target_note.period;
+            }
+        } else if current_note.period > self.target_note.period {
+            current_note.period = (std::num::Wrapping(current_note.period) - std::num::Wrapping(self.speed as u16 * 4)).0;
+            if current_note.period < self.target_note.period {
+                current_note.period = self.target_note.period;
+            }
+        }
+    }
 }
 
 pub(crate) enum WaveControl {
@@ -430,14 +446,17 @@ impl Note {
 
     // note <= 120
     pub(crate) fn set_note(&mut self, note: u8, finetune: i8, original_note: u8, frequency_tables: &AudioTables) {
-
         self.note = note;
         self.original_note = original_note;
         self.finetune = finetune;
-        let sidx= (self.note as i32 - 1) * 16 + ((self.finetune >> 3) + 16) as i32;
+        self.period = self.note_to_period(note, finetune, frequency_tables);
+    }
+
+    pub(crate) fn note_to_period(&self, note: u8, finetune: i8, frequency_tables: &AudioTables) -> u16 {
+        let sidx= (note as i32 - 1) * 16 + ((finetune >> 3) + 16) as i32;
         let idx = clamp(sidx, 0, 1935);
 
-        self.period = frequency_tables.periods[idx as usize];
+        frequency_tables.periods[idx as usize]
     }
 
 
@@ -732,8 +751,8 @@ impl Volume {
             output_volume: 1.0,
             fadeout_vol: 65536,
             fadeout_speed: 0,
-            envelope_vol: 0,
-            global_vol: 0
+            envelope_vol: 16384,
+            global_vol: 64
         }
     }
 

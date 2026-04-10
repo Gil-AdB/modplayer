@@ -56,6 +56,18 @@ impl Pattern {
     pub(crate) fn get_volume_param(&self) -> u8 {
         self.volume & 0xf
     }
+
+    pub(crate) fn get_vibrato_speed(&self) -> u8 {
+        if self.effect == 0x4 { self.get_x() }
+        else if (self.volume & 0xf0) == 0xb0 { self.get_volume_param() }
+        else { 0 }
+    }
+
+    pub(crate) fn get_vibrato_depth(&self) -> u8 {
+        if self.effect == 0x4 { self.get_y() }
+        else if (self.volume & 0xf0) == 0xa0 { self.get_volume_param() }
+        else { 0 }
+    }
 }
 
 //impl fmt::Debug for Pattern {
