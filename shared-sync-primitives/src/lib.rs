@@ -283,7 +283,7 @@ where T: Default + Copy {
     pub fn new() -> (Producer<T, CHUNK_SIZE, NUM_CHUNKS>, Consumer<T, CHUNK_SIZE, NUM_CHUNKS>) {
         let q = Arc::new(SharedQueue {
             full_count:  Semaphore::new(0),
-            empty_count: Semaphore::new(NUM_CHUNKS),
+            empty_count: Semaphore::new(NUM_CHUNKS - 1),
             buf:         UnsafeCell::new([[T::default(); CHUNK_SIZE]; NUM_CHUNKS]),
             front:       AtomicUsize::new(0),
             back:        AtomicUsize::new(0),
@@ -322,10 +322,10 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
             }
 
             let front = self.front.load(Acquire);
-            let my_buf = unsafe { &mut (*self.buf.get())[front % NUM_CHUNKS] };
+            let my_buf = unsafe { &mut (*self.buf.get())[front] };
             let result = f(my_buf);
             
-            self.front.store(front + 1, Release);
+            self.front.store((front + 1) % NUM_CHUNKS, Release);
             self.full_count.signal();
 
             if !result {
@@ -348,9 +348,9 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
             return false;
         }
 
-        let my_buf = unsafe { &(*self.buf.get())[back % NUM_CHUNKS] };
+        let my_buf = unsafe { &(*self.buf.get())[back] };
         f(my_buf);
-        self.back.store(back + 1, Release);
+        self.back.store((back + 1) % NUM_CHUNKS, Release);
         self.empty_count.signal();
 
         true
@@ -367,12 +367,12 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
 
     pub(crate) fn get_write_buffer(&self) -> &mut [T] {
         let front = self.front.load(Acquire);
-        unsafe { &mut (*self.buf.get())[front % NUM_CHUNKS] }
+        unsafe { &mut (*self.buf.get())[front] }
     }
 
     pub(crate) fn commit_write(&self) {
         let front = self.front.load(Acquire);
-        self.front.store(front + 1, Release);
+        self.front.store((front + 1) % NUM_CHUNKS, Release);
         self.full_count.signal();
     }
 
@@ -389,12 +389,12 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
 
     pub(crate) fn get_read_buffer(&self) -> &[T] {
         let back = self.back.load(Acquire);
-        unsafe { &(*self.buf.get())[back % NUM_CHUNKS] }
+        unsafe { &(*self.buf.get())[back] }
     }
 
     pub(crate) fn commit_read(&self) {
         let back = self.back.load(Acquire);
-        self.back.store(back + 1, Release);
+        self.back.store((back + 1) % NUM_CHUNKS, Release);
         self.empty_count.signal();
     }
 }
@@ -699,5 +699,26 @@ mod tests {
         // Multiple calls to produce should all return false and not hang
         assert_eq!(prod.produce(|_| true), false);
         assert_eq!(prod.produce(|_| true), false);
+    }
+
+    #[test]
+    fn test_pcq_non_power_of_two() {
+        // Use 3 buffers (not a power of two)
+        let (prod, cons) = ProducerConsumerQueue::<u32, 1, 3>::new();
+        
+        // Fill 2 buffers (capacity is NUM-1 = 2)
+        prod.produce(|buf| { buf[0] = 1; false });
+        prod.produce(|buf| { buf[0] = 2; false });
+        
+        let mut val = 0;
+        cons.consume(|buf| { val = buf[0]; });
+        assert_eq!(val, 1);
+        cons.consume(|buf| { val = buf[0]; });
+        assert_eq!(val, 2);
+        
+        // Verify we can continue using it after wraparound
+        prod.produce(|buf| { buf[0] = 3; false });
+        cons.consume(|buf| { val = buf[0]; });
+        assert_eq!(val, 3);
     }
 }
