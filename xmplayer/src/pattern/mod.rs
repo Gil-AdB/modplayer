@@ -1,5 +1,6 @@
 use std::fmt;
 use std::string::ToString;
+use crate::module_reader::SongType;
 
 #[derive(Copy, Clone)]
 pub struct Pattern {
@@ -18,7 +19,7 @@ impl Pattern {
         Self {
             note: 0,
             instrument: 0,
-            volume: 0,
+            volume: 255,
             effect: 0,
             effect_param: 0
         }
@@ -30,17 +31,34 @@ impl Pattern {
         }
     }
 
-    pub(crate) fn is_porta_to_note(&self) -> bool {
-        self.effect == 0x3
+    pub(crate) fn is_porta_to_note(&self, song_type: SongType) -> bool {
+        match song_type {
+            SongType::IT | SongType::S3M => self.effect == 0x07, // G
+            _ => self.effect == 0x3 // XM / MOD 
+        }
     }
 
-    pub(crate) fn is_note_delay(&self) -> bool {
-        self.effect == 0xe && self.get_x() == 0xd
+    pub(crate) fn is_note_delay(&self, song_type: SongType) -> bool {
+        match song_type {
+            SongType::IT => self.effect == 0x13 && self.get_x() == 0xd, // S
+            SongType::S3M => self.effect == 0x13 && self.get_x() == 0xd, // S
+            _ => self.effect == 0xe && self.get_x() == 0xd // XM / MOD
+        }
     }
 
-    pub(crate) fn has_vibrato(&self) -> bool { self.get_volume_effect() == 0xb || self.effect == 0x4 || self.effect == 0x6 }
+    pub(crate) fn has_vibrato(&self, song_type: SongType) -> bool {
+        match song_type {
+            SongType::IT => self.effect == 0x08 || self.effect == 0x06, // H or F
+            _ => self.get_volume_effect() == 0xb || self.effect == 0x4 || self.effect == 0x6
+        }
+    }
 
-    pub(crate) fn has_tremolo(&self) -> bool { self.effect == 0x7 }
+    pub(crate) fn has_tremolo(&self, song_type: SongType) -> bool {
+        match song_type {
+            SongType::IT => self.effect == 0x12, // R? No, IT has different Tremolo.
+            _ => self.effect == 0x7
+        }
+    }
 
     pub(crate) fn get_x(&self) -> u8 {
         self.effect_param >> 4

@@ -81,24 +81,19 @@
 
         let _signed_samples = file.read_u16()?;
 
+
         let signature = file.read_string(4);
 
         if signature != "SCRM" {
             return Err(SimpleError::new("Unknown s3m format - signature"));
         }
 
-        let _global_volume = file.read_u8()?;
-
+        let global_volume = file.read_u8()?;
         let speed = file.read_u8()?;
-
         let bpm = file.read_u8()?;
-
-        let _master_volume = file.read_u8()?;
-
-        let _ = file.read_u8()?;
-
-        let _default_panning = file.read_u8()?;
-
+        let _master_multiplier = file.read_u8()?;
+        let _ultra_click_removal = file.read_u8()?;
+        let default_panning_present = file.read_u8()?;
         file.seek(SeekFrom::Current(10))?;
 
         let channel_data = file.read_bytes(32)?;
@@ -117,7 +112,17 @@
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize)?;
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize)?;
 
-        // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
+        let mut initial_channel_panning = [32u8; 64];
+        if default_panning_present == 252 {
+            let panning_data = file.read_bytes(32)?;
+            for i in 0..32 {
+                if panning_data[i] & 32 != 0 {
+                    let p = panning_data[i] & 15;
+                    initial_channel_panning[i] = p * 16 + 8; // Map 0-15 to 0-255 scale
+                }
+            }
+        }
+
         let instruments = read_instruments(file, &instrument_ptrs)?;
         let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map)?;
 
@@ -151,7 +156,8 @@
             use_amiga: true,
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
-            initial_channel_panning: [32; 64],
+            initial_channel_panning,
+            global_volume,
         })
     }
 
@@ -496,6 +502,7 @@
                 panning: 128,
                 relative_note,
                 name: sample_name.clone().to_string(),
+                global_volume: 64,
                 data: vec![]
             };
             sample.read_s3m_sample_data(file, sample_ptr)?;

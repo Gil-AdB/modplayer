@@ -1,4 +1,5 @@
 use std::io::{Read, Seek, SeekFrom};
+use std::num::Wrapping;
 use binary_reader_io::BinaryReader;
 use std::io;
 use crate::{SimpleResult, SimpleError};
@@ -40,25 +41,25 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                     if mask & 1 != 0 {
                         last_note[channel_idx as usize] = file.read_u8()?;
                     }
-                    if mask & 17 != 0 {
+                    if mask & (1 | 16) != 0 {
                          p.note = last_note[channel_idx as usize];
                     }
 
                     if mask & 2 != 0 {
                         last_instr[channel_idx as usize] = file.read_u8()?;
                     }
-                    if mask & 34 != 0 {
+                    if mask & (2 | 32) != 0 {
                         p.instrument = last_instr[channel_idx as usize];
                     }
 
                     if mask & 4 != 0 {
                         last_vol[channel_idx as usize] = file.read_u8()?;
                     }
-                    if mask & 68 != 0 {
+                    if mask & (4 | 64) != 0 {
                         p.volume = last_vol[channel_idx as usize];
                     }
 
-                    if mask & (8 | 16) != 0 {
+                    if mask & (8 | 128) != 0 {
                         if mask & 8 != 0 {
                             last_effect[channel_idx as usize] = file.read_u8()?;
                             last_effect_param[channel_idx as usize] = file.read_u8()?;
@@ -103,7 +104,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
 
             let _dos_name = file.read_string(12);
             let _zero = file.read_u8()?;
-            let _global_volume = file.read_u8()?;
+            let sample_global_volume = file.read_u8()?;
             let flags = file.read_u8()?;
             let default_volume = file.read_u8()?;
             let name = file.read_string(26);
@@ -139,9 +140,10 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 finetune,
                 loop_type,
                 bitness,
-                panning: if (default_panning & 128) == 128 { 128 } else { default_panning },
+                panning: if (default_panning & 128) == 128 { default_panning & 0x7F } else { 255 },
                 relative_note,
                 name: name.trim().to_string(),
+                global_volume: sample_global_volume,
                 data: vec![],
             };
 
@@ -180,11 +182,44 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                     }
                 } else { // Uncompressed
                     if bitness == 8 {
-                        let data = file.read_i8_vec(length as usize)?;
-                        sample.data = Sample::upsamplei16(Sample::upsamplei8(if (convert & 1) == 1 { data } else { Sample::unpack_i8(data) }));
+                        let mut data = file.read_i8_vec(length as usize)?;
+                        
+                        // Handle Unsigned to Signed conversion if bit 0 is NOT set
+                        if (convert & 1) == 0 {
+                            for x in &mut data {
+                                *x = (Wrapping(*x as u8) + Wrapping(128u8)).0 as i8;
+                            }
+                        }
+                        
+                        // Handle Delta decoding if bit 2 is set
+                        if (convert & 4) == 4 {
+                            data = Sample::unpack_i8(data);
+                        }
+                        
+                        sample.data = Sample::upsamplei16(Sample::upsamplei8(data));
                     } else {
-                        let data = file.read_i16_vec(length as usize)?;
-                        sample.data = Sample::upsamplei16(if (convert & 1) == 1 { data } else { Sample::unpack_i16(data) });
+                        let mut data = file.read_i16_vec(length as usize)?;
+                        
+                        // Handle Big Endian to Little Endian if bit 1 is set
+                        if (convert & 2) == 2 {
+                            for x in &mut data {
+                                *x = x.swap_bytes();
+                            }
+                        }
+                        
+                        // Handle Unsigned to Signed conversion if bit 0 is NOT set
+                        if (convert & 1) == 0 {
+                            for x in &mut data {
+                                *x = (Wrapping(*x as u16) + Wrapping(32768u16)).0 as i16;
+                            }
+                        }
+                        
+                        // Handle Delta decoding if bit 2 is set
+                        if (convert & 4) == 4 {
+                            data = Sample::unpack_i16(data);
+                        }
+                        
+                        sample.data = Sample::upsamplei16(data);
                     }
                 }
                 file.seek(SeekFrom::Start(current_pos))?;
@@ -227,8 +262,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             let _nos = file.read_u8()?;
             let _x = file.read_u8()?;
             let name = file.read_string(26);
-            let _ifc = file.read_u8()?;
-            let _ifr = file.read_u8()?;
+            let ifc = file.read_u8()?;
+            let ifr = file.read_u8()?;
             let _mc = file.read_u8()?;
             let _mp = file.read_u8()?;
             let _mb = file.read_u16()?;
@@ -270,17 +305,21 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
 
             instruments.push(Instrument {
                 name: name.trim().to_string(),
-                idx: 0, // Will be set later if needed
+                idx: 0, 
                 sample_indexes,
                 volume_envelope: envelopes[0],
                 panning_envelope: envelopes[1],
                 pitch_envelope: envelopes[2],
-                vibrato_envelope: VibratoEnvelope::new(), // To be implemented
+                vibrato_envelope: VibratoEnvelope::new(),
                 volume_fadeout: fade_out,
                 nna,
                 dct,
                 dca,
-                samples: vec![], // Will be set later
+                global_volume: global_vol,
+                initial_filter_cutoff: ifc,
+                initial_filter_resonance: ifr,
+                is_filter_envelope: envelopes[2].is_filter,
+                samples: vec![]
             });
         }
         Ok(instruments)
@@ -321,8 +360,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
 
         let flags = file.read_u16()?;
         let special = file.read_u16()?;
-        let _ = file.read_u8()?;
-        let _ = file.read_u8()?;
+        let global_volume = file.read_u8()?;
+        let _mix_volume = file.read_u8()?;
         let speed = file.read_u8()?;
         let tempo = file.read_u8()?;
         let _ = file.read_u8()?;
@@ -331,24 +370,27 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let message_offset = file.read_u32()?;
         let _ = file.read_u32()?;
         let mut initial_channel_panning = [32u8; 64];
+        let mut initial_channel_volume = [64u8; 64];
         let panning_bytes = file.read_bytes(64)?;
         for i in 0..64 {
             let p = panning_bytes[i];
             if p <= 64 {
                 initial_channel_panning[i] = p;
             } else if p == 100 { // Surround
-                initial_channel_panning[i] = 32; // Center for now
+                initial_channel_panning[i] = 100;
             } else if p >= 128 { // Mute
-                // initial_channel_panning[i] = 32; 
+                initial_channel_volume[i] = 0;
             }
         }
 
-        let mut initial_channel_volume = [64u8; 64];
         let volume_bytes = file.read_bytes(64)?;
         for i in 0..64 {
             let v = volume_bytes[i];
             if v <= 64 {
-                initial_channel_volume[i] = v;
+                // Only overwrite if not already muted by panning table
+                if initial_channel_volume[i] != 0 || v == 0 {
+                    initial_channel_volume[i] = v;
+                }
             }
         }
 
@@ -418,6 +460,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             song_message,
             initial_channel_volume,
             initial_channel_panning,
+            global_volume,
         })
     }
 
