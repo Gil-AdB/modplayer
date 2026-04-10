@@ -12,7 +12,7 @@ impl EnvelopePoint {
 }
 
 
-pub type EnvelopePoints = [EnvelopePoint;12];
+pub type EnvelopePoints = [EnvelopePoint;25];
 
 #[derive(Debug, Copy, Clone)]
 pub struct Envelope {
@@ -29,7 +29,7 @@ pub struct Envelope {
 impl Envelope {
     pub(crate) fn new() -> Self {
         Envelope{
-            points: [EnvelopePoint { frame: 0, value: 0 }; 12],
+            points: [EnvelopePoint { frame: 0, value: 0 }; 25],
             size: 0,
             sustain_point: 0,
             loop_start_point: 0,
@@ -40,7 +40,7 @@ impl Envelope {
         }
     }
 
-    pub(crate) fn create(points: [EnvelopePoint; 12], size: u8, sustain_point: u8, loop_start_point: u8, loop_end_point: u8, env_type: u8) -> Self {
+    pub(crate) fn create(points: [EnvelopePoint; 25], size: u8, sustain_point: u8, loop_start_point: u8, loop_end_point: u8, env_type: u8) -> Self {
         Envelope {
             points,
             size,
