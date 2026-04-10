@@ -63,6 +63,10 @@ pub mod pattern;
 pub mod song;
 pub mod tables;
 pub mod song_state;
+#[cfg(test)]
+mod it_fidelity_tests;
+#[cfg(test)]
+mod it_mapping_tests;
 pub mod test_utils;
 
 

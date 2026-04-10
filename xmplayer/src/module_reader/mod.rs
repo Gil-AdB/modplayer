@@ -107,6 +107,8 @@ pub struct SongData {
     pub                     initial_channel_volume: [u8; 64],
     pub                     initial_channel_panning: [u8; 64],
     pub                     global_volume:           u8,
+    pub                     old_effects:             bool,
+    pub                     compatible_g:            bool,
 }
 
 impl SongData {

@@ -39,7 +39,14 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                     let mut p = Pattern::new();
                     
                     if mask & 1 != 0 {
-                        last_note[channel_idx as usize] = file.read_u8()?;
+                        let note = file.read_u8()?;
+                        last_note[channel_idx as usize] = match note {
+                            0..=119 => note + 1, // Map 0-119 (C-0 to B-9) to 1-120
+                            254     => 97,       // IT Note Off -> Engine Note Off
+                            255     => 121,      // IT Note Cut -> Engine Note Cut
+                            253     => 122,      // IT Note Fade -> Engine Note Fade
+                            _       => 0,
+                        };
                     }
                     if mask & (1 | 16) != 0 {
                          p.note = last_note[channel_idx as usize];
@@ -130,6 +137,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             };
 
             let (finetune, relative_note) = crate::module_reader::c2spd_to_finetune_relnote(c5speed);
+            let relative_note = relative_note - 12;
 
             let mut sample = Sample {
                 length,
@@ -140,7 +148,11 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 finetune,
                 loop_type,
                 bitness,
-                panning: if (default_panning & 128) == 128 { default_panning & 0x7F } else { 255 },
+                panning: if (default_panning & 128) == 128 { 
+                    let pan = default_panning & 0x7F;
+                    if pan == 100 { 128 } else { (pan as u32 * 255 / 64) as u8 }
+                } else { 255 },
+                surround: (default_panning & 128) == 128 && (default_panning & 0x7F) == 100,
                 relative_note,
                 name: name.trim().to_string(),
                 global_volume: sample_global_volume,
@@ -401,8 +413,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let sample_ptrs = file.read_u32_vec(sample_count as usize)?;
         let pattern_ptrs = file.read_u32_vec(pattern_count as usize)?;
 
-        let mut instruments = read_instruments(file, &instrument_ptrs)?;
         let mut samples = read_samples(file, &sample_ptrs)?;
+        let mut instruments = read_instruments(file, &instrument_ptrs)?;
 
         let mut patterns: Vec<Patterns> = vec![];
         for ptr in pattern_ptrs {
@@ -461,6 +473,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             initial_channel_volume,
             initial_channel_panning,
             global_volume,
+            old_effects: (flags & 0x10) != 0,
+            compatible_g: (flags & 0x20) != 0,
         })
     }
 
