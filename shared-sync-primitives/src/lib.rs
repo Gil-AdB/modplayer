@@ -309,10 +309,9 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
         }
     }
 
-    /// Allows the producer to fill a buffer. 
-    /// The callback `f` will receive a mutable slice to the buffer.
     /// Allows the producer to fill multiple buffers. 
     /// This method will block and wait for empty slots until the closure `f` returns `false`.
+    /// The callback `f` receives a mutable slice to the current buffer.
     pub fn produce<F: FnMut(&mut [T]) -> bool>(&self, mut f: F) -> bool {
         loop {
             self.empty_count.wait();
@@ -342,7 +341,8 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
         let back = self.back.load(Acquire);
         let front = self.front.load(Acquire);
         
-        // front == back uniquely means empty with monotonic indices
+        // With circular indices and capacity restricted to NUM_CHUNKS - 1, 
+        // front == back uniquely identifies an empty queue.
         if self.stopped.load(Acquire) && front == back {
             self.full_count.signal(); // Persist stop signal for subsequent calls
             return false;
@@ -471,9 +471,9 @@ mod tests {
 
         // Update state
         {
-            let w_val = writer.get_write_buffer(); // Swaps initial empty buffer to reader, writer gets new buffer
+            let w_val = writer.get_write_buffer(); // Swaps ready buffer to writer, previous writer becomes ready
             *w_val = 42;
-            writer.get_write_buffer(); // Swaps buffer with 42 to reader
+            writer.get_write_buffer(); // Publishes the buffer containing 42 by swapping it to ready
         }
 
         // Reader should see dirty state
