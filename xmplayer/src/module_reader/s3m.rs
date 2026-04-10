@@ -158,6 +158,8 @@
             initial_channel_volume: [64; 64],
             initial_channel_panning,
             global_volume,
+            old_effects: false,
+            compatible_g: true, // S3M always uses compatible G behavior
         })
     }
 
@@ -503,6 +505,7 @@
                 relative_note,
                 name: sample_name.clone().to_string(),
                 global_volume: 64,
+                surround: false,
                 data: vec![]
             };
             sample.read_s3m_sample_data(file, sample_ptr)?;

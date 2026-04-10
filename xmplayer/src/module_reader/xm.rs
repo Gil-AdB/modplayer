@@ -153,6 +153,7 @@ fn read_samples<R: Read>(file: &mut R, sample_count: usize) -> SimpleResult<Vec<
             relative_note,
             name,
             global_volume: 64,
+            surround: false,
             data: vec![],
         })
     }
@@ -331,6 +332,8 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
             initial_channel_volume: [64; 64],
             initial_channel_panning: [32; 64],
             global_volume:           64,
+            old_effects: false,
+            compatible_g: false,
         })
     }
 

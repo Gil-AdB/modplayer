@@ -49,7 +49,7 @@ impl SplineData {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Voice {
+pub struct Voice {
     pub(crate) instrument:                     usize,
     pub(crate) sample:                         usize,
     pub(crate) frequency:                      f32,
@@ -58,7 +58,7 @@ pub(crate) struct Voice {
     pub(crate) sample_position:                f32,
     pub(crate) loop_started:                   bool,
     pub(crate) ping:                           bool,
-    pub(crate) sustained:                      bool,
+    pub        sustained:                      bool,
     pub(crate) spline_data:                    SplineData,
     
     // Playback state moved from ChannelState
@@ -76,15 +76,17 @@ pub(crate) struct Voice {
     pub(crate) filter_resonance:               u8,
     pub(crate) filter_state:                   ResonantFilter,
     pub(crate) on:                             bool,
+    pub(crate) surround:                       bool,
     pub(crate) channel_idx:                    usize, // The logical channel that "owns" or "started" this voice
+    pub(crate) last_played_note:               u8,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ResonantFilter {
-    pub(crate) a: f32,
-    pub(crate) b: f32,
-    pub(crate) c: f32,
-    pub(crate) history: [f32; 2],
+pub struct ResonantFilter {
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+    pub history: [f32; 2],
 }
 
 impl ResonantFilter {
@@ -125,7 +127,9 @@ impl Voice {
             filter_resonance: 0,
             filter_state: ResonantFilter::new(),
             on: false,
+            surround: false,
             channel_idx: 0,
+            last_played_note: 0,
         }
     }
 
@@ -201,19 +205,19 @@ impl Voice {
         self.filter_state.b = r;
     }
 
-    pub(crate) fn update_output_volume(&mut self, global_volume: f32, channel_volume: f32, divisor: f32) {
+    pub(crate) fn update_output_volume(&mut self, global_volume: f32, channel_volume: f32, _divisor: f32) {
         if !self.sustained {
-            if self.volume.fadeout_vol - self.volume.fadeout_speed * 2 < 0 {
+            if self.volume.fadeout_vol - self.volume.fadeout_speed < 0 {
                 self.volume.fadeout_vol = 0;
             } else {
-                self.volume.fadeout_vol -= self.volume.fadeout_speed * 2;
+                self.volume.fadeout_vol -= self.volume.fadeout_speed;
             }
         }
 
         self.volume.output_volume = (self.volume.fadeout_vol as f32 / 65536.0) * 
                                     (self.volume.envelope_vol as f32 / 16384.0) * 
                                     (self.volume.get_volume() as f32 / 64.0) * 
-                                    (self.instrument_global_volume as f32 / divisor) *
+                                    (self.instrument_global_volume as f32 / 64.0) *
                                     (self.sample_global_volume as f32 / 64.0) *
                                     channel_volume *
                                     global_volume;
@@ -319,16 +323,20 @@ impl ChannelState {
         voice.set_frequency(self.frequency, rate)
     }
 
-    pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8) {
-        if first_tick {
-            if let Some(v) = voice {
-                v.vibrato_state.set_speed(speed as i8);
-                v.vibrato_state.set_depth(depth as i8);
-            }
-        } else {
-            if let Some(v) = voice {
+    pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, tables: &AudioTables) {
+        if let Some(v) = voice {
+            if first_tick {
+                if speed != 0 {
+                    v.vibrato_state.speed = speed as i8;
+                }
+                if depth != 0 {
+                    let multiplier = if old_effects { 8 } else { 4 };
+                    v.vibrato_state.depth = ((depth as u16) * multiplier) as i16;
+                }
+            } else {
                 v.vibrato_state.next_tick();
             }
+            self.update_frequency_voice(v, 0.0, true, tables);
         }
     }
 
@@ -355,30 +363,70 @@ impl ChannelState {
     }
 
     pub(crate) fn porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        if first_tick {
-            if amount != 0 {
-                self.last_porta_up = (amount as u16) * 4;
+        if song_type == SongType::IT {
+            if amount >= 0xF0 { // Extra Fine
+                if first_tick {
+                    let val = (amount & 0x0F) as u16;
+                    self.note.period = self.note.period.saturating_sub(val);
+                }
+            } else if amount >= 0xE0 { // Fine
+                if first_tick {
+                    let val = ((amount & 0x0F) as u16) << 2;
+                    self.note.period = self.note.period.saturating_sub(val);
+                }
+            } else { // Normal
+                if !first_tick {
+                    let val = (amount as u16) << 2;
+                    self.note.period = self.note.period.saturating_sub(val);
+                }
             }
         } else {
-            self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(self.last_porta_up)).0;
-            let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
-            if (self.note.period as i16) < min_period {
-                self.note.period = min_period as u16;
+            if first_tick {
+                if amount != 0 {
+                    self.last_porta_up = (amount as u16) * 4;
+                }
+            } else {
+                self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(self.last_porta_up)).0;
             }
+        }
+        
+        let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
+        if (self.note.period as i16) < min_period {
+            self.note.period = min_period as u16;
         }
     }
 
     pub(crate) fn porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        if first_tick {
-            if amount != 0 {
-                self.last_porta_down = (amount as u16) * 4;
+        if song_type == SongType::IT {
+            if amount >= 0xF0 { // Extra Fine
+                if first_tick {
+                    let val = (amount & 0x0F) as u16;
+                    self.note.period = self.note.period.saturating_add(val);
+                }
+            } else if amount >= 0xE0 { // Fine
+                if first_tick {
+                    let val = ((amount & 0x0F) as u16) << 2;
+                    self.note.period = self.note.period.saturating_add(val);
+                }
+            } else { // Normal
+                if !first_tick {
+                    let val = (amount as u16) << 2;
+                    self.note.period = self.note.period.saturating_add(val);
+                }
             }
         } else {
-            self.note.period += self.last_porta_down;
-            let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
-            if self.note.period > max_period {
-                self.note.period = max_period;
+            if first_tick {
+                if amount != 0 {
+                    self.last_porta_down = (amount as u16) * 4;
+                }
+            } else {
+                self.note.period += self.last_porta_down;
             }
+        }
+
+        let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
+        if self.note.period > max_period {
+            self.note.period = max_period;
         }
     }
 
@@ -432,22 +480,20 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn porta_to_note(&mut self, song_type: SongType, _voice: Option<&mut Voice>, first_tick: bool, amount: u8) {
+    pub(crate) fn porta_to_note(&mut self, song_type: SongType, voice: Option<&mut Voice>, first_tick: bool, speed: u8, compatible_g: bool, tables: &AudioTables) {
         if first_tick {
-            if amount != 0 {
-                self.porta_to_note.speed = amount;
+            if speed != 0 {
+                self.porta_to_note.speed = if song_type == SongType::IT && !compatible_g {
+                    (speed as u16) * 4
+                } else {
+                    (speed as u16) * 4
+                };
             }
         } else {
             self.porta_to_note.next_tick(&mut self.note);
-            
-            // Apply limits
-            let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
-            let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
-            if (self.note.period as i16) < min_period {
-                self.note.period = min_period as u16;
-            } else if self.note.period > max_period {
-                self.note.period = max_period;
-            }
+        }
+        if let Some(v) = voice {
+            self.update_frequency_voice(v, 0.0, true, tables);
         }
     }
 

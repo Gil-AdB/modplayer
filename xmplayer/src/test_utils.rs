@@ -1,15 +1,15 @@
 use crate::module_reader::{SongData, SongType, FrequencyType, Patterns};
 use crate::pattern::Pattern;
 use crate::instrument::{Instrument, Sample};
-use crate::song::{Song, PlayData};
+use crate::song::{Song, PlayData, GlobalVolume};
 use shared_sync_primitives::{TripleBuffer};
 
 pub struct MockSongBuilder {
-    song_type: SongType,
-    channels: usize,
-    patterns: Vec<Patterns>,
-    order: Vec<u8>,
-    instruments: Vec<Instrument>,
+    pub song_type: SongType,
+    pub channels: usize,
+    pub patterns: Vec<Patterns>,
+    pub order: Vec<u8>,
+    pub instruments: Vec<Instrument>,
 }
 
 impl MockSongBuilder {
@@ -75,8 +75,14 @@ impl MockSongBuilder {
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
             initial_channel_panning: [128; 64],
-            global_volume: 64,
+            global_volume: 128,
+            old_effects: false,
+            compatible_g: false,
         }
+    }
+
+    pub fn get_tester(&self) -> SongTester {
+        SongTester::new(self.build())
     }
 }
 
@@ -112,5 +118,16 @@ impl SongTester {
 
     pub fn get_pos(&self) -> (usize, usize, u32) {
         (self.song.song_position, self.song.row, self.song.tick)
+    }
+
+    pub fn get_active_voices(&self) -> usize {
+        self.song.voices.iter().filter(|v| v.on).count()
+    }
+
+    pub fn get_voices_for_channel(&self, channel: usize) -> Vec<usize> {
+        self.song.voices.iter().enumerate()
+            .filter(|(_, v)| v.on && v.channel_idx == channel)
+            .map(|(i, _)| i)
+            .collect()
     }
 }

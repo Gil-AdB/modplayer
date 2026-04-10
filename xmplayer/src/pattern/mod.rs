@@ -15,7 +15,7 @@ pub struct Pattern {
 impl Pattern {
     pub const NOTES: [&'static str; 12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
 
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             note: 0,
             instrument: 0,

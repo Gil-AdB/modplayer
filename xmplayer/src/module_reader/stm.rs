@@ -125,6 +125,8 @@
             initial_channel_volume: [64; 64],
             initial_channel_panning: [32; 64],
             global_volume:           64,
+            old_effects: false,
+            compatible_g: false,
         })
     }
 
@@ -273,6 +275,7 @@
             relative_note,
             name,
             global_volume: 64,
+            surround: false,
             data: vec![],
         })
     }

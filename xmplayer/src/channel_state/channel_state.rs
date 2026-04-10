@@ -28,9 +28,9 @@ pub fn clamp<T: PartialOrd>(input: T, min: T, max: T) -> T {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct PortaToNoteState {
-    pub(crate) target_note:                Note,
-    pub(crate) speed:                      u8,
+pub struct PortaToNoteState {
+    pub target_note:                Note,
+    pub speed:                      u16,
 }
 
 
@@ -51,12 +51,12 @@ impl PortaToNoteState {
         if self.speed == 0 || self.target_note.period == 0 { return; }
         
         if current_note.period < self.target_note.period {
-            current_note.period = (std::num::Wrapping(current_note.period) + std::num::Wrapping(self.speed as u16 * 4)).0;
+            current_note.period = (std::num::Wrapping(current_note.period) + std::num::Wrapping(self.speed)).0;
             if current_note.period > self.target_note.period {
                 current_note.period = self.target_note.period;
             }
         } else if current_note.period > self.target_note.period {
-            current_note.period = (std::num::Wrapping(current_note.period) - std::num::Wrapping(self.speed as u16 * 4)).0;
+            current_note.period = (std::num::Wrapping(current_note.period) - std::num::Wrapping(self.speed)).0;
             if current_note.period < self.target_note.period {
                 current_note.period = self.target_note.period;
             }
@@ -87,10 +87,10 @@ const SIN_TABLE: [i32; 32] =
         180, 161, 141, 120,  97,  74,  49,  24];
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct VibratoState {
-    speed:  i8,
-    depth:  i8,
-    pos:    i8,
+pub struct VibratoState {
+    pub speed:  i8,
+    pub depth:  i16,
+    pub pos:    i8,
 }
 
 impl VibratoState {
@@ -111,7 +111,7 @@ impl VibratoState {
 
     pub(crate) fn set_depth(&mut self, depth: i8) {
         if depth != 0 {
-            self.depth = depth;
+            self.depth = depth as i16;
         }
     }
 
@@ -141,10 +141,10 @@ impl VibratoState {
 
 // This and vibrato should derive from a base class probably
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct TremoloState {
-    speed:  i8,
-    depth:  i8,
-    pos:    i8,
+pub struct TremoloState {
+    pub speed:  i8,
+    pub depth:  i16,
+    pub pos:    i8,
 }
 
 impl TremoloState {
@@ -165,7 +165,7 @@ impl TremoloState {
 
     pub(crate) fn set_depth(&mut self, depth: i8) {
         if depth != 0 {
-            self.depth = depth;
+            self.depth = depth as i16;
         }
     }
 
@@ -194,11 +194,11 @@ impl TremoloState {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct EnvelopeState {
-    pub(crate) frame:      u16,
-    pub(crate) sustained:  bool,
+pub struct EnvelopeState {
+    pub frame:      u16,
+    pub sustained:  bool,
     // looped:     bool,
-    pub(crate) idx:        usize,
+    pub idx:        usize,
     // instrument:         &'a Instrument,
 }
 
@@ -355,10 +355,10 @@ impl EnvelopeState {
         self.sustained  = false;
         // self.looped     = false;
 
-        if self.frame > env.points[(env.size - 1) as usize].frame {self.frame = env.points[(env.size - 1) as usize].frame;}
+        if env.size > 0 && self.frame > env.points[(env.size - 1) as usize].frame {self.frame = env.points[(env.size - 1) as usize].frame;}
         let mut idx:usize = 0;
         loop {
-            if idx >= env.size as usize - 2 { break; }
+            if env.size < 2 || idx >= env.size as usize - 2 { break; }
             if env.points[idx].frame <= self.frame && env.points[idx+1].frame >= self.frame {
                 break;
             }
@@ -370,10 +370,10 @@ impl EnvelopeState {
 
 #[derive(Clone,Copy,Debug)]
 #[allow(dead_code)]
-pub(crate) struct VibratoEnvelopeState {
-    vibrato_sweep:  u16,
-    vibrato_amp:    u16,
-    vibrato_pos:    u16,
+pub struct VibratoEnvelopeState {
+    pub vibrato_sweep:  u16,
+    pub vibrato_amp:    u16,
+    pub vibrato_pos:    u16,
 }
 
 impl VibratoEnvelopeState {
@@ -731,14 +731,14 @@ mod tests {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Volume {
-    pub(crate) volume:         u8,
-    pub(crate) volume_shift:   i32,
-    pub(crate) output_volume:  f32,
-    pub(crate) fadeout_vol:    i32,
-    pub(crate) fadeout_speed:  i32,
-    pub(crate) envelope_vol:   i32,
-    pub(crate) global_vol:     i32,
+pub struct Volume {
+    pub volume:         u8,
+    pub volume_shift:   i32,
+    pub output_volume:  f32,
+    pub fadeout_vol:    i32,
+    pub fadeout_speed:  i32,
+    pub envelope_vol:   i32,
+    pub global_vol:     i32,
 }
 
 impl Volume {
@@ -772,9 +772,9 @@ impl Volume {
 
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Panning {
-    pub(crate) panning:               u8,
-    pub(crate) final_panning:         u8,
+pub struct Panning {
+    pub panning:               u8,
+    pub final_panning:         u8,
 }
 
 impl Panning {

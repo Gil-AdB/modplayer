@@ -37,6 +37,7 @@ pub struct Sample {
     pub relative_note: i8,
     pub name: String,
     pub global_volume: u8,
+    pub surround: bool,
     pub data: Vec<f32>
 }
 
@@ -55,8 +56,9 @@ impl Sample {
             relative_note: 0,
             name: "".to_string(),
             global_volume: 64,
+            surround: false,
             data: vec![],
-        }
+}
     }
 
     pub fn unpack_i16(mut data: Vec<i16>) -> Vec<i16> {
