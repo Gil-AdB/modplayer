@@ -152,6 +152,7 @@ fn read_samples<R: Read>(file: &mut R, sample_count: usize) -> SimpleResult<Vec<
             panning,
             relative_note,
             name,
+            global_volume: 64,
             data: vec![],
         })
     }
@@ -214,6 +215,10 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Si
                 nna: 0,
                 dct: 0,
                 dca: 0,
+                global_volume: 64,
+                initial_filter_cutoff: 127,
+                initial_filter_resonance: 0,
+                is_filter_envelope: false,
                 samples: read_samples(file, sample_count as usize)?
             });
         } else {
@@ -325,6 +330,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
             initial_channel_panning: [32; 64],
+            global_volume:           64,
         })
     }
 
