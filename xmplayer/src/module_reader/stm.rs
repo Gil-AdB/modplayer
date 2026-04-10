@@ -125,6 +125,8 @@
             initial_channel_volume: [64; 64],
             initial_channel_panning: [32; 64],
             global_volume:           64,
+            master_volume:           128,
+            mixing_volume:           128,
             old_effects: false,
             compatible_g: false,
         })

@@ -373,10 +373,10 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let flags = file.read_u16()?;
         let special = file.read_u16()?;
         let global_volume = file.read_u8()?;
-        let _mix_volume = file.read_u8()?;
+        let master_volume = file.read_u8()?;
         let speed = file.read_u8()?;
         let tempo = file.read_u8()?;
-        let _ = file.read_u8()?;
+        let mixing_volume = file.read_u8()?;
         let _ = file.read_u8()?;
         let message_length = file.read_u16()?;
         let message_offset = file.read_u32()?;
@@ -473,6 +473,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             initial_channel_volume,
             initial_channel_panning,
             global_volume,
+            master_volume,
+            mixing_volume,
             old_effects: (flags & 0x10) != 0,
             compatible_g: (flags & 0x20) != 0,
         })

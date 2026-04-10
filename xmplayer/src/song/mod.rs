@@ -383,6 +383,8 @@ pub struct Song {
     pub user_data:                  HashMap<String, UserData>,
     pub(crate) old_effects:         bool,
     pub(crate) compatible_g:        bool,
+    pub(crate) master_volume:       u8,
+    pub(crate) mixing_volume:       u8,
 }
 
 impl Song {
@@ -485,7 +487,9 @@ impl Song {
                 current_tick_position: 0,
                 row_delay: 0,
             },
-            user_data: HashMap::new()
+            user_data: HashMap::new(),
+            master_volume: song_data.master_volume,
+            mixing_volume: song_data.mixing_volume,
         }
     }
 
@@ -850,7 +854,7 @@ impl Song {
 
             let note_delay_first_tick = if pattern.is_note_delay(self.song_data.song_type) { self.tick == pattern.get_y() as u32 } else {first_tick};
 
-            if pattern.is_porta_to_note(self.song_data.song_type) && first_tick && is_note_valid(pattern.note) {
+            if pattern.is_porta_to_note(self.song_data.song_type) && first_tick && is_note_valid(pattern.note, self.song_data.song_type) {
                 channel.porta_to_note.target_note.period = channel.note.note_to_period(pattern.note, 0, self.frequency_tables.borrow());
             }
 
@@ -865,7 +869,7 @@ impl Song {
                     channel.last_instrument = inst_idx;
                 }
 
-                if is_note_valid(note) {
+                if is_note_valid(note, self.song_data.song_type) {
                     // IT Duplicate Check (DCT/DCA)
                     if let SongType::IT = self.song_data.song_type {
                         if inst_idx != 0 {
@@ -1088,15 +1092,38 @@ impl Song {
                             0x01 => { if first_tick { self.speed = pattern.effect_param as u32; } } // A: Set Speed
                             0x02 => { self.pattern_change.set_jump(first_tick, pattern.effect_param); } // B: Pattern Jump
                             0x03 => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); } // C: Pattern Break
-                            0x05 => { channel.porta_down(self.song_data.song_type, first_tick, pattern.effect_param); } // E: Porta Down
-                            0x06 => { channel.porta_up(self.song_data.song_type, first_tick, pattern.effect_param); } // F: Porta Up
-                            0x07 => { channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, self.compatible_g, self.frequency_tables.borrow()); } // G: Porta Note
+                            0x04 => { channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param); } // D: Volume Slide
+                            0x05 => { // E: Porta Down
+                                let param = if !self.compatible_g && pattern.effect_param == 0 { channel.last_it_slide_speed } else { pattern.effect_param };
+                                if !self.compatible_g && pattern.effect_param != 0 { channel.last_it_slide_speed = pattern.effect_param; }
+                                channel.porta_down(self.song_data.song_type, first_tick, param); 
+                            }
+                            0x06 => { // F: Porta Up
+                                let param = if !self.compatible_g && pattern.effect_param == 0 { channel.last_it_slide_speed } else { pattern.effect_param };
+                                if !self.compatible_g && pattern.effect_param != 0 { channel.last_it_slide_speed = pattern.effect_param; }
+                                channel.porta_up(self.song_data.song_type, first_tick, param); 
+                            }
+                            0x07 => { // G: Porta Note
+                                let param = if !self.compatible_g && pattern.effect_param == 0 { channel.last_it_slide_speed } else { pattern.effect_param };
+                                if !self.compatible_g && pattern.effect_param != 0 { channel.last_it_slide_speed = pattern.effect_param; }
+                                channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, param, self.compatible_g, self.frequency_tables.borrow()); 
+                            }
                             0x08 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), self.old_effects, self.frequency_tables.borrow()); } // H: Vibrato
                             0x0A => { channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y()); } // J: Arpeggio
+                            0x0B => { // K: Vibrato + Volume Slide
+                                channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, self.old_effects, self.frequency_tables.borrow());
+                                channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
+                            }
+                            0x0C => { // L: Porta Note + Volume Slide
+                                channel.porta_to_note(self.song_data.song_type, voice_ref.as_deref_mut(), first_tick, 0, self.compatible_g, self.frequency_tables.borrow());
+                                channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
+                            }
                             0x0F => { /* O: Offset - to be implemented */ }
+                            0x11 => { channel.it_retrig(voice_ref.as_deref_mut(), &self.song_data.instruments, self.tick, pattern.effect_param); } // Q: Multi-Retrig
                             0x14 => { if first_tick { self.bpm.update(pattern.effect_param as u32, self.rate); } } // T: Set Tempo
                             0x16 => { self.global_volume.set_volume(note_delay_first_tick, pattern.effect_param); } // V: Set Global Vol
                             0x17 => { self.global_volume.volume_slide(note_delay_first_tick, pattern.effect_param); } // W: Global Volume Slide
+                            0x18 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((pattern.effect_param as i32 * 4).min(255)); } } } // X: Set Panning
                             0x13 => { // S: Special
                                 let x = pattern.get_x();
                                 match x {
@@ -1306,9 +1333,11 @@ impl Song {
 
 
         let (voices, channels) = (&mut self.voices, &mut self.channels);
-
+        let master_gain = (self.master_volume as f32 / 128.0) * (self.mixing_volume as f32 / 128.0);
+        
         for voice in voices {
             if !voice.on { continue; }
+            let final_master_gain = if self.song_data.song_type == SongType::IT { master_gain } else { 1.0 };
 
             let sample = self.song_data.get_sample(voice);
 
@@ -1360,7 +1389,7 @@ impl Song {
                     out_sample = new_low;
                 }
 
-                let final_sample = out_sample / 4.0 * voice.volume.output_volume;
+                let final_sample = out_sample / 4.0 * voice.volume.output_volume * final_master_gain;
                 
                 // Sum in per-channel oscilloscope buffer
                 let channel = &mut channels[voice.channel_idx];

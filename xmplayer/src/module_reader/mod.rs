@@ -33,8 +33,11 @@ pub enum FrequencyType {
     AMIGA,
     LINEAR
 }
-pub(crate) fn is_note_valid(note: u8) -> bool {
-    note > 0 && note < 121
+pub(crate) fn is_note_valid(note: u8, song_type: SongType) -> bool {
+    match song_type {
+        SongType::IT => note > 0 && note <= 120,
+        _ => note > 0 && note <= 96,
+    }
 }
 
 #[derive(Clone)]
@@ -107,6 +110,8 @@ pub struct SongData {
     pub                     initial_channel_volume: [u8; 64],
     pub                     initial_channel_panning: [u8; 64],
     pub                     global_volume:           u8,
+    pub                     master_volume:           u8,
+    pub                     mixing_volume:           u8,
     pub                     old_effects:             bool,
     pub                     compatible_g:            bool,
 }

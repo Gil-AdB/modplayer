@@ -158,6 +158,8 @@
             initial_channel_volume: [64; 64],
             initial_channel_panning,
             global_volume,
+            master_volume:           128,
+            mixing_volume:           128,
             old_effects: false,
             compatible_g: true, // S3M always uses compatible G behavior
         })

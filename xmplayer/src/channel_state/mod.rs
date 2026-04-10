@@ -277,6 +277,8 @@ pub struct ChannelState {
     pub(crate) multi_retrig_volume:            u8,
     pub(crate) period_shift:                   i16,
     pub(crate) last_played_note:               u8,
+    pub(crate) last_it_slide_speed:            u8,
+    pub(crate) last_it_vol_slide:              u8,
     pub(crate) last_samples:                   [f32; 4096],
     pub(crate) last_samples_pos:               usize,
 }
@@ -313,6 +315,8 @@ impl ChannelState {
             multi_retrig_volume: 0,
             period_shift: 0,
             last_played_note: 0,
+            last_it_slide_speed: 0,
+            last_it_vol_slide: 0,
             last_samples: [0.0; 4096],
             last_samples_pos: 0,
         }
@@ -483,11 +487,7 @@ impl ChannelState {
     pub(crate) fn porta_to_note(&mut self, song_type: SongType, voice: Option<&mut Voice>, first_tick: bool, speed: u8, compatible_g: bool, tables: &AudioTables) {
         if first_tick {
             if speed != 0 {
-                self.porta_to_note.speed = if song_type == SongType::IT && !compatible_g {
-                    (speed as u16) * 4
-                } else {
-                    (speed as u16) * 4
-                };
+                self.porta_to_note.speed = (speed as u16) * 4;
             }
         } else {
             self.porta_to_note.next_tick(&mut self.note);
@@ -497,14 +497,56 @@ impl ChannelState {
         }
     }
 
+    pub(crate) fn it_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut param: u8) {
+        if param == 0 { param = self.last_it_vol_slide; }
+        self.last_it_vol_slide = param;
+
+        let x = param >> 4;
+        let y = param & 0x0F;
+
+        if x == 0x0F && y != 0 { // DFy: Fine Down
+            self.fine_volume_slide(voice, first_tick, -(y as i8));
+        } else if y == 0x0F && x != 0 { // DxF: Fine Up
+            self.fine_volume_slide(voice, first_tick, x as i8);
+        } else if x != 0 && y == 0 { // Dx0: Up
+            self.volume_slide(voice, first_tick, x as i8);
+        } else if y != 0 && x == 0 { // D0y: Down
+            self.volume_slide(voice, first_tick, -(y as i8));
+        }
+    }
+
+    pub(crate) fn it_retrig(&mut self, voice: Option<&mut Voice>, instruments: &Instruments, tick: u32, param: u8) {
+        let y = param & 0x0F;
+        let x = param >> 4;
+        if y == 0 { return; }
+        if tick % (y as u32) == 0 {
+            if tick > 0 {
+                self.retrig(voice, instruments, tick, y, x);
+            }
+        }
+    }
+
     pub(crate) fn retrig(&mut self, voice: Option<&mut Voice>, instruments: &Instruments, tick: u32, amount: u8, volume_change: u8) {
         if amount == 0 { return; }
         if tick % (amount as u32) == 0 {
             if let Some(v) = voice {
                 v.trigger_note(instruments);
-                // Retrig volume logic simplified for now
-                if volume_change > 0 {
-                    // Implement volume change logic if needed
+                match volume_change {
+                    1 => { v.volume.set_volume(v.volume.get_volume() as i32 - 1); }
+                    2 => { v.volume.set_volume(v.volume.get_volume() as i32 - 2); }
+                    3 => { v.volume.set_volume(v.volume.get_volume() as i32 - 4); }
+                    4 => { v.volume.set_volume(v.volume.get_volume() as i32 - 8); }
+                    5 => { v.volume.set_volume(v.volume.get_volume() as i32 - 16); }
+                    6 => { v.volume.set_volume((v.volume.get_volume() as f32 * 2.0 / 3.0) as i32); }
+                    7 => { v.volume.set_volume((v.volume.get_volume() as f32 * 0.5) as i32); }
+                    9 => { v.volume.set_volume(v.volume.get_volume() as i32 + 1); }
+                    10 => { v.volume.set_volume(v.volume.get_volume() as i32 + 2); }
+                    11 => { v.volume.set_volume(v.volume.get_volume() as i32 + 4); }
+                    12 => { v.volume.set_volume(v.volume.get_volume() as i32 + 8); }
+                    13 => { v.volume.set_volume(v.volume.get_volume() as i32 + 16); }
+                    14 => { v.volume.set_volume((v.volume.get_volume() as f32 * 1.5) as i32); }
+                    15 => { v.volume.set_volume((v.volume.get_volume() as f32 * 2.0) as i32); }
+                    _ => {}
                 }
             }
         }
