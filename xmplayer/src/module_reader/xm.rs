@@ -99,11 +99,11 @@ fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usi
 }
 
 fn read_envelope<R: Read>(file: &mut R) -> SimpleResult<EnvelopePoints> {
-    let mut result = [EnvelopePoint::new(); 12];
+    let mut result = [EnvelopePoint::new(); 25];
 
-    for point in &mut result {
-        point.frame = file.read_u16()?;
-        point.value = file.read_u16()?;
+    for i in 0..12 {
+        result[i].frame = file.read_u16()?;
+        result[i].value = file.read_u16()?;
     }
     Ok(result)
 }
@@ -205,11 +205,15 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Si
             instruments.push(Instrument {
                 name,
                 idx: (instrument_idx + 1) as u8,
-                sample_indexes,
+                sample_indexes: sample_indexes.iter().enumerate().map(|(n, &s)| (n as u8, s)).collect(),
                 volume_envelope: Envelope::create(volume_envelope, volume_points, volume_sustain_point, volume_loop_start_point, volume_loop_end_point, volume_type),
                 panning_envelope: Envelope::create(panning_envelope,panning_points, panning_sustain_point, panning_loop_start_point, panning_loop_end_point,panning_type),
+                pitch_envelope: Envelope::new(),
                 vibrato_envelope: VibratoEnvelope::create(vibrato_type, vibrato_sweep, vibrato_depth, vibrato_rate),
                 volume_fadeout,
+                nna: 0,
+                dct: 0,
+                dca: 0,
                 samples: read_samples(file, sample_count as usize)?
             });
         } else {
@@ -319,6 +323,8 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
             instruments,
             use_amiga: (flags & 1) != 1,
             song_message: "".to_string(),
+            initial_channel_volume: [64; 64],
+            initial_channel_panning: [32; 64],
         })
     }
 

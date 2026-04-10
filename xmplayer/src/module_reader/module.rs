@@ -99,6 +99,8 @@
             instruments,
             use_amiga: true,
             song_message: "".to_string(),
+            initial_channel_volume: [64; 64],
+            initial_channel_panning: [32; 64],
         })
     }
 
