@@ -461,7 +461,7 @@ impl Song {
     // }
 
     fn queue_display(&mut self) {
-        let play_data = self.triple_buffer_writer.write();
+        let play_data = self.triple_buffer_writer.get_write_buffer();
 
         play_data.name                      = self.name.clone();
         play_data.tick_duration_in_frames   = self.bpm.tick_duration_in_frames;

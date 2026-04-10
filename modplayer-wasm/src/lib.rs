@@ -159,7 +159,7 @@ impl SongJs {
 
     pub fn display(&mut self, view_mode: u32, theme_id: u32) -> js_sys::Uint8Array {
         let mut tbr = self.triple_buffer_reader.lock().unwrap();
-        let (play_data, _state) = tbr.read();
+        let (play_data, _state) = tbr.get_read_buffer();
         
         let view_port = ViewPort {
             x1: self.scroll_offset_x,
@@ -186,7 +186,7 @@ impl SongJs {
 
     pub fn get_play_data(&self) -> JsValue {
         let mut tbr = self.triple_buffer_reader.lock().unwrap();
-        let (play_data, _state) = tbr.read();
+        let (play_data, _state) = tbr.get_read_buffer();
         serde_wasm_bindgen::to_value(play_data).unwrap()
     }
 

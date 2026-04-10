@@ -47,7 +47,7 @@ pub struct TripleBufferReader<T> {
 impl<T> TripleBufferReader<T> where T: Clone + Default {
     /// Reads the current state from the buffer.
     /// Returns a reference to the data and its state (Dirty or NoChange).
-    pub fn read(&mut self) -> (&T, State) {
+    pub fn get_read_buffer(&mut self) -> (&T, State) {
         let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
@@ -79,7 +79,7 @@ pub struct TripleBufferWriter<T> {
 impl<T> TripleBufferWriter<T> where T: Clone + Default {
     /// Commits the previously written buffer to the reader and provides a mutable reference
     /// to the next available buffer for writing.
-    pub fn write(&mut self) -> &mut T {
+    pub fn get_write_buffer(&mut self) -> &mut T {
         let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
@@ -465,24 +465,24 @@ mod tests {
         let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
         
         // Initial state
-        let (val, state) = reader.read();
+        let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 0);
         assert_eq!(state, State::StateNoChange);
 
         // Update state
         {
-            let w_val = writer.write(); // Swaps initial empty buffer to reader, writer gets new buffer
+            let w_val = writer.get_write_buffer(); // Swaps initial empty buffer to reader, writer gets new buffer
             *w_val = 42;
-            writer.write(); // Swaps buffer with 42 to reader
+            writer.get_write_buffer(); // Swaps buffer with 42 to reader
         }
 
         // Reader should see dirty state
-        let (val, state) = reader.read();
+        let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 42);
         assert_eq!(state, State::StateDirty);
 
         // Reader should see no change now
-        let (val, state) = reader.read();
+        let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 42);
         assert_eq!(state, State::StateNoChange);
     }
@@ -492,11 +492,11 @@ mod tests {
         let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
 
         // Write twice
-        *writer.write() = 1;
-        *writer.write() = 2; // This publishes 1 and makes writer point to a new buffer
-        writer.write();      // This publishes 2
+        *writer.get_write_buffer() = 1;
+        *writer.get_write_buffer() = 2; // This publishes 1 and makes writer point to a new buffer
+        writer.get_write_buffer();      // This publishes 2
 
-        let (val, state) = reader.read();
+        let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 2);
         assert_eq!(state, State::StateDirty);
     }
@@ -514,17 +514,17 @@ mod tests {
         let writer_thread = thread::spawn(move || {
             b1.wait();
             for i in 1..=1000 {
-                let w = writer.write();
+                let w = writer.get_write_buffer();
                 *w = i;
             }
-            writer.write(); // Flush the last value
+            writer.get_write_buffer(); // Flush the last value
         });
 
         let reader_thread = thread::spawn(move || {
             b2.wait();
             let mut last_val: Option<u32> = None;
             while last_val.unwrap_or(0) < 1000 {
-                let (val, state) = reader.read();
+                let (val, state) = reader.get_read_buffer();
                 if state == State::StateDirty {
                     if let Some(lv) = last_val {
                         assert!(*val > lv, "Read value {} not greater than last {}", *val, lv);
@@ -625,7 +625,7 @@ mod tests {
         let (mut _reader, mut writer) = TripleBuffer::<u32>::new().split();
         
         let _ = thread::spawn(move || {
-            let w = writer.write();
+            let w = writer.get_write_buffer();
             *w = 100;
         }).join();
 

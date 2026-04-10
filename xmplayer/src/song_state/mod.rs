@@ -155,7 +155,7 @@ impl SongState {
                         break;
                     }
                     sleep(Duration::from_millis(30));
-                    let (play_data, state) = triple_buffer_reader.read();
+                    let (play_data, state) = triple_buffer_reader.get_read_buffer();
                     if StateNoChange == state { continue; }
                     if play_data.tick != song_tick || play_data.row != song_row {
                         (s.display_cb.unwrap())(play_data, &s.song_data.instruments);
