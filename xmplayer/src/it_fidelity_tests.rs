@@ -170,3 +170,25 @@ fn test_it_note_off_cut_remapped() {
     
     assert_eq!(tester.get_active_voices(), 0, "Voice should be CUT immediately on Note 121 (IT Note Cut)");
 }
+
+#[test]
+fn test_it_note_limit_acceptance() {
+    use crate::module_reader::is_note_valid;
+    assert!(is_note_valid(120, SongType::IT));
+    assert!(!is_note_valid(121, SongType::IT));
+}
+
+#[test]
+fn test_xm_note_limit_rejection() {
+    use crate::module_reader::is_note_valid;
+    assert!(is_note_valid(96, SongType::XM));
+    assert!(!is_note_valid(97, SongType::XM));
+    assert!(!is_note_valid(120, SongType::XM));
+}
+
+#[test]
+fn test_mod_note_limit_rejection() {
+    use crate::module_reader::is_note_valid;
+    assert!(is_note_valid(96, SongType::MOD));
+    assert!(!is_note_valid(97, SongType::MOD));
+}
