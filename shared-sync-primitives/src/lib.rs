@@ -314,18 +314,12 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
     /// The callback `f` receives a mutable slice to the current buffer.
     pub fn produce<F: FnMut(&mut [T]) -> bool>(&self, mut f: F) -> bool {
         loop {
-            self.empty_count.wait();
-            if self.stopped.load(Acquire) {
-                self.empty_count.signal(); // Persist stop signal for other potential producers
+            if !self.wait_for_write() {
                 return false;
             }
 
-            let front = self.front.load(Acquire);
-            let my_buf = unsafe { &mut (*self.buf.get())[front] };
-            let result = f(my_buf);
-            
-            self.front.store((front + 1) % NUM_CHUNKS, Release);
-            self.full_count.signal();
+            let result = f(self.next_write_buffer());
+            self.commit_write();
 
             if !result {
                 return true;
@@ -336,27 +330,17 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
     /// Allows the consumer to process exactly one buffer.
     /// Returns true if a buffer was processed, false if the queue is stopped and empty.
     pub fn consume<F: FnMut(&[T])>(&self, mut f: F) -> bool {
-        self.full_count.wait();
-
-        let back = self.back.load(Acquire);
-        let front = self.front.load(Acquire);
-        
-        // With circular indices and capacity restricted to NUM_CHUNKS - 1, 
-        // front == back uniquely identifies an empty queue.
-        if self.stopped.load(Acquire) && front == back {
-            self.full_count.signal(); // Persist stop signal for subsequent calls
+        if !self.wait_for_read() {
             return false;
         }
 
-        let my_buf = unsafe { &(*self.buf.get())[back] };
-        f(my_buf);
-        self.back.store((back + 1) % NUM_CHUNKS, Release);
-        self.empty_count.signal();
+        f(self.next_read_buffer());
+        self.commit_read();
 
         true
     }
 
-    pub(crate) fn wait_for_write(&self) -> bool {
+    fn wait_for_write(&self) -> bool {
         self.empty_count.wait();
         if self.stopped.load(Acquire) {
             self.empty_count.signal();
@@ -365,18 +349,18 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
         true
     }
 
-    pub(crate) fn get_write_buffer(&self) -> &mut [T] {
+    fn next_write_buffer(&self) -> &mut [T] {
         let front = self.front.load(Acquire);
         unsafe { &mut (*self.buf.get())[front] }
     }
 
-    pub(crate) fn commit_write(&self) {
+    fn commit_write(&self) {
         let front = self.front.load(Acquire);
         self.front.store((front + 1) % NUM_CHUNKS, Release);
         self.full_count.signal();
     }
 
-    pub(crate) fn wait_for_read(&self) -> bool {
+    fn wait_for_read(&self) -> bool {
         self.full_count.wait();
         let back = self.back.load(Acquire);
         let front = self.front.load(Acquire);
@@ -387,12 +371,12 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
         true
     }
 
-    pub(crate) fn get_read_buffer(&self) -> &[T] {
+    fn next_read_buffer(&self) -> &[T] {
         let back = self.back.load(Acquire);
         unsafe { &(*self.buf.get())[back] }
     }
 
-    pub(crate) fn commit_read(&self) {
+    fn commit_read(&self) {
         let back = self.back.load(Acquire);
         self.back.store((back + 1) % NUM_CHUNKS, Release);
         self.empty_count.signal();
@@ -404,7 +388,7 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE
         self.q.produce(f)
     }
 
-    pub fn get_write_buffer(&mut self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+    pub fn acquire_buffer(&mut self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
         if self.q.wait_for_write() {
             Some(ProducerGuard { producer: self })
         } else {
@@ -412,15 +396,15 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE
         }
     }
 
-    pub(crate) fn get_buffer(&self) -> &[T] {
-        self.q.get_write_buffer()
+    fn get_buffer(&self) -> &[T] {
+        self.q.next_write_buffer()
     }
 
-    pub(crate) fn get_buffer_mut(&mut self) -> &mut [T] {
-        self.q.get_write_buffer()
+    fn get_buffer_mut(&mut self) -> &mut [T] {
+        self.q.next_write_buffer()
     }
 
-    pub(crate) fn commit(&self) {
+    fn commit(&self) {
         self.q.commit_write();
     }
 
@@ -434,7 +418,7 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Consumer<T, CHUNK_SIZE
         self.q.consume(f)
     }
 
-    pub fn get_read_buffer(&mut self) -> Option<ConsumerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+    pub fn acquire_buffer(&mut self) -> Option<ConsumerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
         if self.q.wait_for_read() {
             Some(ConsumerGuard { consumer: self })
         } else {
@@ -442,11 +426,11 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Consumer<T, CHUNK_SIZE
         }
     }
 
-    pub(crate) fn get_buffer(&self) -> &[T] {
-        self.q.get_read_buffer()
+    fn get_buffer(&self) -> &[T] {
+        self.q.next_read_buffer()
     }
 
-    pub(crate) fn commit(&self) {
+    fn commit(&self) {
         self.q.commit_read();
     }
 
@@ -625,8 +609,7 @@ mod tests {
         let (mut _reader, mut writer) = TripleBuffer::<u32>::new().split();
         
         let _ = thread::spawn(move || {
-            let w = writer.get_write_buffer();
-            *w = 100;
+            let _w = writer.get_write_buffer();
         }).join();
 
         // The writer guard should have been dropped during stack unwinding
@@ -720,5 +703,20 @@ mod tests {
         prod.produce(|buf| { buf[0] = 3; false });
         cons.consume(|buf| { val = buf[0]; });
         assert_eq!(val, 3);
+    }
+
+    #[test]
+    fn test_pcq_raii() {
+        let (mut prod, mut cons) = ProducerConsumerQueue::<u32, 1, 2>::new();
+        
+        {
+            let mut w = prod.acquire_buffer().unwrap();
+            w[0] = 42;
+        } // commit occurs here
+        
+        {
+            let r = cons.acquire_buffer().unwrap();
+            assert_eq!(r[0], 42);
+        } // commit occurs here
     }
 }
