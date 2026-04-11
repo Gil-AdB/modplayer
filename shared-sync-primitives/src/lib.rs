@@ -14,12 +14,19 @@ pub enum State {
     StateDirty
 }
 
-const READER: u32       = 0x03;
-const WRITER: u32       = 0x0C;
-const WRITER_SHIFT: u32 = 2;
-const READY: u32        = 0x30;
-const READY_SHIFT: u32  = 4;
-const DIRTY: u32        = 0x40;
+const READER_MASK: u32   = 0x03;
+const WRITER_MASK: u32   = 0x0C;
+const WRITER_SHIFT: u32  = 2;
+const READY_MASK: u32    = 0x30;
+const READY_SHIFT: u32   = 4;
+const DIRTY_BIT: u32     = 0x40;
+
+/// State bitfield structure (AtomicU32):
+/// [6]:   Dirty bit (1 if new data is available in the READY slot)
+/// [4-5]: Index of the buffer that was most recently written and is READY for reading.
+/// [2-3]: Index of the buffer currently owned by the WRITER.
+/// [0-1]: Index of the buffer currently owned by the READER.
+const INITIAL_STATE: u32 = (2 << READY_SHIFT) | (1 << WRITER_SHIFT) | 0; // 0x24: Ready=2, Writer=1, Reader=0
 
 
 
@@ -51,8 +58,8 @@ impl<T> TripleBufferReader<T> where T: Clone + Default {
         let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
-            if !TripleBuffer::<T>::get_dirty(current_indexes) {
-                let idx = TripleBuffer::<T>::get_reader(current_indexes) as usize;
+            if !TripleBuffer::<T>::is_dirty(current_indexes) {
+                let idx = TripleBuffer::<T>::get_reader_idx(current_indexes) as usize;
                 return (tb.get_buffer_ref(idx), State::StateNoChange)
             }
             
@@ -66,7 +73,7 @@ impl<T> TripleBufferReader<T> where T: Clone + Default {
                 continue;
             }
 
-            let idx = TripleBuffer::<T>::get_reader(new_indexes) as usize;
+            let idx = TripleBuffer::<T>::get_reader_idx(new_indexes) as usize;
             return (tb.get_buffer_ref(idx), State::StateDirty);
         }
     }
@@ -76,33 +83,69 @@ pub struct TripleBufferWriter<T> {
     triple_buffer: Arc<TripleBuffer<T>>
 }
 
+/// Guard that grants mutable access to the writer buffer.
+/// When dropped, it automatically publishes the buffer to the reader.
+pub struct TripleBufferWriteGuard<'a, T> where T: Clone + Default {
+    writer: &'a mut TripleBufferWriter<T>,
+    buffer: &'a mut T,
+}
+
+impl<'a, T> Deref for TripleBufferWriteGuard<'a, T> where T: Clone + Default {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.buffer
+    }
+}
+
+impl<'a, T> DerefMut for TripleBufferWriteGuard<'a, T> where T: Clone + Default {
+    fn deref_mut(&mut self) -> &mut T {
+        self.buffer
+    }
+}
+
+impl<'a, T> Drop for TripleBufferWriteGuard<'a, T> where T: Clone + Default {
+    fn drop(&mut self) {
+        self.writer.publish();
+    }
+}
+
 impl<T> TripleBufferWriter<T> where T: Clone + Default {
-    /// Commits the previously written buffer to the reader and provides a mutable reference
-    /// to the next available buffer for writing.
-    pub fn get_write_buffer(&mut self) -> &mut T {
+    /// Acquires a mutable reference to the writer buffer.
+    /// The returned guard will publish the changes on drop.
+    pub fn acquire_buffer(&mut self) -> TripleBufferWriteGuard<'_, T> {
+        let indexes = self.triple_buffer.indexes.load(Acquire);
+        let writer_idx = TripleBuffer::<T>::get_writer_idx(indexes) as usize;
+        
+        // We use direct access here to avoid a borrow conflict on 'self'.
+        // Since we hold '&mut self', and the TripleBuffer logic ensures 
+        // the writer_idx buffer is exclusive, this is safe.
+        let buffer = unsafe { &mut (*self.triple_buffer.buffer.get())[writer_idx] };
+        
+        TripleBufferWriteGuard {
+            buffer,
+            writer: self,
+        }
+    }
+
+    /// Internal method to publish the current writer buffer by swapping it with the READY slot.
+    fn publish(&mut self) {
         let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
-            
-            // Swap ready and writer bits to publish the previously written buffer
             let new_indexes = TripleBuffer::<T>::swap_ready_and_writer(current_indexes);
             
-            // Attempt to update the atomic state
             if tb.indexes.compare_exchange_weak(current_indexes, new_indexes, Release, Relaxed).is_ok() {
-                // Success! Return the NEW writer buffer.
-                let new_writer_idx = TripleBuffer::<T>::get_writer(new_indexes) as usize;
-                return tb.get_buffer_mut(new_writer_idx);
+                break;
             }
         }
     }
 }
 
-impl<T> TripleBuffer<T> where T: Clone + Default {
-    /// Creates a new TripleBuffer.
-    pub fn new() -> Box<Self> {
+impl<T> TripleBuffer<T> {
+    pub fn new() -> Box<Self> where T: Clone + Default {
         Box::new(TripleBuffer {
             buffer: UnsafeCell::new(array_init(|_| T::default())),
-            indexes: AtomicU32::new(0x24) // Initial state: reader=0, writer=1, ready=2, dirty=0
+            indexes: AtomicU32::new(INITIAL_STATE)
         })
     }
 
@@ -119,40 +162,36 @@ impl<T> TripleBuffer<T> where T: Clone + Default {
         )
     }
 
-    fn get_reader(indexes: u32) -> u32 {
-        indexes & READER
+    fn get_reader_idx(indexes: u32) -> u32 {
+        indexes & READER_MASK
     }
 
-    fn get_writer(indexes: u32) -> u32 {
-        (indexes & WRITER) >> WRITER_SHIFT
+    fn get_writer_idx(indexes: u32) -> u32 {
+        (indexes & WRITER_MASK) >> WRITER_SHIFT
     }
 
-    fn get_ready(indexes: u32) -> u32 {
-        (indexes & READY) >> READY_SHIFT
+    fn get_ready_idx(indexes: u32) -> u32 {
+        (indexes & READY_MASK) >> READY_SHIFT
     }
 
-    fn get_dirty(indexes: u32) -> bool {
-        (indexes & DIRTY) == DIRTY
+    fn is_dirty(indexes: u32) -> bool {
+        (indexes & DIRTY_BIT) == DIRTY_BIT
     }
 
     fn swap_ready_and_writer(indexes: u32) -> u32 {
-        let new_ready = Self::get_writer(indexes);
-        let new_writer = Self::get_ready(indexes);
-        indexes & !(READY | WRITER) | (new_writer << WRITER_SHIFT) | (new_ready << READY_SHIFT) | DIRTY
+        let new_ready = Self::get_writer_idx(indexes);
+        let new_writer = Self::get_ready_idx(indexes);
+        indexes & !(READY_MASK | WRITER_MASK) | (new_writer << WRITER_SHIFT) | (new_ready << READY_SHIFT) | DIRTY_BIT
     }
 
     fn swap_ready_and_reader(indexes: u32) -> u32 {
-        let new_ready = Self::get_reader(indexes);
-        let new_reader = Self::get_ready(indexes);
-        indexes & !(READER | READY | DIRTY) | (new_ready << READY_SHIFT) | new_reader
+        let new_ready = Self::get_reader_idx(indexes);
+        let new_reader = Self::get_ready_idx(indexes);
+        indexes & !(READER_MASK | READY_MASK | DIRTY_BIT) | (new_ready << READY_SHIFT) | new_reader
     }
 
     fn get_buffer_ref(&self, idx: usize) -> &T {
         unsafe { &(*self.buffer.get())[idx] }
-    }
-
-    fn get_buffer_mut(&self, idx: usize) -> &mut T {
-        unsafe { &mut (*self.buffer.get())[idx] }
     }
 }
 
@@ -455,10 +494,9 @@ mod tests {
 
         // Update state
         {
-            let w_val = writer.get_write_buffer(); // Swaps ready buffer to writer, previous writer becomes ready
+            let mut w_val = writer.acquire_buffer(); 
             *w_val = 42;
-            writer.get_write_buffer(); // Publishes the buffer containing 42 by swapping it to ready
-        }
+        } // publishes the buffer containing 42 on drop
 
         // Reader should see dirty state
         let (val, state) = reader.get_read_buffer();
@@ -476,9 +514,15 @@ mod tests {
         let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
 
         // Write twice
-        *writer.get_write_buffer() = 1;
-        *writer.get_write_buffer() = 2; // This publishes 1 and makes writer point to a new buffer
-        writer.get_write_buffer();      // This publishes 2
+        {
+            let mut w = writer.acquire_buffer();
+            *w = 1;
+        } // publishes 1
+        
+        {
+            let mut w = writer.acquire_buffer();
+            *w = 2;
+        } // publishes 2
 
         let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 2);
@@ -498,10 +542,9 @@ mod tests {
         let writer_thread = thread::spawn(move || {
             b1.wait();
             for i in 1..=1000 {
-                let w = writer.get_write_buffer();
+                let mut w = writer.acquire_buffer();
                 *w = i;
             }
-            writer.get_write_buffer(); // Flush the last value
         });
 
         let reader_thread = thread::spawn(move || {
@@ -609,7 +652,7 @@ mod tests {
         let (mut _reader, mut writer) = TripleBuffer::<u32>::new().split();
         
         let _ = thread::spawn(move || {
-            let _w = writer.get_write_buffer();
+            let _w = writer.acquire_buffer();
         }).join();
 
         // The writer guard should have been dropped during stack unwinding
