@@ -1,16 +1,16 @@
 use std::{fmt, fs};
-use simple_error::{SimpleResult, SimpleError};
+use crate::{SimpleResult};
 use crate::instrument::{Instrument, Sample};
-use crate::module_reader::module::module::read_mod;
-use crate::module_reader::s3m::s3m::read_s3m;
-use crate::module_reader::xm::xm::read_xm;
+use crate::module_reader::module::read_mod;
+use crate::module_reader::s3m::read_s3m;
+use crate::module_reader::xm::read_xm;
 use crate::pattern::Pattern;
 use crate::channel_state::channel_state::clamp;
-use crate::module_reader::stm::stm::read_stm;
-use crate::module_reader::it::it::read_it;
+use crate::module_reader::stm::read_stm;
+use crate::module_reader::it::read_it;
 use crate::channel_state::ChannelState;
 use crate::song_state::SongHandle;
-use std::io::{Cursor};
+use std::io::{Cursor, Seek, SeekFrom};
 
 mod xm;
 mod module;
@@ -19,7 +19,7 @@ mod stm;
 mod it;
 
 #[derive(Debug, Copy, Clone)]
-enum SongType {
+pub(crate) enum SongType {
     XM,
     MOD,
     S3M,
@@ -28,7 +28,7 @@ enum SongType {
 }
 
 #[derive(Debug, Copy, Clone)]
-enum FrequencyType {
+pub(crate) enum FrequencyType {
     AMIGA,
     LINEAR
 }
@@ -85,23 +85,55 @@ impl Patterns {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SongData {
-                    id:                 String,
-   pub(crate)       name:               String,
-                    song_type:          SongType,
-                    tracker_name:       String,
+    pub(crate)      id:                 String,
+    pub(crate)      name:               String,
+    pub(crate)      song_type:          SongType,
+    pub(crate)      tracker_name:       String,
     pub(crate)      song_length:        u16,
     pub(crate)      restart_position:   u16,
     pub(crate)      channel_count:      u16,
     pub(crate)      patterns:           Vec<Patterns>,
-                    instrument_count:   u16,
-                    frequency_type:     FrequencyType,
+    pub(crate)      instrument_count:   u16,
+    pub(crate)      frequency_type:     FrequencyType,
     pub(crate)      tempo:              u16,
     pub(crate)      bpm:                u16,
     pub(crate)      pattern_order:      Vec<u8>,
     pub(crate)      instruments:        Vec<Instrument>,
     pub(crate)      use_amiga:          bool,
     pub(crate)      song_message:       String,
+}
+
+impl Default for SongData {
+    fn default() -> Self {
+        Self {
+            id: "".to_string(),
+            name: "".to_string(),
+            song_type: SongType::XM,
+            tracker_name: "".to_string(),
+            song_length: 0,
+            restart_position: 0,
+            channel_count: 0,
+            patterns: vec![],
+            instrument_count: 0,
+            frequency_type: FrequencyType::LINEAR,
+            tempo: 0,
+            bpm: 0,
+            pattern_order: vec![],
+            instruments: vec![],
+            use_amiga: false,
+            song_message: "".to_string(),
+        }
+    }
+}
+
+impl Default for SongType {
+    fn default() -> Self { SongType::XM }
+}
+
+impl Default for FrequencyType {
+    fn default() -> Self { FrequencyType::LINEAR }
 }
 
 impl SongData {
@@ -116,52 +148,63 @@ impl SongData {
 
 
 pub fn read_module(path: &str) -> SimpleResult<SongData> {
-
-    // let f = match File::open(path) {
-    //     Ok(f) => {f}
-    //     Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "failed to open the file")));}
-    // };
-
-    let data = match fs::read(path) {
-        Ok(d) => {d}
-        Err(e) => {return Err(SimpleError::from(e));}
-    };
-
+    let data = fs::read(path)?;
     open_module(data.as_slice())
 }
 
 pub fn open_module(data: &[u8]) -> SimpleResult<SongData> {
     let mut buf = Cursor::new(data);
 
+    let _ = buf.seek(SeekFrom::Start(0));
     match read_xm(&mut buf) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
     }
 
+    let _ = buf.seek(SeekFrom::Start(0));
     match read_mod(&mut buf) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
     }
 
+    let _ = buf.seek(SeekFrom::Start(0));
     match read_stm(&mut buf) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
     }
 
+    let _ = buf.seek(SeekFrom::Start(0));
     match read_s3m(&mut buf) {
         Ok(module) => {return Ok(module)},
         Err(_) => {},
     }
 
+    let _ = buf.seek(SeekFrom::Start(0));
     read_it(&mut buf)
 }
 
 
 pub fn print_module(handle: &SongHandle, patterns: impl Iterator<Item = String>) {
-    let _data = &handle.get().song_data;
+    let _data = &handle.song_data;
 
     for pattern in patterns {
-        dbg!(&_data.patterns[_data.pattern_order[pattern.parse::<usize>().unwrap()] as usize]);
+        match pattern.parse::<usize>() {
+            Ok(idx) => {
+                if idx < _data.pattern_order.len() {
+                    let order_idx = _data.pattern_order[idx] as usize;
+                    if order_idx < _data.patterns.len() {
+                        dbg!(&_data.patterns[order_idx]);
+                    } else {
+                        println!("Pattern index {} out of bounds", order_idx);
+                    }
+                } else {
+                    println!("Order index {} out of bounds", idx);
+                }
+            }
+            Err(_) => {
+                println!("'{}' is not a valid pattern index. (Additional arguments after the filename are interpreted as patterns to debug-print).", pattern);
+            }
+        }
     }
     // println!("=====================================================================");
     // dbg!(&data.patterns[data.pattern_order[1] as usize]);

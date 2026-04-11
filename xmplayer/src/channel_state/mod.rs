@@ -38,6 +38,7 @@ impl SplineData {
         0.5 * (((c3 * t + c2) * t) + c1) * t + c0
     }
 
+    #[allow(dead_code)]
     pub fn push(&mut self, p: f32) {
         self.p0 = self.p1;
         self.p1 = self.p2;
@@ -119,6 +120,7 @@ pub(crate) struct ChannelState {
     pub(crate) frequency:                      f32,
     pub(crate) volume_envelope_state:          EnvelopeState,
     pub(crate) panning_envelope_state:         EnvelopeState,
+    #[allow(dead_code)]
     pub(crate) vibrato_envelope_state:         VibratoEnvelopeState,
     pub(crate) vibrato_state:                  VibratoState,
     pub(crate) tremolo_state:                  TremoloState,

@@ -1,14 +1,8 @@
 #[macro_use]
 mod console;
-
-extern crate wasm_bindgen;
-// extern crate sdl2;
-extern crate xmplayer;
-
 mod leak;
 mod display;
 
-use std::convert::TryInto;
 use std::cmp::max;
 use wasm_bindgen::prelude::*;
 use xmplayer::song::{PlaybackCmd, PlayData, CallbackState, Song};
@@ -17,18 +11,16 @@ use xmplayer::song_state::{SongHandle};
 use std::sync::{mpsc, Arc};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
-// use sdl2::{EventPump};
+
 use std::ffi::c_void;
-use std::time::{Duration};
-use xmplayer::triple_buffer::State::StateNoChange;
 use xmplayer::instrument::Instrument;
 use display::Display;
 use display::ViewPort;
 use xmplayer::module_reader::{open_module, Patterns};
-use xmplayer::triple_buffer::{TripleBufferReader, TripleBuffer};
+use shared_sync_primitives::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
 
-use crate::wasm_bindgen::JsCast;
+use wasm_bindgen::JsCast;
 
 
 
@@ -98,6 +90,7 @@ impl SubAssign<Duration> for Instant { fn sub_assign(&mut self, other: Duration)
 //     static ref PLAYBACK_CMDS: Mutex<VecDeque<PlaybackCmd>> = Mutex::new(VecDeque::new());
 // );
 
+#[allow(dead_code)]
 struct AudioCB {
     q: SongHandle,
 }
@@ -165,8 +158,8 @@ impl SongJs {
     }
 
     pub fn display(&mut self, view_mode: u32, theme_id: u32) -> js_sys::Uint8Array {
-        let mut tbr = self.triple_buffer_reader.lock().unwrap();
-        let (play_data, _state) = tbr.read();
+        let tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, _state) = tbr.get_read_buffer();
         
         let view_port = ViewPort {
             x1: self.scroll_offset_x,
@@ -192,8 +185,8 @@ impl SongJs {
     }
 
     pub fn get_play_data(&self) -> JsValue {
-        let mut tbr = self.triple_buffer_reader.lock().unwrap();
-        let (play_data, _state) = tbr.read();
+        let tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, _state) = tbr.get_read_buffer();
         serde_wasm_bindgen::to_value(play_data).unwrap()
     }
 
@@ -293,12 +286,14 @@ impl SongJs {
     }
 }
 
+#[allow(dead_code)]
 struct App {
     song_row:       usize,
     song_tick:      u32,
 }
 
 impl App {
+    #[allow(dead_code)]
     fn new() -> *mut c_void {
 
         // let (tx, mut rx): (Sender<PlayerCmd>, Receiver<PlayerCmd>) = mpsc::channel();
@@ -349,6 +344,7 @@ impl App {
     //     }
     // }
 
+    #[allow(dead_code)]
     fn run(&self) {
         // let sdl_context = sdl2::init().unwrap();
         // let audio = sdl_context.audio().unwrap();

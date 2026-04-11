@@ -1,4 +1,3 @@
-
 use xmplayer::song::{PlaybackCmd, UserData};
 use xmplayer::module_reader::print_module;
 use std::env;
@@ -8,6 +7,7 @@ use std::io::{stdout, Write};
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::event::KeyCode;
 use xmplayer::song_state::{SongState, SongHandle};
+use xmplayer::AudioConsumer;
 
 #[cfg(feature="sdl2-feature")] mod sdl2_audio;
 #[cfg(feature="sdl2-feature")] use sdl2_audio::AudioOutput;
@@ -21,14 +21,14 @@ use display::ViewPort;
 fn main() {
     if env::args().len() < 2 {return;}
 
-	dbg!(env::args());
+	let _ = dbg!(env::args());
 
     let path = env::args().nth(1).unwrap();
     //let file = File::open(path).expect("failed to open the file");
 
    // let data = read_module(path.as_str()).unwrap();
 
-    let mut song = match SongState::new(path) {
+    let (mut song, consumer) = match SongState::new(&path) {
         Ok(s) => {s}
         Err(e) => {dbg!(e);return;}
     };
@@ -36,7 +36,7 @@ fn main() {
     if env::args().len() > 2 {
         print_module(&song, env::args().skip(2));
     } else {
-        run(&mut song);
+        run(&mut song, consumer);
     }
 }
 
@@ -46,7 +46,7 @@ struct TerminalModeSetter {
 impl TerminalModeSetter {
     fn new() -> Self {
         if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
-        crossterm::terminal::enable_raw_mode();
+        let _ = crossterm::terminal::enable_raw_mode();
         TerminalModeSetter {}
     }
 }
@@ -58,15 +58,15 @@ impl Drop for TerminalModeSetter {
 }
 
 
-fn run(song_data: &mut SongHandle) {
-    const CHANNELS: i32 = 2;
+fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
+    const _CHANNELS: i32 = 2;
     const SAMPLE_RATE: f32 = 48_000.0;
 
     let _mode_setter = TerminalModeSetter::new();
 
-    let mut audio = AudioOutput::new(song_data, SAMPLE_RATE);
+    let mut audio = AudioOutput::new(consumer, SAMPLE_RATE);
 
-    let handle = song_data.get_mut().start(|data, instruments| {
+    let handle = song_data.start(|data, instruments| {
 
         let mut view_port = ViewPort {
             x1: 0,
@@ -98,9 +98,9 @@ fn run(song_data: &mut SongHandle) {
     });
 
     audio.start_audio_output();
-    mainloop(song_data.get_mut());
+    mainloop(song_data);
 
-    song_data.get_mut().close();
+    song_data.close();
     if handle.0.is_some() {
         handle.0.unwrap().join().unwrap();
     }
@@ -117,7 +117,7 @@ fn is_num (ch: char) -> bool {
 }
 
 
-fn mainloop(song_data: &mut SongState) {
+fn mainloop(song_data: &SongState) {
 
     if let Ok(size) = crossterm::terminal::size() {
         let tx = song_data.get_sender();

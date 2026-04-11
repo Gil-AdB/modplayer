@@ -2,7 +2,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::num::Wrapping;
 
 use crate::envelope::Envelope;
-use crate::io_helpers::{read_i16_vec, read_i8_vec, read_u8_vec};
+use binary_reader_io::BinaryReader;
+use crate::{SimpleError, SimpleResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopType {
@@ -98,37 +99,39 @@ impl Sample {
         result
     }
 
-    pub(crate) fn read_s3m_sample_data<R: Read + Seek>(&mut self, file: &mut R, sample_ptr: u32) {
-        if self.length == 0 { return; }
-        file.seek(SeekFrom::Start((sample_ptr as u64)  * 16)).unwrap();
+    pub(crate) fn read_s3m_sample_data<R: Read + Seek>(&mut self, file: &mut R, sample_ptr: u32) -> SimpleResult<()> {
+        if self.length == 0 { return Ok(()); }
+        file.seek(SeekFrom::Start((sample_ptr as u64)  * 16))?;
 
         if self.bitness == 8 {
-            self.data = Sample::upsamplei16(Sample::upsampleu8(read_u8_vec(file, self.length as usize)));
+            self.data = Sample::upsamplei16(Sample::upsampleu8(file.read_bytes(self.length as usize)?));
         } else {
-            panic!("Unknown S3M sample format");
-            // self.data = Sample::upsamplei16(read_i16_vec(file, self.length as usize));
+            return Err(SimpleError::new("Unknown S3M sample format"));
         }
         self.setup_loops_and_padding();
+        Ok(())
     }
 
-    pub(crate) fn read_non_packed_data<R: Read>(&mut self, file: &mut R) {
-        if self.length == 0 { return; }
+    pub(crate) fn read_non_packed_data<R: Read>(&mut self, file: &mut R) -> SimpleResult<()> {
+        if self.length == 0 { return Ok(()); }
         if self.bitness == 8 {
-            self.data = Sample::upsamplei16(Sample::upsamplei8(read_i8_vec(file, self.length as usize)));
+            self.data = Sample::upsamplei16(Sample::upsamplei8(file.read_i8_vec(self.length as usize)?));
         } else {
-            self.data = Sample::upsamplei16(read_i16_vec(file, self.length as usize));
+            self.data = Sample::upsamplei16(file.read_i16_vec(self.length as usize)?);
         }
         self.setup_loops_and_padding();
+        Ok(())
     }
 
-    pub(crate) fn read_data<R: Read>(&mut self, file: &mut R) {
-        if self.length == 0 { return; }
+    pub(crate) fn read_data<R: Read>(&mut self, file: &mut R) -> SimpleResult<()> {
+        if self.length == 0 { return Ok(()); }
         if self.bitness == 8 {
-            self.data = Sample::upsamplei16(Sample::upsamplei8(Sample::unpack_i8(read_i8_vec(file, self.length as usize))));
+            self.data = Sample::upsamplei16(Sample::upsamplei8(Sample::unpack_i8(file.read_i8_vec(self.length as usize)?)));
         } else {
-            self.data = Sample::upsamplei16(Sample::unpack_i16(read_i16_vec(file, self.length as usize)));
+            self.data = Sample::upsamplei16(Sample::unpack_i16(file.read_i16_vec(self.length as usize)?));
         }
         self.setup_loops_and_padding();
+        Ok(())
     }
 
     pub(crate) fn setup_loops_and_padding(&mut self) {
