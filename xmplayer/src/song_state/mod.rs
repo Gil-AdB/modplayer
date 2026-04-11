@@ -103,7 +103,7 @@ impl SongState {
     fn callback(&mut self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();
-        while let Some(mut buf) = self.q.get_write_buffer() {
+        while let Some(mut buf) = self.q.acquire_buffer() {
             let mut adaptar = InterleavedBufferAdaptar{buf: &mut *buf};
             if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { break; }
         }
