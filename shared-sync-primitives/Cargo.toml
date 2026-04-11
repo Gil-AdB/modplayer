@@ -1,0 +1,11 @@
+[package]
+name = "shared-sync-primitives"
+version = "0.1.0"
+edition = "2021"
+authors = ["Gil-Ad Ben Or <gilad.benor@gmail.com>"]
+description = "High-performance synchronization primitives including TripleBuffer and ProducerConsumerQueue."
+license = "MIT"
+repository = "https://github.com/Gil-AdB/modplayer"
+
+[dependencies]
+array-init = "2.1"

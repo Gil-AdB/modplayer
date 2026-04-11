@@ -3,7 +3,7 @@ use xmplayer::song::InterleavedBufferAdaptar;
 use xmplayer::song::CallbackState;
 
 fn render_test_file(path: &str, num_frames: usize) -> f64 {
-    let mut song_handle = match SongState::new(path.to_string()) {
+    let (song_handle, _consumer) = match SongState::new(path) {
         Ok(s) => s,
         Err(e) => panic!("Failed to load test file: {}", e),
     };
@@ -20,8 +20,8 @@ fn render_test_file(path: &str, num_frames: usize) -> f64 {
             buf: &mut audio_buffer[(current_frame * 2)..((current_frame + frames_to_generate) * 2)],
         };
         
-        let mut song = song_handle.get_mut().song.lock().unwrap();
-        let (tx, mut rx): (std::sync::mpsc::Sender<xmplayer::song::PlaybackCmd>, std::sync::mpsc::Receiver<xmplayer::song::PlaybackCmd>) = std::sync::mpsc::channel();
+        let mut song = song_handle.get_song().lock().unwrap();
+        let (_tx, mut rx): (std::sync::mpsc::Sender<xmplayer::song::PlaybackCmd>, std::sync::mpsc::Receiver<xmplayer::song::PlaybackCmd>) = std::sync::mpsc::channel();
         if let CallbackState::Complete = song.get_next_tick(&mut adapter, &mut rx) {
             break;
         }

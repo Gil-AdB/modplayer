@@ -13,6 +13,8 @@ sdl2-feature = ["sdl2"]
 [dependencies]
 portaudio = {version = "0.7", optional = true}
 xmplayer = {path="../xmplayer"}
+shared-sync-primitives = {path="../shared-sync-primitives"}
+binary-reader-io = {path="../binary-reader-io"}
 display = {path="../display"}
 crossterm = "0.29.0"
 

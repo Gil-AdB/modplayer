@@ -1,13 +1,11 @@
-pub(crate) mod stm {
     use crate::module_reader::{SongData, Patterns, Row, SongType, FrequencyType};
     use std::io::{Read, Seek, SeekFrom};
-    use crate::io_helpers::{BinaryReader};
+    use binary_reader_io::BinaryReader;
     use std::iter::FromIterator;
     use crate::pattern::Pattern;
     use crate::instrument::{Instrument, Sample, LoopType};
-    use crate::{io_helpers as fio, module_reader};
-    use simple_error::{SimpleError, SimpleResult};
-    use std::io;
+    use crate::{module_reader};
+    use crate::{SimpleError, SimpleResult};
     use std::cmp::min;
     use std::num::Wrapping;
     use crate::channel_state::channel_state::clamp;
@@ -16,20 +14,16 @@ pub(crate) mod stm {
 
 
     pub fn read_stm<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
-        file.seek(SeekFrom::Start(0));
+        file.seek(SeekFrom::Start(0))?;
 
-        let file_len = match file.seek(SeekFrom::End(0)) {
-            Ok(m) => { let _ = file.seek(SeekFrom::Start(0)); m }
-            Err(_) => {return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Can't read file metadata")));}
-        };
+        let file_len = file.seek(SeekFrom::End(0))?;
+        file.seek(SeekFrom::Start(0))?;
 
         if file_len < 0x3D0  {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "File is too small!")));
+            return Err(SimpleError::new("File is too small!"));
         }
 
-        let song_data = read_stm_header(&mut file);
-
-        song_data
+        read_stm_header(&mut file)
     }
 
     fn to_bcd(num: u8) -> u8 {
@@ -43,58 +37,53 @@ pub(crate) mod stm {
 
         let name              = file.read_string(20);
         let tracker_name      = file.read_string(8);
-        dbg!(&tracker_name);
         if tracker_name != "!Scream!" && tracker_name != "BMOD2STM" &&
            tracker_name != "WUZAMOD!" && tracker_name != "SWavePro" {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown stm tracker_name")));
+            return Err(SimpleError::new("Unknown stm tracker_name"));
         }
 
-        let id                  = file.read_u8();
+        let id                  = file.read_u8()?;
         if id != 0x1A {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown stm signature")));
+            return Err(SimpleError::new("Unknown stm signature"));
         }
 
-        let file_type = file.read_u8();
-        let _major = file.read_u8();
-        dbg!(_major);
-        let minor = file.read_u8();
+        let file_type = file.read_u8()?;
+        let _major = file.read_u8()?;
+        let minor = file.read_u8()?;
 
         if file_type != 2 || minor == 0 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Unknown stm version")));
+            return Err(SimpleError::new("Unknown stm version"));
         }
 
-        let mut tempo = file.read_u8();
+        let tempo = file.read_u8()?;
         let mut bpm = tempo;
-        dbg!(bpm);
         if minor < 21 {bpm = to_bcd(tempo);} // to BCD?
         if bpm == 0 {
             bpm = 96;
         }
         bpm = stm_tempo_to_bpm(bpm);
 
-        tempo = clamp(tempo >> 4, 1, 31);
+        let tempo_clamped = clamp(tempo >> 4, 1, 31);
 
-        let pattern_count   = file.read_u8();
-        let mut _global_volume = file.read_u8();
+        let pattern_count   = file.read_u8()?;
+        let mut _global_volume = file.read_u8()?;
         if minor > 10 {
             _global_volume = min(_global_volume, 64);
         }
 
-        if let Err(e) = file.seek(SeekFrom::Current(13)) {
-            return Err(SimpleError::from(e));
-        }
+        file.seek(SeekFrom::Current(13))?;
 
-        let mut instruments = read_instruments(file);
+        let mut instruments = read_instruments(file)?;
 
-        let mut pattern_order = fio::read_bytes(file, 128);
+        let mut pattern_order = file.read_bytes(128)?;
 
-        let song_length = pattern_order.iter().cloned().position(|x| {x >= 99}).unwrap();
+        let song_length = pattern_order.iter().cloned().position(|x| {x >= 99}).ok_or(SimpleError::new("Unknown song length"))?;
 
         pattern_order.resize(song_length + 1, 0);
 
-        let mut patterns = read_patterns(file, pattern_count as usize, num_channels as usize, minor);
+        let mut patterns = read_patterns(file, pattern_count as usize, num_channels as usize, minor)?;
 
-        read_sample_data(file, &mut instruments);
+        read_sample_data(file, &mut instruments)?;
 
         // fix empty patterns at end
         for idx in 0..pattern_order.len() {
@@ -127,7 +116,7 @@ pub(crate) mod stm {
             patterns,
             instrument_count: instruments.len() as u16,
             frequency_type: FrequencyType::AMIGA,
-            tempo: tempo as u16,
+            tempo: tempo_clamped as u16,
             bpm: bpm as u16,
             pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
             instruments,
@@ -145,13 +134,14 @@ pub(crate) mod stm {
         clamp(bpm as u8, 32, 255) // result can be slightly off, but close enough...
     }
 
-    fn read_sample_data<R: Read + Seek>(f: &mut R, instruments: &mut Vec<Instrument>) {
+    fn read_sample_data<R: Read + Seek>(f: &mut R, instruments: &mut Vec<Instrument>) -> SimpleResult<()> {
         for i in 1..instruments.len() {
-            instruments[i].samples[0].read_non_packed_data(f);
+            instruments[i].samples[0].read_non_packed_data(f)?;
         }
+        Ok(())
     }
 
-    fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize, minor: u8) -> Vec<Patterns> {
+    fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize, minor: u8) -> SimpleResult<Vec<Patterns>> {
         let mut patterns: Vec<Patterns> = vec![];
         patterns.reserve_exact(pattern_count as usize);
 
@@ -166,7 +156,7 @@ pub(crate) mod stm {
                 channels.reserve_exact(channel_count);
 
                 for _channel_idx in 0..channel_count {
-                    let data = fio::read_u32(file);
+                    let data = file.read_u32()?;
 
                     // 00000000 00000000 00000000 11111111
                     let mut note = (data & 0xFF) as u8;
@@ -217,13 +207,6 @@ pub(crate) mod stm {
                         effect_param = 0;
                     }
 
-
-                    // Shouldn't happen
-                    // if effect > 35 {
-                    //     effect = 0;
-                    //     effect_param = 0;
-                    // }
-
                     channels.push(
                         Pattern {
                             note,
@@ -239,46 +222,46 @@ pub(crate) mod stm {
             patterns.push(Patterns { rows })
         }
 
-        patterns
+        Ok(patterns)
     }
 
-    fn read_instrument<R: Read>(file: &mut R) -> Sample {
-        let name          = fio::read_string(file, 12);
-        let _id                  = file.read_u8();
-        let _instrument_disk     = file.read_u8();  // yeah, whatever...?
-        let _                    = file.read_u16(); // reserved
+    fn read_instrument<R: Read>(file: &mut R) -> SimpleResult<Sample> {
+        let name          = file.read_string(12);
+        let _id                  = file.read_u8()?;
+        let _instrument_disk     = file.read_u8()?;  // yeah, whatever...?
+        let _                    = file.read_u16()?; // reserved
 
-        let length          = file.read_u16();
-        let mut loop_start      = file.read_u16();
-        let mut loop_end        = file.read_u16();
-        let mut loop_len        = loop_end - loop_start;
+        let length          = file.read_u16()?;
+        let mut loop_start      = file.read_u16()?;
+        let mut loop_end        = file.read_u16()?;
+        let mut loop_len        = Wrapping(loop_end) - Wrapping(loop_start);
         let mut loop_type            = LoopType::NoLoop;
 
         if loop_start < length && loop_end > loop_start && loop_end != 0xffff {
             if loop_start + loop_end > length {
-                loop_len = length - loop_start;
+                loop_len = Wrapping(length) - Wrapping(loop_start);
             }
             loop_type = LoopType::ForwardLoop;
         } else {
             loop_start  = 0;
             loop_end    = 0;
-            loop_len    = 0;
+            loop_len    = Wrapping(0);
         }
 
-        let volume           = file.read_byte();
-        let _                    = file.read_byte(); // reserved
+        let volume           = file.read_u8()?;
+        let _                    = file.read_u8()?; // reserved
 
-        let c3freq              = file.read_u32();
-        let _                        = file.read_u16(); // reserved
-        let _length_in_paragraphs    = file.read_u16();
+        let c3freq              = file.read_u32()?;
+        let _                        = file.read_u16()?; // reserved
+        let _length_in_paragraphs    = file.read_u16()?;
 
         let (finetune, relative_note) = module_reader::c2spd_to_finetune_relnote(c3freq);
 
-        Sample {
+        Ok(Sample {
             length: length as u32,
             loop_start: loop_start as u32,
             loop_end: loop_end as u32,
-            loop_len: loop_len as u32,
+            loop_len: loop_len.0 as u32,
             volume: clamp(volume, 0, 64),
             finetune,
             loop_type,
@@ -287,10 +270,10 @@ pub(crate) mod stm {
             relative_note,
             name,
             data: vec![],
-        }
+        })
     }
 
-    fn read_instruments<R: Read + Seek>(file: &mut R) -> Vec<Instrument> {
+    fn read_instruments<R: Read + Seek>(file: &mut R) -> SimpleResult<Vec<Instrument>> {
         let mut instruments: Vec<Instrument> = vec![];
         let instrument_count = 31;
 
@@ -301,12 +284,11 @@ pub(crate) mod stm {
 
         for instrument_idx in 1..instrument_count + 1 {
             let mut instrument = Instrument::new();
-            let sample = read_instrument(file);
+            let sample = read_instrument(file)?;
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
             instruments.push(instrument);
         }
-        instruments
+        Ok(instruments)
     }
-}

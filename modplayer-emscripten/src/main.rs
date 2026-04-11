@@ -117,7 +117,7 @@ impl App {
     }
 
     fn handle_display(&mut self, triple_buffer_reader: &mut TripleBufferReader<PlayData>, instruments: &Vec<Instrument>) {
-        let (play_data, state) = triple_buffer_reader.read();
+        let (play_data, state) = triple_buffer_reader.get_read_buffer();
         if StateNoChange == state { return; }
         if !(play_data.tick != self.song_tick || play_data.row != self.song_row) {
             return;

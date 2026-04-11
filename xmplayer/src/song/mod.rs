@@ -6,8 +6,11 @@ use crate::channel_state::{ChannelState, Voice};
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp, VibratoEnvelopeState};
 use crate::instrument::{LoopType, Instrument};
 use crate::module_reader::{SongData, is_note_valid, Patterns};
+#[cfg(test)]
+#[allow(unused_imports)]
+use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
 use crate::tables::{PANNING_TAB, AudioTables};
-use crate::triple_buffer::{TripleBufferWriter, Init};
+use shared_sync_primitives::TripleBufferWriter;
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::borrow::Borrow;
@@ -217,8 +220,8 @@ pub struct PlayData {
     pub user_data:                          HashMap<String, UserData>,
 }
 
-impl Init for PlayData {
-    fn new() -> Self {
+impl Default for PlayData {
+    fn default() -> Self {
         Self{
             name: "".to_string(),
             tick_duration_in_frames: 0,
@@ -351,6 +354,7 @@ pub struct Song {
     frequency_tables:           Box<AudioTables>,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
     tick_state:                 TickState,
+    #[allow(dead_code)]
     song_message:               String,
     user_data:                  HashMap<String, UserData>,
 }
@@ -457,7 +461,7 @@ impl Song {
     // }
 
     fn queue_display(&mut self) {
-        let play_data = self.triple_buffer_writer.write();
+        let mut play_data = self.triple_buffer_writer.acquire_buffer();
 
         play_data.name                      = self.name.clone();
         play_data.tick_duration_in_frames   = self.bpm.tick_duration_in_frames;

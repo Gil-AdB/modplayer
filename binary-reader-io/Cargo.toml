@@ -1,0 +1,10 @@
+[package]
+name = "binary-reader-io"
+version = "0.1.0"
+edition = "2021"
+authors = ["Gil-Ad Ben Or <gilad.benor@gmail.com>"]
+description = "Lightweight binary reading extension traits for std::io::Read."
+license = "MIT"
+repository = "https://github.com/Gil-AdB/modplayer"
+
+[dependencies]
