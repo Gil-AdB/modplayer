@@ -452,9 +452,10 @@ impl Song {
         }
 
         let mut voices = Vec::with_capacity(256);
+        let channel_count = if song_data.channel_count == 0 { 1 } else { song_data.channel_count as usize };
         for i in 0..256 {
             let mut v = Voice::new();
-            v.channel_idx = i % (song_data.channel_count as usize);
+            v.channel_idx = i % channel_count;
             voices.push(v);
         }
 
