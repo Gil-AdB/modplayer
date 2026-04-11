@@ -20,15 +20,10 @@ use crate::{SimpleResult};
 use crate::song::InterleavedBufferAdaptar;
 use crate::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS, AudioConsumer, AudioProducer};
 
-use std::cell::UnsafeCell;
 
-// We implement Send and Sync to mimic the previous AtomicPtr behavior.
-// Users must ensure actual usage avoids data races.
-unsafe impl<T: Send> Send for StructHolder<T> {}
-unsafe impl<T: Sync> Sync for StructHolder<T> {}
 
 pub(crate) struct StructHolder<T> {
-    t: Arc<UnsafeCell<T>>,
+    t: Arc<T>,
 }
 
 impl<T> Clone for StructHolder<T> {
@@ -39,11 +34,11 @@ impl<T> Clone for StructHolder<T> {
 
 impl <T> StructHolder<T> {
     pub(crate) fn new(arg: Box<T>) -> Self {
-        Self { t: Arc::new(UnsafeCell::new(*arg)) }
+        Self { t: Arc::from(arg) }
     }
 
     pub(crate) fn get(&self) -> &T {
-        unsafe { &*self.t.get() }
+        &self.t
     }
 }
 
@@ -58,14 +53,14 @@ impl std::ops::Deref for SongHandle {
 }
 
 pub struct SongState {
-    pub stopped:                        Arc<AtomicBool>,
-    triple_buffer_reader:               Arc<Mutex<TripleBufferReader<PlayData>>>,
-    pub song_data:                      SongData,
-    pub song:                           Arc<Mutex<Song>>,
-    tx:                                 Sender<PlaybackCmd>,
-    rx:                                 Arc<Mutex<Receiver<PlaybackCmd>>>,
-    q:                                  AudioProducer,
-    display_cb:                         Mutex<Option<fn (&PlayData, &Vec<Instrument>)>>,
+    pub(crate) stopped:              Arc<AtomicBool>,
+    pub(crate) triple_buffer_reader: TripleBufferReader<PlayData>,
+    pub(crate) song_data:            SongData,
+    pub(crate) song:                 Arc<Mutex<Song>>,
+    pub(crate) tx:                   Sender<PlaybackCmd>,
+    pub(crate) rx:                   Arc<Mutex<Receiver<PlaybackCmd>>>,
+    pub(crate) q:                    AudioProducer,
+    pub(crate) display_cb:           Mutex<Option<fn (&PlayData, &Vec<Instrument>)>>,
 }
 
 impl SongState {
@@ -83,7 +78,7 @@ impl SongState {
 
         let sh = SongHandle(StructHolder::new( Box::new( Self {
             stopped,
-            triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader)),
+            triple_buffer_reader,
             song_data,
             song,
             tx,
@@ -141,9 +136,6 @@ impl SongHandle {
         let s2 = self.clone();
         let display_thread = Option::from(spawn(move || {
             let s = &s2;
-            let tb_guard = s.triple_buffer_reader.clone();
-            let mut triple_buffer_reader = tb_guard.lock().unwrap();
-
             let mut song_row = 0;
             let mut song_tick = 2000;
             loop {
@@ -151,7 +143,7 @@ impl SongHandle {
                     break;
                 }
                 sleep(Duration::from_millis(30));
-                let (play_data, state) = triple_buffer_reader.get_read_buffer();
+                let (play_data, state) = s.triple_buffer_reader.get_read_buffer();
                 if StateNoChange == state { continue; }
                 if play_data.tick != song_tick || play_data.row != song_row {
                     let cb_guard = s.display_cb.lock().unwrap();
@@ -173,8 +165,18 @@ impl SongState {
         return self.tx.clone();
     }
 
-    pub fn get_triple_buffer_reader(&self) -> Arc<Mutex<TripleBufferReader<PlayData>>> {
-        return self.triple_buffer_reader.clone();
+    #[cfg(test)]
+    pub fn get_song_data(&self) -> &SongData {
+        &self.song_data
+    }
+
+    /// Returns the underlying Song struct. Only intended for testing purposes.
+    pub fn get_song(&self) -> &Arc<Mutex<Song>> {
+        &self.song
+    }
+
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
     }
 
     pub fn close(&self) {
@@ -278,7 +280,7 @@ mod tests {
             let tracker = DropTracker(counter.clone());
             let ss = SongState {
                 stopped,
-                triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader)),
+                triple_buffer_reader,
                 song_data,
                 song,
                 tx,

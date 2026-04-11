@@ -17,19 +17,7 @@ use xmplayer::song::{PlaybackCmd, CallbackState, InterleavedBufferAdaptar};
 use xmplayer::song_state::{SongState, SongHandle};
 use std::sync::{mpsc};
 use std::sync::mpsc::{Receiver, Sender};
-
-
 use std::ffi::{c_void, CStr};
-
-
-
-
-
-
-
-
-
-use std::sync::atomic::Ordering;
 use std::os::raw::c_char;
 use xmplayer::SimpleResult;
 
@@ -48,12 +36,12 @@ impl AudioCallback for AudioCB {
     type Channel = f32;
 
     fn callback(&mut self, out: &mut [f32]) {
-        let mut song = self.q.song.lock().unwrap();
+        let mut song = self.q.get_song().lock().unwrap();
         let (_tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
         let mut adaptar = InterleavedBufferAdaptar{buf: out};
 
         if let CallbackState::Complete = song.get_next_tick(&mut adaptar, &mut rx) {
-            self.q.stopped.store(true, Ordering::Release);
+            self.q.stop();
             // App::stop();
         }
     }

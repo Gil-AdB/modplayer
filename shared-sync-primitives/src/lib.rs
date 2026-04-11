@@ -54,7 +54,7 @@ pub struct TripleBufferReader<T> {
 impl<T> TripleBufferReader<T> where T: Clone + Default {
     /// Reads the current state from the buffer.
     /// Returns a reference to the data and its state (Dirty or NoChange).
-    pub fn get_read_buffer(&mut self) -> (&T, State) {
+    pub fn get_read_buffer(&self) -> (&T, State) {
         let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_triple_buffer_basic() {
-        let (mut reader, writer) = TripleBuffer::<u32>::new().split();
+        let (reader, writer) = TripleBuffer::<u32>::new().split();
         
         // Initial state
         let (val, state) = reader.get_read_buffer();
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_triple_buffer_multiple_writes() {
-        let (mut reader, writer) = TripleBuffer::<u32>::new().split();
+        let (reader, writer) = TripleBuffer::<u32>::new().split();
 
         // Write twice
         {
@@ -538,7 +538,7 @@ mod tests {
         use std::thread;
         use std::sync::Barrier;
 
-        let (mut reader, writer) = TripleBuffer::<u32>::new().split();
+        let (reader, writer) = TripleBuffer::<u32>::new().split();
         let barrier = Arc::new(Barrier::new(2));
         let b1 = barrier.clone();
         let b2 = barrier.clone();
