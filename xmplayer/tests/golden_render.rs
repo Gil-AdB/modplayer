@@ -20,7 +20,7 @@ fn render_test_file(path: &str, num_frames: usize) -> f64 {
             buf: &mut audio_buffer[(current_frame * 2)..((current_frame + frames_to_generate) * 2)],
         };
         
-        let mut song = song_handle.get_mut().song.lock().unwrap();
+        let mut song = song_handle.song.lock().unwrap();
         let (tx, mut rx): (std::sync::mpsc::Sender<xmplayer::song::PlaybackCmd>, std::sync::mpsc::Receiver<xmplayer::song::PlaybackCmd>) = std::sync::mpsc::channel();
         if let CallbackState::Complete = song.get_next_tick(&mut adapter, &mut rx) {
             break;

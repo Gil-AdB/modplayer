@@ -86,7 +86,7 @@ pub struct TripleBufferWriter<T> {
 /// Guard that grants mutable access to the writer buffer.
 /// When dropped, it automatically publishes the buffer to the reader.
 pub struct TripleBufferWriteGuard<'a, T> where T: Clone + Default {
-    writer: &'a mut TripleBufferWriter<T>,
+    writer: &'a TripleBufferWriter<T>,
     buffer: &'a mut T,
 }
 
@@ -112,13 +112,12 @@ impl<'a, T> Drop for TripleBufferWriteGuard<'a, T> where T: Clone + Default {
 impl<T> TripleBufferWriter<T> where T: Clone + Default {
     /// Acquires a mutable reference to the writer buffer.
     /// The returned guard will publish the changes on drop.
-    pub fn acquire_buffer(&mut self) -> TripleBufferWriteGuard<'_, T> {
+    pub fn acquire_buffer(&self) -> TripleBufferWriteGuard<'_, T> {
         let indexes = self.triple_buffer.indexes.load(Acquire);
         let writer_idx = TripleBuffer::<T>::get_writer_idx(indexes) as usize;
         
-        // We use direct access here to avoid a borrow conflict on 'self'.
-        // Since we hold '&mut self', and the TripleBuffer logic ensures 
-        // the writer_idx buffer is exclusive, this is safe.
+        // Since we hold the TripleBufferWriter handle (which is intended for a single producer),
+        // and the TripleBuffer logic ensures the writer_idx buffer is exclusive, this is safe.
         let buffer = unsafe { &mut (*self.triple_buffer.buffer.get())[writer_idx] };
         
         TripleBufferWriteGuard {
@@ -128,7 +127,7 @@ impl<T> TripleBufferWriter<T> where T: Clone + Default {
     }
 
     /// Internal method to publish the current writer buffer by swapping it with the READY slot.
-    fn publish(&mut self) {
+    fn publish(&self) {
         let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
@@ -255,6 +254,10 @@ struct SharedQueue<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
     stopped:     AtomicBool,
 }
 
+impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS> {
+    const _CAPACITY_CHECK: () = assert!(NUM_CHUNKS >= 2, "NUM_CHUNKS must be at least 2 for a circular buffer with leave-one-empty logic.");
+}
+
 unsafe impl<T: Send, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Send for SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS> {}
 unsafe impl<T: Sync, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Sync for SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS> {}
 
@@ -273,7 +276,7 @@ unsafe impl<T: Send, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Send for 
 unsafe impl<T: Sync, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Sync for Consumer<T, CHUNK_SIZE, NUM_CHUNKS> {}
 
 pub struct ProducerGuard<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
-    producer: &'a mut Producer<T, CHUNK_SIZE, NUM_CHUNKS>,
+    producer: &'a Producer<T, CHUNK_SIZE, NUM_CHUNKS>,
 }
 
 impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Deref for ProducerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
@@ -285,7 +288,7 @@ impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Deref for Producer
 
 impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> DerefMut for ProducerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
     fn deref_mut(&mut self) -> &mut [T] {
-        self.producer.get_buffer_mut()
+        unsafe { self.producer.get_buffer_mut() }
     }
 }
 
@@ -296,7 +299,7 @@ impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Drop for ProducerG
 }
 
 pub struct ConsumerGuard<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
-    consumer: &'a mut Consumer<T, CHUNK_SIZE, NUM_CHUNKS>,
+    consumer: &'a Consumer<T, CHUNK_SIZE, NUM_CHUNKS>,
 }
 
 impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Deref for ConsumerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
@@ -427,7 +430,7 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE
         self.q.produce(f)
     }
 
-    pub fn acquire_buffer(&mut self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+    pub fn acquire_buffer(&self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
         if self.q.wait_for_write() {
             Some(ProducerGuard { producer: self })
         } else {
@@ -439,7 +442,8 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE
         self.q.next_write_buffer()
     }
 
-    fn get_buffer_mut(&mut self) -> &mut [T] {
+    /// SAFETY: Caller must ensure exclusive access to the current producer slot.
+    unsafe fn get_buffer_mut(&self) -> &mut [T] {
         self.q.next_write_buffer()
     }
 
@@ -457,7 +461,7 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Consumer<T, CHUNK_SIZE
         self.q.consume(f)
     }
 
-    pub fn acquire_buffer(&mut self) -> Option<ConsumerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+    pub fn acquire_buffer(&self) -> Option<ConsumerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
         if self.q.wait_for_read() {
             Some(ConsumerGuard { consumer: self })
         } else {
@@ -485,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_triple_buffer_basic() {
-        let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
+        let (mut reader, writer) = TripleBuffer::<u32>::new().split();
         
         // Initial state
         let (val, state) = reader.get_read_buffer();
@@ -511,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_triple_buffer_multiple_writes() {
-        let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
+        let (mut reader, writer) = TripleBuffer::<u32>::new().split();
 
         // Write twice
         {
@@ -534,7 +538,7 @@ mod tests {
         use std::thread;
         use std::sync::Barrier;
 
-        let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
+        let (mut reader, writer) = TripleBuffer::<u32>::new().split();
         let barrier = Arc::new(Barrier::new(2));
         let b1 = barrier.clone();
         let b2 = barrier.clone();
@@ -649,7 +653,7 @@ mod tests {
     #[test]
     fn test_triple_buffer_panic_safety() {
         use std::thread;
-        let (mut _reader, mut writer) = TripleBuffer::<u32>::new().split();
+        let (_reader, writer) = TripleBuffer::<u32>::new().split();
         
         let _ = thread::spawn(move || {
             let _w = writer.acquire_buffer();
@@ -750,7 +754,7 @@ mod tests {
 
     #[test]
     fn test_pcq_raii() {
-        let (mut prod, mut cons) = ProducerConsumerQueue::<u32, 1, 2>::new();
+        let (prod, cons) = ProducerConsumerQueue::<u32, 1, 2>::new();
         
         {
             let mut w = prod.acquire_buffer().unwrap();

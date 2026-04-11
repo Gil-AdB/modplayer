@@ -66,7 +66,7 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
 
     let mut audio = AudioOutput::new(consumer, SAMPLE_RATE);
 
-    let handle = song_data.get_mut().start(|data, instruments| {
+    let handle = song_data.start(|data, instruments| {
 
         let mut view_port = ViewPort {
             x1: 0,
@@ -98,9 +98,9 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
     });
 
     audio.start_audio_output();
-    mainloop(song_data.get_mut());
+    mainloop(song_data);
 
-    song_data.get_mut().close();
+    song_data.close();
     if handle.0.is_some() {
         handle.0.unwrap().join().unwrap();
     }
@@ -117,7 +117,7 @@ fn is_num (ch: char) -> bool {
 }
 
 
-fn mainloop(song_data: &mut SongState) {
+fn mainloop(song_data: &SongState) {
 
     if let Ok(size) = crossterm::terminal::size() {
         let tx = song_data.get_sender();
