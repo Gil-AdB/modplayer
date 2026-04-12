@@ -2,6 +2,7 @@ use std::cmp::min;
 use rustfft::{FftPlanner, num_complex::Complex};
 use serde::Serialize;
 use std::sync::mpsc::Receiver;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use crate::channel_state::{ChannelState, Voice};

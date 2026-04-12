@@ -533,56 +533,6 @@ impl Display {
         }
     }
 
-    fn render_braille_scope_2lines(grid: &mut Grid, data: &[f32], x: usize, y: usize, width: usize, color: RGB, bg: RGB) {
-        if data.len() < width * 2 { return; }
-        for i in 0..width {
-            let sample_idx1 = (i * 2 * data.len()) / (width * 2);
-            let sample_idx2 = ((i * 2 + 1) * data.len()) / (width * 2);
-            let s1 = data[sample_idx1] * 0.5; // Gain reduction
-            let s2 = data[sample_idx2] * 0.5;
-
-            let v1 = (((1.0 - s1) * 3.5).round().max(0.0).min(7.0)) as usize;
-            let v2 = (((1.0 - s2) * 3.5).round().max(0.0).min(7.0)) as usize;
-
-            let mut top_bits = 0u8;
-            let mut bot_bits = 0u8;
-
-            let get_bits = |v: usize| -> (u8, u8) { 
-                match v {
-                    0 => (0x01, 0x00), 1 => (0x02, 0x00), 2 => (0x04, 0x00), 3 => (0x40, 0x00),
-                    4 => (0x00, 0x01), 5 => (0x00, 0x02), 6 => (0x00, 0x04), 7 => (0x00, 0x40),
-                    _ => (0x00, 0x00)
-                }
-            };
-
-            let (t1, b1) = get_bits(v1);
-            top_bits |= t1; bot_bits |= b1;
-
-            let (t2, b2) = get_bits(v2);
-            let t2_mapped = match t2 { 0x01=>0x08, 0x02=>0x10, 0x04=>0x20, 0x40=>0x80, _=>0 };
-            let b2_mapped = match b2 { 0x01=>0x08, 0x02=>0x10, 0x04=>0x20, 0x40=>0x80, _=>0 };
-            top_bits |= t2_mapped; bot_bits |= b2_mapped;
-
-            let c_top = unsafe { std::char::from_u32_unchecked(0x2800 + top_bits as u32) };
-            let c_bot = unsafe { std::char::from_u32_unchecked(0x2800 + bot_bits as u32) };
-            
-            grid.set_cell(x + i, y, c_top, color, bg);
-            grid.set_cell(x + i, y + 1, c_bot, color, bg);
-        }
-    }
-
-    fn render_braille_scope(grid: &mut Grid, data: &[f32], x: usize, y: usize, width: usize, color: RGB, bg: RGB) {
-        if data.is_empty() { return; }
-        for i in 0..width {
-            let sample_idx = (i * data.len()) / width;
-            let sample = data[sample_idx] * 0.7;
-            let dot_y = (((1.0 - sample) / 2.0) * 3.0).round() as usize; // 0..3
-            let dot_y = dot_y.min(3);
-            
-            let dot_bits = [0x01, 0x02, 0x04, 0x40];
-            grid.merge_braille_cell(x + i, y, dot_bits[dot_y], color, bg);
-        }
-    }
 
     fn render_fft(grid: &mut Grid, spectrum: &[f32], x: usize, y: usize, width: usize, height: usize, colors: &[RGB], bg: RGB) {
         if spectrum.is_empty() { return; }
