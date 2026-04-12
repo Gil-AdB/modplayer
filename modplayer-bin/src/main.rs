@@ -133,7 +133,7 @@ fn mainloop(song_data: &SongState) {
     loop {
         if song_data.is_stopped() {break;}
         // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
-        if crossterm::event::poll(Duration::from_millis(30)).is_ok() {
+        if crossterm::event::poll(Duration::from_millis(10)).is_ok() {
             // It's guaranteed that the `read()` won't block when the `poll()`
             // function returns `true`
             match crossterm::event::read() {
@@ -266,6 +266,12 @@ fn mainloop(song_data: &SongState) {
                                 }
                                 ']' => {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataAddISize("x".to_string(), 1));
+                                }
+                                '(' => {
+                                    let _ = tx.send(PlaybackCmd::DecLatency);
+                                }
+                                ')' => {
+                                    let _ = tx.send(PlaybackCmd::IncLatency);
                                 }
                                 _ => {}
                             }

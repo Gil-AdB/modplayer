@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::cmp::{min, max};
 use rustfft::{FftPlanner, num_complex::Complex};
 use serde::Serialize;
 use std::sync::mpsc::Receiver;
@@ -169,6 +169,8 @@ pub enum PlaybackCmd {
     CycleTheme,
     ToggleScopes,
     ToggleVisualizerMode,
+    IncLatency,
+    DecLatency,
 }
 
 
@@ -397,8 +399,9 @@ pub struct Song {
     display:                    bool,
     frequency_tables:           Box<AudioTables>,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
-    pub master_samples:         [f32; 1024],
+    pub master_samples:         [f32; 8192],
     pub master_samples_pos:     usize,
+    pub visual_latency:         isize,
     tick_state:                 TickState,
     pub visualizer_enabled:     bool,
     pub visualizer_mode:        u32,
@@ -407,16 +410,16 @@ pub struct Song {
     pub theme_id:               u32,
     pub view_mode:              u32,
     pub display_count:          u32,
-    pub fps:                    f32,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub last_fps_time:          Instant,
-    #[cfg(target_arch = "wasm32")]
     pub total_samples:          u64,
-    #[cfg(target_arch = "wasm32")]
     pub last_fps_sample:        u64,
     #[allow(dead_code)]
     song_message:               String,
     user_data:                  HashMap<String, UserData>,
+    pub last_display_update_sample: u64,
+    pub fps:                    f32,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub last_fps_time:          Instant,
+    fft_planner:                FftPlanner<f32>,
 }
 
 impl Song {
@@ -503,8 +506,9 @@ impl Song {
             display: true,
             frequency_tables: use_amiga,
             triple_buffer_writer,
-            master_samples: [0.0; 1024],
+            master_samples: [0.0; 8192],
             master_samples_pos: 0,
+            visual_latency: 2048,
             tick_state: TickState {
                 state: BufferState::Start,
                 current_buf_position: 0,
@@ -514,17 +518,17 @@ impl Song {
             visualizer_mode: 0,
             master_spectrum: vec![0.0; 128],
             master_oscilloscope: vec![0.0; 512],
-            theme_id: 1, // Start with SYNCHRONIZED theme
+            theme_id: 1, 
             view_mode: 0,
             display_count: 0,
             fps: 0.0,
+            total_samples: 0,
+            last_fps_sample: 0,
             #[cfg(not(target_arch = "wasm32"))]
             last_fps_time: Instant::now(),
-            #[cfg(target_arch = "wasm32")]
-            total_samples: 0,
-            #[cfg(target_arch = "wasm32")]
-            last_fps_sample: 0,
-            user_data: HashMap::new()
+            user_data: HashMap::new(),
+            last_display_update_sample: 0,
+            fft_planner: FftPlanner::new(),
         }
     }
 
@@ -538,7 +542,7 @@ impl Song {
 
     fn queue_display(&mut self) {
         let mut play_data = self.triple_buffer_writer.acquire_buffer();
-
+        
         play_data.name                      = self.name.clone();
         play_data.tick_duration_in_frames   = self.bpm.tick_duration_in_frames;
         play_data.tick_duration_in_ms       = self.bpm.tick_duration_in_ms;
@@ -546,75 +550,26 @@ impl Song {
         play_data.song_position             = self.song_position;
         play_data.song_length               = self.song_data.song_length;
         play_data.row                       = self.row;
-        play_data.pattern_len               = self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize].rows.len() - 1;
+        if self.song_position < self.song_data.pattern_order.len() {
+            let pat_idx = self.song_data.pattern_order[self.song_position] as usize;
+            if pat_idx < self.song_data.patterns.len() {
+                play_data.pattern_len           = self.song_data.patterns[pat_idx].rows.len();
+            }
+        }
         play_data.bpm                       = self.bpm.bpm;
         play_data.speed                     = self.speed;
         play_data.song_message              = self.song_data.song_message.clone();
-        play_data.visualizer_enabled        = self.visualizer_enabled;
-        play_data.visualizer_mode           = match self.user_data.get("visualizer_mode") {
-            Some(UserData::USize(v)) => (*v % 3) as u32,
-            _ => self.visualizer_mode
-        };
-        
-        // Calculate FPS
-        self.display_count += 1;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let now = Instant::now();
-            let elapsed = now.duration_since(self.last_fps_time).as_secs_f32();
-            if elapsed >= 1.0 {
-                self.fps = self.display_count as f32 / elapsed;
-                self.display_count = 0;
-                self.last_fps_time = now;
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            if self.display_count >= 5 {
-                let elapsed_samples = self.total_samples.saturating_sub(self.last_fps_sample);
-                let elapsed_secs = elapsed_samples as f32 / self.rate;
-                if elapsed_secs > 0.05 {
-                    self.fps = self.display_count as f32 / elapsed_secs;
-                    self.display_count = 0;
-                    self.last_fps_sample = self.total_samples;
-                }
-            }
-        }
 
-        // Master Visualizer Data (In-place update)
-        if play_data.master_oscilloscope.len() != 512 {
-            play_data.master_oscilloscope = vec![0.0; 512];
-        }
-        for i in 0..512 {
-            let idx = (self.master_samples_pos + i) % 1024;
-            play_data.master_oscilloscope[i] = self.master_samples[idx];
-        }
-        
-        // Master FFT
-        let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(1024);
-        let mut fft_buffer: Vec<Complex<f32>> = self.master_samples.iter()
-            .map(|&s| Complex::new(s, 0.0))
-            .collect();
-        fft.process(&mut fft_buffer);
-
-        if play_data.master_spectrum.len() != 128 {
-            play_data.master_spectrum = vec![0.0; 128];
-        }
-        // Take 128 bins and normalize
-        for i in 0..128 {
-            play_data.master_spectrum[i] = fft_buffer[i].norm() / 10.0;
-        }
-
-        play_data.display_fps               = self.fps;
+        // --- INSTANT UI FEEDBACK (Always update user-controllable state) ---
         play_data.theme_id                  = self.theme_id;
         play_data.view_mode                 = self.view_mode;
         play_data.scopes_enabled            = match self.user_data.get("scopes_enabled") {
             Some(UserData::USize(v)) => *v % 2 != 0,
             _ => true
         };
-        play_data.user_data                 = self.user_data.clone();
+        play_data.visualizer_mode           = self.visualizer_mode;
         play_data.filter                    = self.filter;
+        play_data.user_data                 = self.user_data.clone();
 
         // Optimized Channel Status (In-place update)
         let num_channels = self.channels.len();
@@ -663,6 +618,64 @@ impl Song {
             status.final_panning      = channel.panning.final_panning;
             status.instrument_name    = instrument_name;
         }
+
+        // Always update Visualizers (Scopes/FFT)
+        self.display_count += 1;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let elapsed = self.last_fps_time.elapsed();
+            if elapsed.as_secs_f32() > 0.5 {
+                self.fps = self.display_count as f32 / elapsed.as_secs_f32();
+                self.display_count = 0;
+                self.last_fps_time = Instant::now();
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+             let elapsed_secs = (self.total_samples - self.last_fps_sample) as f32 / self.rate;
+             if elapsed_secs > 0.5 {
+                 self.fps = self.display_count as f32 / elapsed_secs;
+                 self.display_count = 0;
+                 self.last_fps_sample = self.total_samples;
+             }
+        }
+
+        // High-Fidelity Master Visualizer Data with Latency Compensation
+        if play_data.master_oscilloscope.len() != 512 {
+            play_data.master_oscilloscope = vec![0.0; 512];
+        }
+        
+        // Calculate the history offset. 
+        let history_len = 8192;
+        let start_offset = (self.master_samples_pos as isize - self.visual_latency).rem_euclid(history_len as isize) as usize;
+
+        for i in 0..512 {
+            let idx = (start_offset + i) % history_len;
+            play_data.master_oscilloscope[i] = self.master_samples[idx];
+        }
+        
+        // Master FFT (Optimized with persistent planner and robust indexing)
+        let fft = self.fft_planner.plan_fft_forward(1024);
+        let mut fft_input_buffer = vec![0.0f32; 1024];
+        let base_offset = (start_offset as isize - 256).rem_euclid(history_len as isize) as usize;
+        for i in 0..1024 {
+            let idx = (base_offset + i) % history_len; 
+            fft_input_buffer[i] = self.master_samples[idx];
+        }
+        
+        let mut fft_buffer: Vec<Complex<f32>> = fft_input_buffer.iter()
+            .map(|&s| Complex::new(s, 0.0))
+            .collect();
+        fft.process(&mut fft_buffer);
+
+        if play_data.master_spectrum.len() != 128 {
+            play_data.master_spectrum = vec![0.0; 128];
+        }
+        for i in 0..128 {
+            play_data.master_spectrum[i] = fft_buffer[i].norm() / 10.0;
+        }
+
+        play_data.display_fps = self.fps;
     }
     // Song::display(&play_data, 0);
 
@@ -703,7 +716,6 @@ impl Song {
                     }
 
                     self.process_tick();
-
                     if self.display {
                         self.queue_display();
                     }
@@ -717,13 +729,18 @@ impl Song {
                                                     buf.num_frames() - self.tick_state.current_buf_position);
 
                         self.output_channels(self.tick_state.current_buf_position, buf, ticks_to_generate);
+                        self.total_samples += ticks_to_generate as u64;
                         self.tick_state.current_tick_position += ticks_to_generate;
                         self.tick_state.current_buf_position += ticks_to_generate;
+
+                        if self.display && self.total_samples >= self.last_display_update_sample + 512 {
+                            self.queue_display();
+                            self.last_display_update_sample = self.total_samples;
+                        }
+
                         if self.tick_state.current_buf_position == buf.num_frames() {
-                            self.tick_state.current_buf_position = 0;
-                            return CallbackState::Ok;
-                        } else {
-                            // We finished current with the current tick, but buffer is still not full...
+                             self.tick_state.current_buf_position = 0;
+                             return CallbackState::Ok;
                         }
                     }
                     self.tick_state.state = BufferState::NextTick
@@ -831,6 +848,12 @@ impl Song {
                     }
                     PlaybackCmd::ToggleVisualizerMode => {
                         self.visualizer_mode = (self.visualizer_mode + 1) % 4;
+                    }
+                    PlaybackCmd::IncLatency => {
+                        self.visual_latency = (self.visual_latency + 128).min(7000);
+                    }
+                    PlaybackCmd::DecLatency => {
+                        self.visual_latency = (self.visual_latency - 128).max(0);
                     }
                 }
             }
@@ -1195,7 +1218,7 @@ impl Song {
 
                 // Collect master for FFT
                 self.master_samples[self.master_samples_pos] = (l + r) / 2.0;
-                self.master_samples_pos = (self.master_samples_pos + 1) % 1024;
+                self.master_samples_pos = (self.master_samples_pos + 1) % 8192;
 
                 buf.mix_sample(0, l, current_buf_position + i);
                 buf.mix_sample(1, r, current_buf_position + i);

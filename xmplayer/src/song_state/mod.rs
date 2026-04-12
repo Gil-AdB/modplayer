@@ -144,22 +144,16 @@ impl SongHandle {
         let s2 = self.clone();
         let display_thread = Option::from(spawn(move || {
             let s = &s2;
-            let mut song_row = 0;
-            let mut song_tick = 2000;
             loop {
                 if s.is_stopped() {
                     break;
                 }
-                sleep(Duration::from_millis(30));
+                sleep(Duration::from_millis(8));
                 let (play_data, state) = s.triple_buffer_reader.get_read_buffer();
                 if StateNoChange == state { continue; }
-                if play_data.tick != song_tick || play_data.row != song_row {
-                    let cb_guard = s.display_cb.lock().unwrap();
-                    if let Some(cb) = *cb_guard {
-                        (cb)(play_data, &s.song_data.instruments, &s.song_data.patterns, &s.song_data.pattern_order);
-                    }
-                    song_row = play_data.row;
-                    song_tick = play_data.tick;
+                let cb_guard = s.display_cb.lock().unwrap();
+                if let Some(cb) = *cb_guard {
+                    (cb)(play_data, &s.song_data.instruments, &s.song_data.patterns, &s.song_data.pattern_order);
                 }
             }
         }));

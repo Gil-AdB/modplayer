@@ -113,7 +113,7 @@ impl Display {
         grid.print(0, 0, &header_str, theme.header_fg, theme.header_bg);
 
         // 2. Dynamic Layout Calculation
-        let vis_height = if visualizer_mode < 3 {
+        let vis_height = if platform == TargetPlatform::Native && visualizer_mode < 3 {
              (height / 3).max(11).min(20)
         } else {
             0
