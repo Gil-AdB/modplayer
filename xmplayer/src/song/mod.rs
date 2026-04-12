@@ -733,11 +733,6 @@ impl Song {
                         self.tick_state.current_tick_position += ticks_to_generate;
                         self.tick_state.current_buf_position += ticks_to_generate;
 
-                        if self.display && self.total_samples >= self.last_display_update_sample + 512 {
-                            self.queue_display();
-                            self.last_display_update_sample = self.total_samples;
-                        }
-
                         if self.tick_state.current_buf_position == buf.num_frames() {
                              self.tick_state.current_buf_position = 0;
                              return CallbackState::Ok;
