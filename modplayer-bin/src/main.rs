@@ -13,8 +13,7 @@ use xmplayer::AudioConsumer;
 #[cfg(feature="sdl2-feature")] use sdl2_audio::AudioOutput;
 #[cfg(feature="portaudio-feature")] mod portaudio_audio;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
-use crossterm::cursor::{MoveToNextLine, Hide, MoveTo, Show};
-use crossterm::terminal::{Clear, ClearType};
+use crossterm::cursor::{Hide, MoveTo, Show};
 use display::display::{Display, TargetPlatform};
 use display::ViewPort;
 

@@ -36,6 +36,8 @@ pub struct Sample {
     pub panning: u8,
     pub relative_note: i8,
     pub name: String,
+    pub is_ping_pong: bool,
+    pub original_loop_end: u32,
     pub data: Vec<f32>
 }
 
@@ -53,6 +55,8 @@ impl Sample {
             panning: 0,
             relative_note: 0,
             name: "".to_string(),
+            is_ping_pong: false,
+            original_loop_end: 0,
             data: vec![]
         }
     }
@@ -137,7 +141,9 @@ impl Sample {
     pub(crate) fn setup_loops_and_padding(&mut self) {
         if self.length == 0 || self.data.is_empty() { return; }
 
+        self.original_loop_end = self.loop_end;
         if self.loop_type == LoopType::PingPongLoop {
+            self.is_ping_pong = true;
             let mut reversed = Vec::new();
             for i in (self.loop_start..self.loop_end).rev() {
                 reversed.push(self.data[i as usize]);

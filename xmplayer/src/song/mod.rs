@@ -1,4 +1,4 @@
-use std::cmp::{min, max};
+use std::cmp::min;
 use rustfft::{FftPlanner, num_complex::Complex};
 use serde::Serialize;
 use std::sync::mpsc::Receiver;
@@ -614,7 +614,18 @@ impl Song {
             status.frequency          = channel.frequency + channel.frequency_shift;
             status.instrument         = channel.voice.instrument;
             status.sample             = channel.voice.sample;
-            status.sample_position    = channel.voice.sample_position;
+            let mut sample_position = channel.voice.sample_position;
+            if channel.voice.instrument < self.song_data.instruments.len() {
+                let inst = &self.song_data.instruments[channel.voice.instrument];
+                if channel.voice.sample < inst.samples.len() {
+                    let sample = &inst.samples[channel.voice.sample];
+                    if sample.is_ping_pong && sample_position >= sample.original_loop_end as f32 {
+                        let over = sample_position - sample.original_loop_end as f32;
+                        sample_position = (sample.original_loop_end as f32 - 1.0) - over;
+                    }
+                }
+            }
+            status.sample_position    = sample_position;
             status.note               = channel.note.to_string();
             status.period             = channel.note.period;
             status.final_panning      = channel.panning.final_panning;
@@ -857,6 +868,9 @@ impl Song {
                     PlaybackCmd::DecLatency => {
                         self.visual_latency = (self.visual_latency - 128).max(0);
                     }
+                }
+                if self.display {
+                    self.queue_display();
                 }
             }
             else

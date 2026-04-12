@@ -68,7 +68,7 @@ impl SongState {
     pub fn new(path: &str) -> SimpleResult<(SongHandle, AudioConsumer)> {
         let song_data = read_module(path)?;
 
-        let triple_buffer = TripleBuffer::<PlayData>::new();
+        let triple_buffer = TripleBuffer::<PlayData>::new_with_signal();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
         let song = Arc::new(Mutex::new(Song::new(&song_data, triple_buffer_writer, 48000.0)));
         let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
@@ -148,7 +148,7 @@ impl SongHandle {
                 if s.is_stopped() {
                     break;
                 }
-                sleep(Duration::from_millis(8));
+                s.triple_buffer_reader.wait();
                 let (play_data, state) = s.triple_buffer_reader.get_read_buffer();
                 if StateNoChange == state { continue; }
                 let cb_guard = s.display_cb.lock().unwrap();
@@ -179,12 +179,14 @@ impl SongState {
 
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
+        self.triple_buffer_reader.signal();
     }
 
     pub fn close(&self) {
         self.stopped.store(true, Ordering::Release);
         let _ = self.tx.send(Quit);
         self.q.stop();
+        self.triple_buffer_reader.signal();
         // if handle.0.is_some() {
         //     handle.0.unwrap().join().unwrap();
         // }
@@ -265,7 +267,7 @@ mod tests {
         // but for now, we just test the StructHolder drop logic with SongState.
         let counter = Arc::new(AtomicUsize::new(0));
         
-        let triple_buffer = TripleBuffer::<PlayData>::new();
+        let triple_buffer = TripleBuffer::<PlayData>::new_with_signal();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
         let song_data = SongData::default();
         let song = Arc::new(Mutex::new(Song::new(&song_data, triple_buffer_writer, 48000.0)));
