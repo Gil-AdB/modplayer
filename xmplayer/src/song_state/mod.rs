@@ -60,7 +60,7 @@ pub struct SongState {
     pub(crate) tx:                   Sender<PlaybackCmd>,
     pub(crate) rx:                   Arc<Mutex<Receiver<PlaybackCmd>>>,
     pub(crate) q:                    AudioProducer,
-    pub(crate) display_cb:           Mutex<Option<fn (&PlayData, &Vec<Instrument>)>>,
+    pub(crate) display_cb:           Mutex<Option<fn (&PlayData, &Vec<Instrument>, &Vec<crate::module_reader::Patterns>, &Vec<u8>)>>,
 }
 
 impl SongState {
@@ -97,9 +97,17 @@ impl SongState {
     fn callback(&self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();
-        while let Some(mut buf) = self.q.acquire_buffer() {
-            let mut adaptar = InterleavedBufferAdaptar{buf: &mut *buf};
-            if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { break; }
+        loop {
+            if !song.handle_commands(rx.deref_mut()) { break; }
+            if self.is_stopped() { break; }
+
+            if let Some(mut buf) = self.q.try_acquire_buffer() {
+                let mut adaptar = InterleavedBufferAdaptar{buf: &mut *buf};
+                if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { break; }
+            } else {
+                // If we couldn't acquire a buffer, sleep a bit to avoid busy waiting
+                sleep(Duration::from_millis(10));
+            }
         }
         self.stopped.store(true, Ordering::Release);
         self.q.stop();
@@ -124,7 +132,7 @@ impl SongState {
 
 
 impl SongHandle {
-    pub fn start(&self, display_cb: fn (&PlayData, &Vec<Instrument>)) -> (Option<JoinHandle<()>>, Option<JoinHandle<()>>) {
+    pub fn start(&self, display_cb: fn (&PlayData, &Vec<Instrument>, &Vec<crate::module_reader::Patterns>, &Vec<u8>)) -> (Option<JoinHandle<()>>, Option<JoinHandle<()>>) {
         {
             let mut cb = self.display_cb.lock().unwrap();
             *cb = Option::from(display_cb);
@@ -148,7 +156,7 @@ impl SongHandle {
                 if play_data.tick != song_tick || play_data.row != song_row {
                     let cb_guard = s.display_cb.lock().unwrap();
                     if let Some(cb) = *cb_guard {
-                        (cb)(play_data, &s.song_data.instruments);
+                        (cb)(play_data, &s.song_data.instruments, &s.song_data.patterns, &s.song_data.pattern_order);
                     }
                     song_row = play_data.row;
                     song_tick = play_data.tick;

@@ -438,6 +438,19 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE
         }
     }
 
+    pub fn try_acquire_buffer(&self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+        if self.q.empty_count.try_wait() {
+            if self.q.stopped.load(Acquire) {
+                self.q.empty_count.signal();
+                None
+            } else {
+                Some(ProducerGuard { producer: self })
+            }
+        } else {
+            None
+        }
+    }
+
     fn get_buffer(&self) -> &[T] {
         self.q.next_write_buffer()
     }

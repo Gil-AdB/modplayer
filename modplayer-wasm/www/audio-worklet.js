@@ -53,9 +53,9 @@ class ModPlayerWorklet extends AudioWorkletProcessor {
             this.readPos = (this.readPos + 1) % this.bufferLeft.length;
         }
         
-        // Notify main thread if we drop below 200ms of audio (9600 frames)
+        // Notify main thread if we drop below 50ms of audio (2400 frames)
         framesAvailable = (this.writePos - this.readPos + this.bufferLeft.length) % this.bufferLeft.length;
-        if (framesAvailable < 9600) {
+        if (framesAvailable < 2400) {
             this.port.postMessage({ type: 'needData' });
         }
         

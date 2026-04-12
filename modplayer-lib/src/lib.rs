@@ -73,7 +73,7 @@ impl App {
     }
 
     pub(crate) fn start(&mut self) {
-        let h = self.song_handle.start(|_data, _instruments| {});
+        let h = self.song_handle.start(|_data, _instruments, _patterns, _order| {});
         self.play_thread = h.0;
         self.display_thread = h.1;
         self.audio_output.start_audio_output();

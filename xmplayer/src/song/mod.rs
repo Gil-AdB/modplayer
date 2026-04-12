@@ -1,6 +1,8 @@
 use std::cmp::min;
+use rustfft::{FftPlanner, num_complex::Complex};
 use serde::Serialize;
 use std::sync::mpsc::Receiver;
+use std::time::Instant;
 
 use crate::channel_state::{ChannelState, Voice};
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp, VibratoEnvelopeState};
@@ -163,6 +165,10 @@ pub enum PlaybackCmd {
     SpeedDown,
     SpeedReset,
     SetPosition(u32),
+    SetViewMode(u32),
+    CycleTheme,
+    ToggleScopes,
+    ToggleVisualizerMode,
 }
 
 
@@ -183,6 +189,28 @@ pub struct ChannelStatus {
     pub final_panning:                      u8,
     pub oscilloscope:                       Vec<f32>,
     pub instrument_name:                    String,
+}
+
+impl Default for ChannelStatus {
+    fn default() -> Self {
+        Self {
+            volume: 0.0,
+            envelope_volume: 0.0,
+            global_volume: 0.0,
+            fadeout_volume: 0.0,
+            on: false,
+            force_off: false,
+            frequency: 0.0,
+            instrument: 0,
+            sample: 0,
+            sample_position: 0.0,
+            note: "".to_string(),
+            period: 0,
+            final_panning: 128,
+            oscilloscope: vec![0.0; 512],
+            instrument_name: "".to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -217,6 +245,14 @@ pub struct PlayData {
     pub channel_status:                     Vec<ChannelStatus>,
     pub filter:                             FilterType,
     pub song_message:                       String,
+    pub visualizer_enabled:                 bool,
+    pub scopes_enabled:                     bool,
+    pub visualizer_mode:                    u32,
+    pub master_spectrum:                    Vec<f32>,
+    pub master_oscilloscope:                Vec<f32>,
+    pub display_fps:                        f32,
+    pub theme_id:                           u32,
+    pub view_mode:                          u32,
     pub user_data:                          HashMap<String, UserData>,
 }
 
@@ -236,6 +272,14 @@ impl Default for PlayData {
             channel_status: vec![],
             filter: FilterType::Cubic,
             song_message: "".to_string(),
+            visualizer_enabled: true,
+            scopes_enabled: true,
+            visualizer_mode: 0,
+            master_spectrum: vec![0.0; 128],
+            master_oscilloscope: vec![0.0; 512],
+            display_fps: 0.0,
+            theme_id: 0,
+            view_mode: 0,
             user_data: Default::default()
         }
     }
@@ -353,7 +397,23 @@ pub struct Song {
     display:                    bool,
     frequency_tables:           Box<AudioTables>,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
+    pub master_samples:         [f32; 1024],
+    pub master_samples_pos:     usize,
     tick_state:                 TickState,
+    pub visualizer_enabled:     bool,
+    pub visualizer_mode:        u32,
+    pub master_spectrum:        Vec<f32>,
+    pub master_oscilloscope:    Vec<f32>,
+    pub theme_id:               u32,
+    pub view_mode:              u32,
+    pub display_count:          u32,
+    pub fps:                    f32,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub last_fps_time:          Instant,
+    #[cfg(target_arch = "wasm32")]
+    pub total_samples:          u64,
+    #[cfg(target_arch = "wasm32")]
+    pub last_fps_sample:        u64,
     #[allow(dead_code)]
     song_message:               String,
     user_data:                  HashMap<String, UserData>,
@@ -443,11 +503,27 @@ impl Song {
             display: true,
             frequency_tables: use_amiga,
             triple_buffer_writer,
+            master_samples: [0.0; 1024],
+            master_samples_pos: 0,
             tick_state: TickState {
                 state: BufferState::Start,
                 current_buf_position: 0,
                 current_tick_position: 0
             },
+            visualizer_enabled: true,
+            visualizer_mode: 0,
+            master_spectrum: vec![0.0; 128],
+            master_oscilloscope: vec![0.0; 512],
+            theme_id: 1, // Start with SYNCHRONIZED theme
+            view_mode: 0,
+            display_count: 0,
+            fps: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
+            last_fps_time: Instant::now(),
+            #[cfg(target_arch = "wasm32")]
+            total_samples: 0,
+            #[cfg(target_arch = "wasm32")]
+            last_fps_sample: 0,
             user_data: HashMap::new()
         }
     }
@@ -474,93 +550,127 @@ impl Song {
         play_data.bpm                       = self.bpm.bpm;
         play_data.speed                     = self.speed;
         play_data.song_message              = self.song_data.song_message.clone();
-        play_data.channel_status.clear();
-        play_data.filter                    = self.filter;
-        play_data.user_data                 = self.user_data.clone();
+        play_data.visualizer_enabled        = self.visualizer_enabled;
+        play_data.visualizer_mode           = match self.user_data.get("visualizer_mode") {
+            Some(UserData::USize(v)) => (*v % 3) as u32,
+            _ => self.visualizer_mode
+        };
+        
+        // Calculate FPS
+        self.display_count += 1;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let now = Instant::now();
+            let elapsed = now.duration_since(self.last_fps_time).as_secs_f32();
+            if elapsed >= 1.0 {
+                self.fps = self.display_count as f32 / elapsed;
+                self.display_count = 0;
+                self.last_fps_time = now;
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.display_count >= 5 {
+                let elapsed_samples = self.total_samples.saturating_sub(self.last_fps_sample);
+                let elapsed_secs = elapsed_samples as f32 / self.rate;
+                if elapsed_secs > 0.05 {
+                    self.fps = self.display_count as f32 / elapsed_secs;
+                    self.display_count = 0;
+                    self.last_fps_sample = self.total_samples;
+                }
+            }
+        }
 
-        for channel in &self.channels {
+        // Master Visualizer Data (In-place update)
+        if play_data.master_oscilloscope.len() != 512 {
+            play_data.master_oscilloscope = vec![0.0; 512];
+        }
+        for i in 0..512 {
+            let idx = (self.master_samples_pos + i) % 1024;
+            play_data.master_oscilloscope[i] = self.master_samples[idx];
+        }
+        
+        // Master FFT
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(1024);
+        let mut fft_buffer: Vec<Complex<f32>> = self.master_samples.iter()
+            .map(|&s| Complex::new(s, 0.0))
+            .collect();
+        fft.process(&mut fft_buffer);
+
+        if play_data.master_spectrum.len() != 128 {
+            play_data.master_spectrum = vec![0.0; 128];
+        }
+        // Take 128 bins and normalize
+        for i in 0..128 {
+            play_data.master_spectrum[i] = fft_buffer[i].norm() / 10.0;
+        }
+
+        play_data.display_fps               = self.fps;
+        play_data.theme_id                  = self.theme_id;
+        play_data.view_mode                 = self.view_mode;
+        play_data.scopes_enabled            = match self.user_data.get("scopes_enabled") {
+            Some(UserData::USize(v)) => *v % 2 != 0,
+            _ => true
+        };
+        play_data.user_data                 = self.user_data.clone();
+        play_data.filter                    = self.filter;
+
+        // Optimized Channel Status (In-place update)
+        let num_channels = self.channels.len();
+        while play_data.channel_status.len() < num_channels {
+            play_data.channel_status.push(ChannelStatus::default());
+        }
+        play_data.channel_status.truncate(num_channels);
+
+        for i in 0..num_channels {
+            let channel = &mut self.channels[i];
+            let status = &mut play_data.channel_status[i];
+            
             let instrument_name = if channel.voice.instrument < self.song_data.instruments.len() {
                 self.song_data.instruments[channel.voice.instrument].name.clone()
             } else {
                 "".to_string()
             };
-            play_data.channel_status.push(ChannelStatus {
-                volume:             channel.voice.volume.volume as f32,
-                envelope_volume:    channel.voice.volume.envelope_vol as f32,
-                global_volume:      channel.voice.volume.global_vol as f32,
-                fadeout_volume:     channel.voice.volume.fadeout_vol as f32,
-                on:                 channel.on,
-                force_off:          channel.force_off,
-                frequency:          channel.frequency + channel.frequency_shift,
-                instrument:         channel.voice.instrument,
-                sample:             channel.voice.sample,
-                sample_position:    channel.voice.sample_position,
-                note:               channel.note.to_string(),
-                period:             channel.note.period,
-                final_panning:      channel.panning.final_panning,
-                oscilloscope:       channel.last_samples.to_vec(),
-                instrument_name
-            });
+
+            // High-fidelity scope normalization
+            let mut peak = 0.01f32;
+            for &s in channel.last_samples.iter() {
+                peak = peak.max(s.abs());
+            }
+            let gain = if peak > 0.0001 { 0.5 / peak } else { 1.0 };
+
+            if status.oscilloscope.len() != 512 {
+                status.oscilloscope = vec![0.0; 512];
+            }
+            for j in 0..512 {
+                let idx = (channel.last_samples_pos + j) % 512;
+                status.oscilloscope[j] = channel.last_samples[idx] * gain;
+            }
+
+            status.volume             = channel.voice.volume.volume as f32;
+            status.envelope_volume    = channel.voice.volume.envelope_vol as f32;
+            status.global_volume      = channel.voice.volume.global_vol as i32 as f32;
+            status.fadeout_volume     = channel.voice.volume.fadeout_vol as f32;
+            status.on                 = channel.on;
+            status.force_off          = channel.force_off;
+            status.frequency          = channel.frequency + channel.frequency_shift;
+            status.instrument         = channel.voice.instrument;
+            status.sample             = channel.voice.sample;
+            status.sample_position    = channel.voice.sample_position;
+            status.note               = channel.note.to_string();
+            status.period             = channel.note.period;
+            status.final_panning      = channel.panning.final_panning;
+            status.instrument_name    = instrument_name;
         }
-        // Song::display(&play_data, 0);
     }
+    // Song::display(&play_data, 0);
 
     pub fn get_channel_count(&self) -> usize {
         self.song_data.channel_count as usize
     }
 
     pub fn free(&mut self) {}
-    //     buf.fill(0.0);
-    //     self.bpm.update(self.bpm.bpm, self.rate);
-    //     // let mut buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
-    //     loop { // loop1
-    //         match self.tick_state.state {
-    //             BufferState::Start => {
-    //                 if !self.handle_commands(rx) { return CallbackState::Complete; }
-    //
-    //                 if self.pause {
-    //                     //let temp_buf = &mut unsafe { *buffer.load(Ordering::Acquire) };
-    //
-    //
-    //                     self.tick_state.current_buf_position = 0;
-    //                     return CallbackState::Ok;
-    //                 }
-    //
-    //                 self.process_tick();
-    //
-    //                 if self.display {
-    //                     self.queue_display();
-    //                 }
-    //
-    //                 self.tick_state.current_tick_position = 0usize;
-    //                 self.tick_state.state = BufferState::FillBuffer
-    //             }
-    //             BufferState::FillBuffer => {
-    //                 while self.tick_state.current_tick_position < self.bpm.tick_duration_in_frames {
-    //                     let ticks_to_generate = min(self.bpm.tick_duration_in_frames - self.tick_state.current_tick_position,
-    //                                                 AUDIO_BUF_FRAMES - self.tick_state.current_buf_position);
-    //
-    //                     // if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0,1)) {}
-    //                     self.output_channels(self.tick_state.current_buf_position, buf, ticks_to_generate);
-    //                     self.tick_state.current_tick_position += ticks_to_generate;
-    //                     self.tick_state.current_buf_position += ticks_to_generate;
-    //                     // println!("tick: {}, buf: {}, row: {}", self.tick, current_buf_position, self.row);
-    //                     if self.tick_state.current_buf_position == AUDIO_BUF_FRAMES {
-    //                         self.tick_state.current_buf_position = 0;
-    //                         return CallbackState::Ok;
-    //                     } else {
-    //                         // We finished current with the current tick, but buffer is still not full...
-    //                     }
-    //                 }
-    //                 self.tick_state.state = BufferState::NextTick
-    //             }
-    //             BufferState::NextTick => {
-    //                 if !self.next_tick() { return CallbackState::Complete; }
-    //                 self.tick_state.state = BufferState::Start
-    //             }
-    //         }
-    //     }
-    // }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.rate = sample_rate;
@@ -626,7 +736,7 @@ impl Song {
         }
     }
 
-    fn handle_commands(&mut self, rx: & Receiver<PlaybackCmd>) -> bool {
+    pub fn handle_commands(&mut self, rx: & Receiver<PlaybackCmd>) -> bool {
         loop {
             if let Ok(cmd) = rx.try_recv() {
                 match cmd {
@@ -709,6 +819,18 @@ impl Song {
                         self.pattern_change.pattern_jump = true;
                         self.pattern_change.row = 0;
                         self.next_tick();
+                    }
+                    PlaybackCmd::SetViewMode(mode) => {
+                        self.view_mode = mode;
+                    }
+                    PlaybackCmd::CycleTheme => {
+                        self.theme_id = (self.theme_id + 1) % 4;
+                    }
+                    PlaybackCmd::ToggleScopes => {
+                        self.visualizer_enabled = !self.visualizer_enabled;
+                    }
+                    PlaybackCmd::ToggleVisualizerMode => {
+                        self.visualizer_mode = (self.visualizer_mode + 1) % 4;
                     }
                 }
             }
@@ -1020,107 +1142,12 @@ impl Song {
         return (1.0 - t) * p1 + t * p2;
     }
 
-//     fn output_channels(&mut self, current_buf_position: usize, buf: &mut [f32; AUDIO_BUF_SIZE], ticks_to_generate: usize) {
-//         // let mut  idx: u32 = 0;
-//
-//         // let onecc = 1.0f32;// / cc as f32;
-//         // FT2 quirk: global volume is used at channel volume calculation time, not at mixing time
-//         //let global_volume = self.volume as f32 / 64.0 ;
-//         // println!("position: {:3}, row: {:3}", self.song_position, self.row);
-//
-//
-//         for channel in &mut self.channels {
-//
-//             // idx = idx + 1;
-// //            if idx != 1  {continue;}
-//             if !channel.on || channel.force_off {
-//                 continue;
-//             }
-//
-//             // print!("channel_state: {}, instrument: {}, frequency: {}, volume: {}\n", idx, channel_state.instrument.name, channel_state.frequency, channel_state.volume);
-//
-//             let sample = self.song_data.get_sample(channel);
-//
-//             let vol_right = PANNING_TAB[      channel.panning.final_panning as usize] as f32 / 65536.0;
-//             let vol_left  = PANNING_TAB[256 - channel.panning.final_panning as usize] as f32 / 65536.0;
-//             for i in 0..ticks_to_generate as usize {
-//
-//                 if channel.voice.sample_position as u32 >= sample.length { // we could have this after set sample position
-//                     channel.on = false;
-//                     break;
-//                 }
-//
-//                 let sample_data = sample.data[channel.voice.sample_position as usize];
-//                 let out_sample: f32 = if self.filter {
-//                        Self::lerp(channel.voice.sample_position, sample_data, sample.data[channel.voice.sample_position as usize + 1])
-//                     } else {
-//                         sample_data
-//                     };
-//                 // channel.last_sample = sample_data;
-//                 // channel.last_sample_pos = channel.sample_position;
-//
-//                 buf[(current_buf_position + i) * 2 + 0] +=  vol_left * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
-//                 buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
-//
-//                 // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
-//                 if sample.loop_type == LoopType::PingPongLoop && !channel.voice.ping {
-//                     channel.voice.sample_position -= channel.voice.du;
-//                 } else {
-//                     channel.voice.sample_position += channel.voice.du;
-//                 }
-//
-//                 if channel.voice.sample_position as u32 >= sample.length ||
-//                     (sample.loop_type != LoopType::NoLoop && channel.voice.sample_position >= sample.loop_end as f32) {
-//                     channel.voice.loop_started = true;
-//                     match sample.loop_type {
-//                         LoopType::PingPongLoop => {
-//                             channel.voice.sample_position = (sample.loop_end - 1) as f32 - (channel.voice.sample_position - sample.loop_end as f32);
-//                             channel.voice.ping = false;
-//                             // channel_state.sample_position = (channel_state.sample.loop_end - 1) as f32;
-//                             // channel_state.du = -channel_state.du;
-//                         }
-//                         LoopType::NoLoop => {
-//                             channel.on = false;
-//                             channel.voice.volume.set_volume(0);
-//                             break;
-//                         }
-//                         LoopType::ForwardLoop => {
-//                             channel.voice.sample_position = (channel.voice.sample_position - sample.loop_end as f32) + sample.loop_start as f32;
-//                         }
-//                     }
-//                 }
-//
-//                 if channel.voice.loop_started && channel.voice.sample_position < sample.loop_start as f32 {
-//                     match sample.loop_type {
-//                         LoopType::PingPongLoop => {
-//                             channel.voice.ping = true;
-//                         }
-//                         _ => {}
-//                     }
-//                     channel.voice.sample_position = sample.loop_start as f32 + (sample.loop_start as f32 - channel.voice.sample_position) as f32;
-//                 }
-//             }
-//         }
-//     }
 
     fn output_channels(&mut self, current_buf_position: usize, buf: &mut impl BufferAdapter, ticks_to_generate: usize) {
-        // let mut  idx: u32 = 0;
-
-        // let onecc = 1.0f32;// / cc as f32;
-        // FT2 quirk: global volume is used at channel volume calculation time, not at mixing time
-        //let global_volume = self.volume as f32 / 64.0 ;
-        // println!("position: {:3}, row: {:3}", self.song_position, self.row);
-
-
         for channel in &mut self.channels {
-
-            // idx = idx + 1;
-//            if idx != 1  {continue;}
             if !channel.on || channel.force_off {
                 continue;
             }
-
-            // print!("channel_state: {}, instrument: {}, frequency: {}, volume: {}\n", idx, channel_state.instrument.name, channel_state.frequency, channel_state.volume);
 
             let sample = self.song_data.get_sample(channel);
 
@@ -1128,7 +1155,7 @@ impl Song {
             let vol_left  = PANNING_TAB[256 - channel.panning.final_panning as usize] as f32 / 65536.0;
             for i in 0..ticks_to_generate as usize {
 
-                if channel.voice.sample_position as u32 >= sample.length { // we could have this after set sample position
+                if channel.voice.sample_position as u32 >= sample.length {
                     channel.on = false;
                     break;
                 }
@@ -1156,8 +1183,6 @@ impl Song {
                         sample_data
                     }
                 };
-                // channel.last_sample = sample_data;
-                // channel.last_sample_pos = channel.sample_position;
 
                 let final_sample = out_sample / 4.0 * channel.voice.volume.output_volume;
                 
@@ -1165,13 +1190,16 @@ impl Song {
                 channel.last_samples[channel.last_samples_pos] = final_sample;
                 channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
 
-                buf.mix_sample(0, final_sample * vol_left, current_buf_position + i);
-                buf.mix_sample(1, final_sample * vol_right, current_buf_position + i);
+                let l = final_sample * vol_left;
+                let r = final_sample * vol_right;
 
-                // buf[(current_buf_position + i) * 2 + 0] +=  vol_left * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
-                // buf[(current_buf_position + i) * 2 + 1] += vol_right * out_sample / 4.0 * channel.voice.volume.output_volume;// * global_volume;
+                // Collect master for FFT
+                self.master_samples[self.master_samples_pos] = (l + r) / 2.0;
+                self.master_samples_pos = (self.master_samples_pos + 1) % 1024;
 
-                // if (i & 63) == 0 {print!("{}\n", channel_state.sample_position);}
+                buf.mix_sample(0, l, current_buf_position + i);
+                buf.mix_sample(1, r, current_buf_position + i);
+
                 channel.voice.sample_position += channel.voice.du;
 
                 if channel.voice.sample_position as u32 >= sample.length ||
@@ -1195,5 +1223,4 @@ impl Song {
             }
         }
     }
-
 }
