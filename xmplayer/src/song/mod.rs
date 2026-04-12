@@ -420,6 +420,7 @@ pub struct Song {
     #[cfg(not(target_arch = "wasm32"))]
     pub last_fps_time:          Instant,
     fft_planner:                FftPlanner<f32>,
+    pub spectral_peaks:         Vec<f32>,
 }
 
 impl Song {
@@ -529,6 +530,7 @@ impl Song {
             user_data: HashMap::new(),
             last_display_update_sample: 0,
             fft_planner: FftPlanner::new(),
+            spectral_peaks: vec![0.0; 128],
         }
     }
 
@@ -671,8 +673,13 @@ impl Song {
         if play_data.master_spectrum.len() != 128 {
             play_data.master_spectrum = vec![0.0; 128];
         }
+
+        let decay = if cfg!(target_arch = "wasm32") { 0.82f32 } else { 0.88f32 };
+
         for i in 0..128 {
-            play_data.master_spectrum[i] = fft_buffer[i].norm() / 10.0;
+            let val = fft_buffer[i].norm() / 10.0;
+            self.spectral_peaks[i] = val.max(self.spectral_peaks[i] * decay);
+            play_data.master_spectrum[i] = self.spectral_peaks[i];
         }
 
         play_data.display_fps = self.fps;
@@ -842,7 +849,7 @@ impl Song {
                         self.visualizer_enabled = !self.visualizer_enabled;
                     }
                     PlaybackCmd::ToggleVisualizerMode => {
-                        self.visualizer_mode = (self.visualizer_mode + 1) % 4;
+                        self.visualizer_mode = (self.visualizer_mode + 1) % 3;
                     }
                     PlaybackCmd::IncLatency => {
                         self.visual_latency = (self.visual_latency + 128).min(7000);

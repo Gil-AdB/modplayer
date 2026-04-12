@@ -1,4 +1,5 @@
 use crate::grid::{Grid, RGB};
+use std::cmp::min;
 use xmplayer::instrument::Instrument;
 use xmplayer::module_reader::Patterns;
 use xmplayer::song::{PlayData, ChannelStatus, UserData};
@@ -100,8 +101,8 @@ impl Display {
 
         // 1. Header (FIXED WIDTH TO ENSURE ALIGNMENT)
         let name_trimmed = Self::fixed_width(&play_data.name, 20);
-        let header_str = format!("'{}' dur: {:5} tick: {:3} pos: {:3X}/{:<3X} row: {:3X}/{:<3X} bpm: {:3} spd: {:2} FPS: {:4.1} f: {:?}", 
-            name_trimmed, play_data.tick_duration_in_frames, play_data.tick,
+        let header_str = format!("'{}' dur: {:6.2}ms tick: {:3} pos: {:3X}/{:<3X} row: {:3X}/{:<3X} bpm: {:3} spd: {:2} FPS: {:4.1} f: {:?}", 
+            name_trimmed, play_data.tick_duration_in_ms, play_data.tick,
             play_data.song_position, play_data.song_length.saturating_sub(1), 
             play_data.row, play_data.pattern_len.saturating_sub(1), 
             play_data.bpm, play_data.speed, play_data.display_fps, play_data.filter
@@ -132,6 +133,14 @@ impl Display {
         // 3. High-Fidelity Visualizers at the bottom
         if vis_height > 0 {
             let vis_y = height.saturating_sub(vis_height);
+            
+            // ENSURE THEME CONSISTENCY: Pre-fill the entire visualizer area with theme background
+            for fy in vis_y..height {
+                for fx in 0..width {
+                    grid.set_cell(fx, fy, ' ', theme.pat_note_fg, theme.pat_row_bg);
+                }
+            }
+
             match visualizer_mode {
                 0 => Self::render_fft(&mut grid, &play_data.master_spectrum, 0, vis_y, width, vis_height, &theme.meter_colors, theme.pat_row_bg),
                 1 => Self::render_master_scope(&mut grid, &play_data.master_oscilloscope, 0, vis_y, width, vis_height, &theme),
@@ -271,8 +280,8 @@ impl Display {
         theme: &Theme,
         x_offset: isize,
         y_offset: isize,
-        platform: TargetPlatform,
-        visualizer_mode: u32,
+        _platform: TargetPlatform,
+        _visualizer_mode: u32,
         theme_id: u32,
         max_y: usize,
     ) {
@@ -281,7 +290,7 @@ impl Display {
 
         let num_channels = play_data.channel_status.len();
 
-        let theme = Self::get_theme(theme_id);
+        let _theme = Self::get_theme(theme_id); // we still use this to ensure it's loaded if needed, but we use the passed 'theme'
         let _show_scopes = play_data.scopes_enabled;
         let use_two_columns = grid.width > 260 && num_channels > 16;
         let channels_to_show = num_channels.min(64);
@@ -296,7 +305,7 @@ impl Display {
         let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PERD | CHAN VOL | ENVELOPE | GLOBAL VOL | FADEOUT | PANNING |";
         grid.print(x_start, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
         if use_two_columns {
-            grid.print(x_start + 135, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
+            grid.print(x_start + 130, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
         }
 
         let mut _max_y_reached = false;
@@ -304,7 +313,7 @@ impl Display {
             let actual_ch = (i + channel_scroll) % num_channels.max(1);
             let col = if use_two_columns { i / per_col } else { 0 };
             let row = if use_two_columns { i % per_col } else { i };
-            let x = x_start + (col * 110);
+            let x = x_start + (col * 130);
             let y = y_start + 1 + row;
 
             if y >= max_y { 
@@ -389,11 +398,11 @@ impl Display {
             
             // Channel Column Header (PIXEL PERFECT ALIGNMENT)
             grid.print(x_start, pat_split_y + 1, "idx    | ", theme.table_hdr_fg, theme.table_hdr_bg);
-            let num_ch_render = (grid.width.saturating_sub(x_start + 9)) / 13;
+            let num_ch_render = (grid.width.saturating_sub(x_start + 8)) / 14;
             for i in 0..num_ch_render.min(num_channels) {
                 let actual_ch = (i + channel_scroll) % num_channels;
-                if x_start + 9 + i * 13 + 12 > grid.width { break; }
-                grid.print(x_start + 9 + i * 13, pat_split_y + 1, &format!("CH{:02}         ", actual_ch + 1), theme.table_hdr_fg, theme.table_hdr_bg);
+                if x_start + 8 + i * 14 + 13 > grid.width { break; }
+                grid.print(x_start + 8 + i * 14, pat_split_y + 1, &format!("CH{:02}         |", actual_ch + 1), theme.table_hdr_fg, theme.table_hdr_bg);
             }
 
             if play_data.song_position < order.len() && order[play_data.song_position] < patterns.len() as u8 {
@@ -421,12 +430,17 @@ impl Display {
                     let is_current = row_idx == play_data.row;
                     let row_bg = if is_current { theme.pat_curr_bg } else { theme.pat_row_bg };
                     
+                    // SOLID BACKGROUND (Fill whole row first to avoid gaps)
+                    for fill_x in x_start..grid.width {
+                        grid.set_cell(fill_x, draw_y, ' ', theme.pat_note_fg, row_bg);
+                    }
+
                     grid.print(x_start, draw_y, &format!("{:02X}     | ", row_idx), theme.col_note, row_bg);
                     
                     for ch_i in 0..num_ch_render.min(num_channels) {
                         let actual_ch = (ch_i + channel_scroll) % num_channels;
-                        let curr_x = x_start + 9 + ch_i * 13;
-                        if curr_x + 12 > grid.width { break; }
+                        let curr_x = x_start + 8 + ch_i * 14;
+                        if curr_x + 13 >= grid.width { break; }
                         
                         let p = &pattern.rows[row_idx].channels[actual_ch];
                         
@@ -437,7 +451,7 @@ impl Display {
                         let vol = if p.volume == 0 { "..".to_string() } else { format!("{:02X}", p.volume) };
                         let effect = if p.effect == 0 && p.effect_param == 0 { "...".to_string() } else { format!("{:01X}{:02X}", p.effect, p.effect_param) };
                         
-                        // MULTICOLOR TRACKER RENDERING
+                        // MULTICOLOR TRACKER RENDERING WITH CHANNEL SEPARATORS
                         grid.print(curr_x, draw_y, &note, theme.pat_note_fg, row_bg);
                         grid.print(curr_x + 4, draw_y, &inst, theme.pat_inst_fg, row_bg);
                         grid.print(curr_x + 7, draw_y, &vol, theme.pat_vol_fg, row_bg);
@@ -473,8 +487,8 @@ impl Display {
                     let abs_s = s.abs();
                     if abs_s > peak { peak = abs_s; }
                 }
-                let gain = (0.8 / peak).min(10.0);
                 
+                let gain = (0.8 / peak).min(10.0);
                 let vertical_dots = cell_h * 4;
                 let display_samples = data.len().min(cell_w * 2);
                 
@@ -499,14 +513,22 @@ impl Display {
                         let cell_y = ch_y + char_r;
                         if cell_y >= ch_y + cell_h { continue; }
                         
+                        // Per-channel LOCAL color gradient relative to scope height
+                        let color_idx = ((cell_y - ch_y) * 12) / cell_h;
+                        let scope_color = theme.meter_colors[color_idx.min(11)];
+
                         let dot_patterns = [0x01, 0x02, 0x04, 0x40];
-                        grid.merge_braille_cell(ch_x + dx, cell_y, dot_patterns[dot_in_c], theme.meter_colors[i % 12], theme.pat_row_bg);
+                        grid.merge_braille_cell(ch_x + dx, cell_y, dot_patterns[dot_in_c], scope_color, theme.pat_row_bg);
                     }
                     prev_dot_y = Some(dot_y);
                 }
             } else {
-                // Dim channel indicator for inactive channels
-                grid.print(ch_x, ch_y, &format!("CH{:02}", i + 1), theme.col_off, theme.pat_row_bg);
+                // Background fill for inactive channels
+                for fy in 0..cell_h {
+                    for fx in 0..cell_w {
+                        grid.set_cell(ch_x + fx, ch_y + fy, ' ', theme.col_off, theme.pat_row_bg);
+                    }
+                }
             }
         }
     }
@@ -573,25 +595,45 @@ impl Display {
         let gain = (1.5 / max_val).min(5.0); // Normalization gain
 
         let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        let bar_height = height.saturating_sub(1); // Reserve bottom row for labels
+
         for i in 0..width {
             let sample_idx = (i * spectrum.len()) / width;
             let val = spectrum[sample_idx] * gain;
             
             // 2. Logarithmic-like scaling for better dynamic range perception
             let log_val = (val * 8.0).ln_1p() / (8.0f32).ln_1p();
-            let h_filled = (log_val * (height as f32 * 8.0)).round() as u32;
+            let h_filled = (log_val * (bar_height as f32 * 8.0)).round() as u32;
 
-            for h in 0..height {
-                let cell_y = y + height - 1 - h;
+            for h in 0..bar_height {
+                let cell_y = y + bar_height - 1 - h;
                 if cell_y >= grid.height { continue; }
                 
                 let block_idx = if h_filled >= ((h + 1) * 8) as u32 { 7 } else if h_filled < (h * 8) as u32 { 0 } else { (h_filled % 8) as usize };
                 if block_idx > 0 {
-                    let color_idx = (h * colors.len()) / height;
+                    let color_idx = (h * colors.len()) / bar_height;
                     grid.set_cell(x + i, cell_y, blocks[block_idx], colors[color_idx.min(colors.len()-1)], bg);
                 } else {
                     grid.set_cell(x + i, cell_y, ' ', colors[0], bg);
                 }
+            }
+        }
+
+        // 3. Frequency Labels (Markers at standard frequency bands)
+        let labels_y = y + height - 1;
+        if labels_y < grid.height {
+            grid.print(x, labels_y, "20Hz", colors[0], bg);
+            let labels = [
+                (width * 10 / 128, "100"), 
+                (width * 28 / 128, "500"), 
+                (width * 56 / 128, "1k"), 
+                (width * 80 / 128, "2k"), 
+                (width * 100 / 128, "5k"),
+                (width * 115 / 128, "10k"),
+                (width.saturating_sub(4), "20k")
+            ];
+            for (lx, txt) in labels {
+                grid.print(x + lx, labels_y, txt, colors[min(lx * colors.len() / width, colors.len()-1)], bg);
             }
         }
     }
