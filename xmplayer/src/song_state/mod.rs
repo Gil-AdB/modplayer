@@ -110,6 +110,7 @@ impl SongState {
             }
         }
         self.stopped.store(true, Ordering::Release);
+        self.triple_buffer_reader.signal();
         self.q.stop();
     }
 

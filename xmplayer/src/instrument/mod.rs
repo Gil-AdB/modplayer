@@ -155,14 +155,39 @@ impl Sample {
             self.loop_type = LoopType::ForwardLoop;
         }
 
+        // Add 4 samples at the end for suffix padding
         if self.loop_type == LoopType::ForwardLoop {
-            self.data.push(self.data[self.loop_start as usize]);
-            self.data.push(if self.loop_start + 1 < self.loop_end { self.data[(self.loop_start + 1) as usize] } else { self.data[self.loop_start as usize] });
+            for i in 0..4 {
+                let idx = (self.loop_start as usize + i).min(self.loop_end as usize - 1);
+                self.data.push(self.data[idx]);
+            }
         } else {
             let last = *self.data.last().unwrap();
-            self.data.push(last);
-            self.data.push(last);
+            for _ in 0..4 {
+                self.data.push(last);
+            }
         }
+
+        // Add 4 samples at the beginning for prefix padding
+        let mut prefix = Vec::new();
+        if self.loop_type == LoopType::ForwardLoop {
+            for i in 1..=4 {
+                let idx = if self.loop_end as usize >= i { self.loop_end as usize - i } else { self.loop_start as usize };
+                prefix.push(self.data[idx]);
+            }
+            prefix.reverse();
+        } else {
+            let first = self.data[0];
+            for _ in 0..4 {
+                prefix.push(first);
+            }
+        }
+        self.data.splice(0..0, prefix);
+
+        // Offset all loop points and length by the 4-sample prefix
+        self.loop_start += 4;
+        self.loop_end += 4;
+        self.length += 4;
     }
 }
 

@@ -16,7 +16,6 @@ use crate::tables::{PANNING_TAB, AudioTables};
 use shared_sync_primitives::TripleBufferWriter;
 use std::collections::HashMap;
 use std::num::Wrapping;
-use std::borrow::Borrow;
 
 struct BPM {
     pub bpm:                    u32,
@@ -221,6 +220,7 @@ pub enum FilterType {
     None,
     Linear,
     Cubic,
+    Sinc,
 }
 
 impl std::fmt::Display for FilterType {
@@ -229,6 +229,7 @@ impl std::fmt::Display for FilterType {
             FilterType::None => write!(f, "None"),
             FilterType::Linear => write!(f, "Linear"),
             FilterType::Cubic => write!(f, "Cubic"),
+            FilterType::Sinc => write!(f, "Sinc"),
         }
     }
 }
@@ -273,7 +274,7 @@ impl Default for PlayData {
             bpm: 0,
             speed: 0,
             channel_status: vec![],
-            filter: FilterType::Cubic,
+            filter: FilterType::Sinc,
             song_message: "".to_string(),
             visualizer_enabled: true,
             scopes_enabled: true,
@@ -504,7 +505,7 @@ impl Song {
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
-            filter: FilterType::Cubic,
+            filter: FilterType::Sinc,
             display: true,
             frequency_tables: use_amiga,
             triple_buffer_writer,
@@ -517,11 +518,11 @@ impl Song {
                 current_tick_position: 0
             },
             visualizer_enabled: true,
-            visualizer_mode: 0,
+            theme_id: 2, 
+            view_mode: 0,
+            visualizer_mode: 2,
             master_spectrum: vec![0.0; 128],
             master_oscilloscope: vec![0.0; 512],
-            theme_id: 1, 
-            view_mode: 0,
             display_count: 0,
             fps: 0.0,
             total_samples: 0,
@@ -802,7 +803,8 @@ impl Song {
                         self.filter = match self.filter {
                             FilterType::None => FilterType::Linear,
                             FilterType::Linear => FilterType::Cubic,
-                            FilterType::Cubic => FilterType::None,
+                            FilterType::Cubic => FilterType::Sinc,
+                            FilterType::Sinc => FilterType::None,
                         }
                     }
                     PlaybackCmd::DisplayToggle => {self.display = !self.display;}
@@ -995,13 +997,13 @@ impl Song {
                     channel.reset_envelopes(instruments);
                 }
 
-                channel.trigger_note(instruments, note, self.rate, self.frequency_tables.borrow());
+                channel.trigger_note(instruments, note, self.rate, &self.frequency_tables);
             }
 
             // handle vibrato
             if !first_tick && pattern.has_vibrato() { // vibrate
                 channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::from(channel.vibrato_control)) as f32;
-                channel.update_frequency(self.rate, false, self.frequency_tables.borrow());
+                channel.update_frequency(self.rate, false, &self.frequency_tables);
             }
 
             // handle tremolo (not really need to do it here, but oh, well)
@@ -1034,7 +1036,7 @@ impl Song {
                         channel.panning.set_panning(pan as i32);
                     }
                 }
-                0xf0..=0xff => {channel.porta_to_note(instruments, first_tick, pattern.volume & 0xf, pattern.note, self.rate, self.frequency_tables.borrow()); }// Tone porta
+                0xf0..=0xff => {channel.porta_to_note(instruments, first_tick, pattern.volume & 0xf, pattern.note, self.rate, &self.frequency_tables); }// Tone porta
 
                 _ => {}
             }
@@ -1045,15 +1047,15 @@ impl Song {
                 0x0 => {  // Arpeggio
                     if pattern.effect_param != 0 {
                         channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y());
-                        channel.update_frequency(self.rate, true, self.frequency_tables.borrow());
+                        channel.update_frequency(self.rate, true, &self.frequency_tables);
                     }
                 }
-                0x1 => { channel.porta_up(first_tick, pattern.effect_param, self.rate, self.frequency_tables.borrow()); } // Porta up
-                0x2 => { channel.porta_down(first_tick, pattern.effect_param, self.rate, self.frequency_tables.borrow()); } // Porta down
-                0x3 => { channel.porta_to_note(instruments, first_tick, pattern.effect_param, pattern.note, self.rate, self.frequency_tables.borrow()); } // Porta to note
+                0x1 => { channel.porta_up(first_tick, pattern.effect_param, self.rate, &self.frequency_tables); } // Porta up
+                0x2 => { channel.porta_down(first_tick, pattern.effect_param, self.rate, &self.frequency_tables); } // Porta down
+                0x3 => { channel.porta_to_note(instruments, first_tick, pattern.effect_param, pattern.note, self.rate, &self.frequency_tables); } // Porta to note
                 0x4 => { channel.vibrato(first_tick, pattern.get_x() * 4, pattern.get_y()); } // vibrato
                 0x5 => { // porta to note + volume slide
-                    channel.porta_to_note(instruments, first_tick, 0, 0, self.rate, self.frequency_tables.borrow());
+                    channel.porta_to_note(instruments, first_tick, 0, 0, self.rate, &self.frequency_tables);
                     channel.volume_slide_main(first_tick, pattern.effect_param);
                 }
                 0x6 => { // vibrato + volume slide
@@ -1071,7 +1073,7 @@ impl Song {
                         if pattern.effect_param != 0 {
                             channel.last_sample_offset = pattern.effect_param as u32 * 256;
                         }
-                        channel.voice.sample_position = channel.last_sample_offset as f32;
+                        channel.voice.sample_position = channel.last_sample_offset as f32 + 4.0;
                         if channel.last_sample_offset > self.song_data.get_sample(channel).length {
                             channel.key_off(instruments, false);
                         }
@@ -1118,7 +1120,7 @@ impl Song {
                     channel.panning_slide(first_tick, pattern.effect_param);
                 }
                 0x1b => {
-                    channel.multi_retrig(instruments, first_tick, self.tick, pattern.effect_param, note, self.rate, self.frequency_tables.borrow());
+                    channel.multi_retrig(instruments, first_tick, self.tick, pattern.effect_param, note, self.rate, &self.frequency_tables);
                 }
                 0x1d => {
                     channel.tremor(self.tick, pattern.effect_param);
@@ -1128,13 +1130,13 @@ impl Song {
 
             if pattern.effect == 0xe {
                 match pattern.get_x() {
-                    0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate, self.frequency_tables.borrow()); } // Porta up
-                    0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate, self.frequency_tables.borrow()); } // Porta down
+                    0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate, &self.frequency_tables); } // Porta up
+                    0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate, &self.frequency_tables); } // Porta down
                     0x3 => { channel.glissando = pattern.get_y() == 1; }
                     0x4 => { channel.vibrato_control = pattern.get_y();}
                     0x7 => { channel.tremolo_control = pattern.get_y();}
                     0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
-                    0x9 => { channel.retrig_note(instruments, first_tick, self.tick, pattern.get_y(), pattern.note, self.rate, self.frequency_tables.borrow());}
+                    0x9 => { channel.retrig_note(instruments, first_tick, self.tick, pattern.get_y(), pattern.note, self.rate, &self.frequency_tables);}
                     0xa => { channel.fine_volume_slide_up(note_delay_first_tick, pattern.get_y());} // volume slide up
                     0xb => { channel.fine_volume_slide_down(note_delay_first_tick, pattern.get_y());} // volume slide up
                     0xc => { channel.set_volume(self.tick == pattern.get_y() as u32, 0); }
@@ -1200,27 +1202,37 @@ impl Song {
                     break;
                 }
 
-                let sample_data = sample.data[channel.voice.sample_position as usize];
                 let out_sample: f32 = match self.filter {
                     FilterType::Linear => {
-                        let next_sample_data = if channel.voice.sample_position as usize + 1 < sample.data.len() {
-                            sample.data[channel.voice.sample_position as usize + 1]
-                        } else {
-                            0.0
-                        };
-                        Self::lerp(channel.voice.sample_position, sample_data, next_sample_data)
+                        let pos = channel.voice.sample_position as usize;
+                        Self::lerp(channel.voice.sample_position, sample.data[pos], sample.data[pos+1])
                     },
                     FilterType::Cubic => {
                         let pos = channel.voice.sample_position as usize;
-                        channel.voice.spline_data.p0 = sample.data[pos.saturating_sub(1)];
-                        channel.voice.spline_data.p1 = sample_data;
-                        channel.voice.spline_data.p2 = sample.data[(pos + 1).min(sample.data.len() - 1)];
-                        channel.voice.spline_data.p3 = sample.data[(pos + 2).min(sample.data.len() - 1)];
+                        channel.voice.spline_data.p0 = sample.data[pos-1];
+                        channel.voice.spline_data.p1 = sample.data[pos];
+                        channel.voice.spline_data.p2 = sample.data[pos+1];
+                        channel.voice.spline_data.p3 = sample.data[pos+2];
                         
                         channel.voice.spline_data.interpolate(channel.voice.sample_position.fract())
                     },
+                    FilterType::Sinc => {
+                        let pos = channel.voice.sample_position as usize;
+                        let phase = (channel.voice.sample_position.fract() * 512.0) as usize;
+                        let table = &self.frequency_tables.resampling.sinc_table[phase];
+                        let mut result = 0.0;
+                        result += sample.data[pos - 3] * table[0];
+                        result += sample.data[pos - 2] * table[1];
+                        result += sample.data[pos - 1] * table[2];
+                        result += sample.data[pos]     * table[3];
+                        result += sample.data[pos + 1] * table[4];
+                        result += sample.data[pos + 2] * table[5];
+                        result += sample.data[pos + 3] * table[6];
+                        result += sample.data[pos + 4] * table[7];
+                        result
+                    },
                     FilterType::None => {
-                        sample_data
+                        sample.data[channel.voice.sample_position as usize]
                     }
                 };
 
