@@ -155,10 +155,10 @@ impl Display {
             1 => { // Cyberpunk / Vibrant (SYNCHRONIZED WITH WEB)
                 Theme {
                     meter_colors: [
-                        RGB { r: 0, g: 242, b: 254 }, RGB { r: 0, g: 212, b: 254 }, RGB { r: 0, g: 182, b: 254 },
-                        RGB { r: 33, g: 152, b: 255 }, RGB { r: 66, g: 122, b: 255 }, RGB { r: 90, g: 92, b: 255 },
                         RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 },
                         RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 },
+                        RGB { r: 90, g: 92, b: 255 }, RGB { r: 66, g: 122, b: 255 }, RGB { r: 33, g: 152, b: 255 },
+                        RGB { r: 0, g: 182, b: 254 }, RGB { r: 0, g: 212, b: 254 }, RGB { r: 0, g: 242, b: 254 },
                     ],
                     header_bg: RGB { r: 15, g: 16, b: 45 },
                     header_fg: RGB { r: 0, g: 242, b: 254 },
@@ -185,10 +185,10 @@ impl Display {
             2 => { // Obsidian / Monokai optimized
                 Theme {
                     meter_colors: [
-                        RGB { r: 166, g: 226, b: 46 }, RGB { r: 206, g: 226, b: 46 }, RGB { r: 253, g: 151, b: 31 },
-                        RGB { r: 253, g: 151, b: 31 }, RGB { r: 249, g: 38, b: 114 }, RGB { r: 249, g: 38, b: 114 },
-                        RGB { r: 174, g: 129, b: 255 }, RGB { r: 174, g: 129, b: 255 }, RGB { r: 102, g: 217, b: 239 },
                         RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 174, g: 129, b: 255 }, RGB { r: 174, g: 129, b: 255 },
+                        RGB { r: 249, g: 38, b: 114 }, RGB { r: 249, g: 38, b: 114 }, RGB { r: 253, g: 151, b: 31 },
+                        RGB { r: 253, g: 151, b: 31 }, RGB { r: 166, g: 226, b: 46 }, RGB { r: 166, g: 226, b: 46 },
                     ],
                     header_bg: RGB { r: 35, g: 35, b: 35 },
                     header_fg: RGB { r: 249, g: 38, b: 114 },

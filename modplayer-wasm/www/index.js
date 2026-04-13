@@ -532,8 +532,8 @@ function drawOscilloscope(song) {
     oscCtx.lineWidth = 2;
     const colors = [
         ['#00ff00', '#ffff00', '#ff0000'], // 0: Pro
-        ['#00f2fe', '#7b27ff'],            // 1: Cyberpunk
-        ['#a6e22e', '#fd971f', '#f92672', '#ae81ff', '#66d9ef'], // 2: Obsidian (Monokai-ish)
+        ['#7b27ff', '#00f2fe'],            // 1: Cyberpunk
+        ['#66d9ef', '#ae81ff', '#f92672', '#fd971f', '#a6e22e'], // 2: Obsidian (Monokai-ish)
         ['#ff8c00', '#404040']             // 3: Monochrome
     ];
     const theme = colors[themeMode] || colors[0];
