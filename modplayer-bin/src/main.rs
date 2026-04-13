@@ -234,9 +234,6 @@ fn mainloop(song_data: &SongState) {
                                 '/' => {
                                     let _ = tx.send(PlaybackCmd::LoopPattern);
                                 }
-                                'p' => {
-                                    let _ = tx.send(PlaybackCmd::Prev);
-                                }
                                 'r' => {
                                     let _ = tx.send(PlaybackCmd::Restart);
                                 }
@@ -260,6 +257,13 @@ fn mainloop(song_data: &SongState) {
                                 }
                                 's' | 'S' => {
                                     let _ = tx.send(PlaybackCmd::ToggleScopes);
+                                }
+                                'p' | 'P' => {
+                                    if event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
+                                        let _ = tx.send(PlaybackCmd::TogglePanning);
+                                    } else {
+                                        let _ = tx.send(PlaybackCmd::Prev);
+                                    }
                                 }
                                 '[' => {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataSubISize("x".to_string(), 1));

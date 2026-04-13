@@ -416,6 +416,7 @@ pub enum PlaybackCmd {
     ToggleVisualizerMode,
     IncLatency,
     DecLatency,
+    TogglePanning,
 }
 
 
@@ -502,6 +503,7 @@ pub struct PlayData {
     pub display_fps:                        f32,
     pub theme_id:                           u32,
     pub view_mode:                          u32,
+    pub panning_display_mode:               u32,
     pub user_data:                          HashMap<String, UserData>,
 }
 
@@ -529,6 +531,7 @@ impl Default for PlayData {
             display_fps: 0.0,
             theme_id: 0,
             view_mode: 0,
+            panning_display_mode: 0,
             user_data: Default::default()
         }
     }
@@ -684,6 +687,7 @@ pub struct Song {
     pub last_fps_time:          Instant,
     fft_planner:                FftPlanner<f32>,
     pub spectral_peaks:         Vec<f32>,
+    pub panning_display_mode:   u32,
 }
 
 impl Song {
@@ -794,8 +798,9 @@ impl Song {
             last_display_update_sample: 0,
             fft_planner: FftPlanner::new(),
             spectral_peaks: vec![0.0; 128],
+            panning_display_mode: 0,
         }
-    }
+}
 
 
     // fn get_linear_frequency(note: i16, fine_tune: i32, period_offset: i32) -> f32 {
@@ -826,8 +831,10 @@ impl Song {
         play_data.song_message              = self.song_data.song_message.clone();
 
         // --- INSTANT UI FEEDBACK (Always update user-controllable state) ---
-        play_data.theme_id                  = self.theme_id;
-        play_data.view_mode                 = self.view_mode;
+        play_data.theme_id         = self.theme_id;
+        play_data.view_mode        = self.view_mode;
+        play_data.panning_display_mode = self.panning_display_mode;
+        play_data.user_data        = self.user_data.clone();
         play_data.scopes_enabled            = match self.user_data.get("scopes_enabled") {
             Some(UserData::USize(v)) => *v % 2 != 0,
             _ => true
@@ -863,9 +870,15 @@ impl Song {
             if status.oscilloscope.len() != 512 {
                 status.oscilloscope = vec![0.0; 512];
             }
-            for j in 0..512 {
-                let idx = (channel.last_samples_pos + j) % 512;
-                status.oscilloscope[j] = channel.last_samples[idx] * gain;
+            if channel.on {
+                for j in 0..512 {
+                    let idx = (channel.last_samples_pos + j) % 512;
+                    status.oscilloscope[j] = channel.last_samples[idx] * gain;
+                }
+            } else {
+                for j in 0..512 {
+                    status.oscilloscope[j] = 0.0;
+                }
             }
 
             status.volume             = channel.voice.volume.volume as f32;
@@ -1131,6 +1144,9 @@ impl Song {
                     }
                     PlaybackCmd::DecLatency => {
                         self.visual_latency = (self.visual_latency - 128).max(0);
+                    }
+                    PlaybackCmd::TogglePanning => {
+                        self.panning_display_mode = (self.panning_display_mode + 1) % 2;
                     }
                 }
                 if self.display {

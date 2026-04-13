@@ -107,7 +107,6 @@ pub struct SongJs {
     order:                              Vec<u8>,
     scroll_offset:                      isize,
     scroll_offset_x:                    isize,
-    panning_display_mode:               u32,
     grid:                               display::grid::Grid,
     downsampled_scopes:                 Vec<f32>,
 }
@@ -151,14 +150,13 @@ impl SongJs {
             order,
             scroll_offset: 0,
             scroll_offset_x: 0,
-            panning_display_mode: 1,
             grid: display::grid::Grid::new(width, height),
             downsampled_scopes: vec![0.0f32; 64 * 128], // Support up to 64 channels
         }
     }
 
     pub fn toggle_panning(&mut self) {
-        self.panning_display_mode = (self.panning_display_mode + 1) % 2;
+        let _ = self.tx.send(PlaybackCmd::TogglePanning);
     }
 
     pub fn display(&mut self, view_mode: u32, theme_id: u32) {
@@ -169,7 +167,7 @@ impl SongJs {
         let width = self.grid.width;
         let height = self.grid.height;
         
-        Display::render(&mut self.grid, play_data, &self.instruments, &self.patterns, &self.order, width, height, view_mode, theme_id, self.scroll_offset_x, self.scroll_offset, self.panning_display_mode, TargetPlatform::WASM);
+        Display::render(&mut self.grid, play_data, &self.instruments, &self.patterns, &self.order, width, height, view_mode, theme_id, self.scroll_offset_x, self.scroll_offset, play_data.panning_display_mode, TargetPlatform::WASM);
         
         self.song_row = play_data.row;
         self.song_tick = play_data.tick;
@@ -177,11 +175,17 @@ impl SongJs {
         // Perform 4x Downsampling (512 -> 128) for all channels
         let num_channels = play_data.channel_status.len().min(64);
         for ch in 0..num_channels {
-            let src = &play_data.channel_status[ch].oscilloscope;
             let dst_offset = ch * 128;
-            for i in 0..128 {
-                // Simple decimation (pick every 4th sample) - fast and sufficient for UI
-                self.downsampled_scopes[dst_offset + i] = src[i * 4];
+            if play_data.channel_status[ch].on {
+                let src = &play_data.channel_status[ch].oscilloscope;
+                for i in 0..128 {
+                    // Simple decimation (pick every 4th sample) - fast and sufficient for UI
+                    self.downsampled_scopes[dst_offset + i] = src[i * 4];
+                }
+            } else {
+                for i in 0..128 {
+                    self.downsampled_scopes[dst_offset + i] = 0.0;
+                }
             }
         }
     }
@@ -320,8 +324,11 @@ impl SongJs {
                 "S" => {
                     let _ = tx.send(PlaybackCmd::ToggleScopes);
                 }
-                "v" => {
+                "v" | "V" => {
                     let _ = tx.send(PlaybackCmd::ToggleVisualizerMode);
+                }
+                "P" => {
+                    let _ = tx.send(PlaybackCmd::TogglePanning);
                 }
                 "n" => {
                     let _ = tx.send(PlaybackCmd::Next);

@@ -83,9 +83,9 @@ let channelCount = 0;
 let filesList = [];
 let filesListPosition = 0;
 let viewMode = 0; // 0: Pattern, 1: Instruments, 2: Message, 3: Help
-let themeMode = 0; // 0: Pro, 1: Vibrant, 2: Obsidian, 3: Mono
-let visualMode = 0; // 0: Both(S), 1: Both(A), 2: Scope(S), 3: Scope(A), 4: FFT, 5: Off
-let scopeMode = 'global'; // 'global' or 'multi'
+let themeMode = 2; // 0: Pro, 1: Vibrant, 2: Obsidian, 3: Mono
+let visualMode = 1; // 0: Both(S), 1: Both(A), 2: Scope(S), 3: Scope(A), 4: FFT, 5: Off
+let scopeMode = 'multi'; // 'global' or 'multi'
 let _initPlayerPromise = null;
 
 function unlockAudio() {
@@ -410,20 +410,25 @@ function handleKeyboardEvents(e) {
     switch (e.code) {
         case 'KeyT':
             if (e.shiftKey) {
-                themeMode = (themeMode + 1) % 4;
+                cycleTheme();
                 e.preventDefault();
             }
             break;
         case 'KeyP':
             if (e.shiftKey) {
-                if (player && player.song) player.song.toggle_panning();
+                togglePanning();
                 e.preventDefault();
             }
             break;
-        case 'KeyO':
+        case 'KeyV':
             if (e.shiftKey) {
-                visualMode = (visualMode + 1) % 6;
-                updateVisualizerLayout();
+                cycleVisuals();
+                e.preventDefault();
+            }
+            break;
+        case 'KeyS':
+            if (e.shiftKey) {
+                if (player && player.song) player.song.handle_input(['S']);
                 e.preventDefault();
             }
             break;
@@ -470,6 +475,23 @@ window.addEventListener('wheel', (e) => {
     }
 }, { passive: true });
 
+function cycleTheme() {
+    themeMode = (themeMode + 1) % 4;
+}
+
+function cycleVisuals() {
+    visualMode = (visualMode + 1) % 6;
+    updateVisualizerLayout();
+}
+
+function togglePanning() {
+    if (player && player.song) player.song.toggle_panning();
+}
+
+document.querySelector('#cycle-theme').addEventListener('click', cycleTheme);
+document.querySelector('#cycle-visuals').addEventListener('click', cycleVisuals);
+document.querySelector('#toggle-panning').addEventListener('click', togglePanning);
+
 function updateVisualizerLayout() {
     const container = document.querySelector('.visualizers-container');
     const scope = document.querySelector('#oscilloscope');
@@ -511,7 +533,7 @@ function drawOscilloscope(song) {
     const colors = [
         ['#00ff00', '#ffff00', '#ff0000'], // 0: Pro
         ['#00f2fe', '#7b27ff'],            // 1: Cyberpunk
-        ['#ffff00', '#ff00ff'],            // 2: Obsidian
+        ['#a6e22e', '#fd971f', '#f92672', '#ae81ff', '#66d9ef'], // 2: Obsidian (Monokai-ish)
         ['#ff8c00', '#404040']             // 3: Monochrome
     ];
     const theme = colors[themeMode] || colors[0];
@@ -637,8 +659,8 @@ function drawSpectrum() {
         grad.addColorStop(0.5, '#ffff00');
         grad.addColorStop(1, '#ff0000');
     } else {
-        grad.addColorStop(0, theme[theme.length - 1]);
-        grad.addColorStop(1, theme[0]);
+        grad.addColorStop(0, theme[0]);
+        grad.addColorStop(1, theme[theme.length - 1]);
     }
     
     let x = 0;
