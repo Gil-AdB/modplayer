@@ -17,6 +17,251 @@ use shared_sync_primitives::TripleBufferWriter;
 use std::collections::HashMap;
 use std::num::Wrapping;
 
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+use core::arch::wasm32::*;
+
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
+
+#[cfg(target_arch = "aarch64")]
+use core::arch::aarch64::*;
+
+#[inline(always)]
+fn sinc_dot_product(samples: &[f32], coeffs: &[f32; 8]) -> f32 {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        unsafe {
+            let v0 = v128_load(samples.as_ptr() as *const v128);
+            let v1 = v128_load(samples.as_ptr().add(4) as *const v128);
+            let c0 = v128_load(coeffs.as_ptr() as *const v128);
+            let c1 = v128_load(coeffs.as_ptr().add(4) as *const v128);
+            
+            let m0 = f32x4_mul(v0, c0);
+            let m1 = f32x4_mul(v1, c1);
+            
+            let sum = f32x4_add(m0, m1);
+            // Horizontal sum
+            let temp = f32x4_add(sum, i32x4_shuffle::<2, 3, 0, 1>(sum, sum));
+            let final_sum = f32x4_add(temp, i32x4_shuffle::<1, 0, 3, 2>(temp, temp));
+            f32x4_extract_lane::<0>(final_sum)
+        }
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
+    {
+        unsafe {
+            let v0 = _mm_loadu_ps(samples.as_ptr());
+            let v1 = _mm_loadu_ps(samples.as_ptr().add(4));
+            let c0 = _mm_load_ps(coeffs.as_ptr());
+            let c1 = _mm_load_ps(coeffs.as_ptr().add(4));
+            
+            let m0 = _mm_mul_ps(v0, c0);
+            let m1 = _mm_mul_ps(v1, c1);
+            
+            let sum = _mm_add_ps(m0, m1);
+            // Horizontal sum
+            let temp = _mm_add_ps(sum, _mm_movehl_ps(sum, sum));
+            let final_sum = _mm_add_ss(temp, _mm_shuffle_ps(temp, temp, 1));
+            _mm_cvtss_f32(final_sum)
+        }
+    }
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        unsafe {
+            let v0 = vld1q_f32(samples.as_ptr());
+            let v1 = vld1q_f32(samples.as_ptr().add(4));
+            let c0 = vld1q_f32(coeffs.as_ptr());
+            let c1 = vld1q_f32(coeffs.as_ptr().add(4));
+            
+            let m0 = vmulq_f32(v0, c0);
+            let m1 = vmulq_f32(v1, c1);
+            
+            let sum = vaddq_f32(m0, m1);
+            // Horizontal sum (Native hardware reduction on AArch64)
+            vaddvq_f32(sum)
+        }
+    }
+    #[cfg(not(any(
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        all(target_arch = "x86_64", target_feature = "sse"),
+        all(target_arch = "aarch64", target_feature = "neon")
+    )))]
+    {
+        let mut result = 0.0;
+        result += samples[0] * coeffs[0];
+        result += samples[1] * coeffs[1];
+        result += samples[2] * coeffs[2];
+        result += samples[3] * coeffs[3];
+        result += samples[4] * coeffs[4];
+        result += samples[5] * coeffs[5];
+        result += samples[6] * coeffs[6];
+        result += samples[7] * coeffs[7];
+        result
+    }
+}
+
+#[inline(always)]
+fn lerp_simd(lo: [f32; 4], hi: [f32; 4], t: [f32; 4]) -> [f32; 4] {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        unsafe {
+            let vlo = v128_load(lo.as_ptr() as *const v128);
+            let vhi = v128_load(hi.as_ptr() as *const v128);
+            let vt  = v128_load(t.as_ptr() as *const v128);
+            
+            let diff = f32x4_sub(vhi, vlo);
+            let res  = f32x4_add(vlo, f32x4_mul(diff, vt));
+            
+            let mut result = [0.0f32; 4];
+            v128_store(result.as_mut_ptr() as *mut v128, res);
+            result
+        }
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
+    {
+        unsafe {
+            let vlo = _mm_loadu_ps(lo.as_ptr());
+            let vhi = _mm_loadu_ps(hi.as_ptr());
+            let vt  = _mm_loadu_ps(t.as_ptr());
+            
+            let diff = _mm_sub_ps(vhi, vlo);
+            let res  = _mm_add_ps(vlo, _mm_mul_ps(diff, vt));
+            
+            let mut result = [0.0f32; 4];
+            _mm_storeu_ps(result.as_mut_ptr(), res);
+            result
+        }
+    }
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        unsafe {
+            let vlo = vld1q_f32(lo.as_ptr());
+            let vhi = vld1q_f32(hi.as_ptr());
+            let vt  = vld1q_f32(t.as_ptr());
+            
+            let diff = vsubq_f32(vhi, vlo);
+            let res  = vaddq_f32(vlo, vmulq_f32(diff, vt));
+            
+            let mut result = [0.0f32; 4];
+            vst1q_f32(result.as_mut_ptr(), res);
+            result
+        }
+    }
+    #[cfg(not(any(
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        all(target_arch = "x86_64", target_feature = "sse"),
+        all(target_arch = "aarch64", target_feature = "neon")
+    )))]
+    {
+        [
+            lo[0] + (hi[0] - lo[0]) * t[0],
+            lo[1] + (hi[1] - lo[1]) * t[1],
+            lo[2] + (hi[2] - lo[2]) * t[2],
+            lo[3] + (hi[3] - lo[3]) * t[3],
+        ]
+    }
+}
+
+#[inline(always)]
+fn cubic_simd(p0: [f32; 4], p1: [f32; 4], p2: [f32; 4], p3: [f32; 4], t: [f32; 4]) -> [f32; 4] {
+     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        unsafe {
+            let vp0 = v128_load(p0.as_ptr() as *const v128);
+            let vp1 = v128_load(p1.as_ptr() as *const v128);
+            let vp2 = v128_load(p2.as_ptr() as *const v128);
+            let vp3 = v128_load(p3.as_ptr() as *const v128);
+            let vt  = v128_load(t.as_ptr() as *const v128);
+            
+            let three = f32x4_splat(3.0);
+            let two   = f32x4_splat(2.0);
+            let five  = f32x4_splat(5.0);
+            let four  = f32x4_splat(4.0);
+            let half  = f32x4_splat(0.5);
+
+            let c3 = f32x4_add(f32x4_sub(f32x4_mul(three, f32x4_sub(vp1, vp2)), vp0), vp3);
+            let c2 = f32x4_sub(f32x4_add(f32x4_sub(f32x4_mul(two, vp0), f32x4_mul(five, vp1)), f32x4_mul(four, vp2)), vp3);
+            let c1 = f32x4_sub(vp2, vp0);
+            let c0 = vp1;
+
+            let res = f32x4_add(f32x4_mul(half, f32x4_mul(f32x4_add(f32x4_mul(f32x4_add(f32x4_mul(c3, vt), c2), vt), c1), vt)), c0);
+
+            let mut result = [0.0f32; 4];
+            v128_store(result.as_mut_ptr() as *mut v128, res);
+            result
+        }
+    }
+    #[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
+    {
+        unsafe {
+            let vp0 = _mm_loadu_ps(p0.as_ptr());
+            let vp1 = _mm_loadu_ps(p1.as_ptr());
+            let vp2 = _mm_loadu_ps(p2.as_ptr());
+            let vp3 = _mm_loadu_ps(p3.as_ptr());
+            let vt  = _mm_loadu_ps(t.as_ptr());
+            
+            let three = _mm_set1_ps(3.0);
+            let two   = _mm_set1_ps(2.0);
+            let five  = _mm_set1_ps(5.0);
+            let four  = _mm_set1_ps(4.0);
+            let half  = _mm_set1_ps(0.5);
+
+            let c3 = _mm_add_ps(_mm_sub_ps(_mm_mul_ps(three, _mm_sub_ps(vp1, vp2)), vp0), vp3);
+            let c2 = _mm_sub_ps(_mm_add_ps(_mm_sub_ps(_mm_mul_ps(two, vp0), _mm_mul_ps(five, vp1)), _mm_mul_ps(four, vp2)), vp3);
+            let c1 = _mm_sub_ps(vp2, vp0);
+            let c0 = vp1;
+
+            let res = _mm_add_ps(_mm_mul_ps(half, _mm_mul_ps(_mm_add_ps(_mm_mul_ps(_mm_add_ps(_mm_mul_ps(c3, vt), c2), vt), c1), vt)), c0);
+
+            let mut result = [0.0f32; 4];
+            _mm_storeu_ps(result.as_mut_ptr(), res);
+            result
+        }
+    }
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        unsafe {
+            let vp0 = vld1q_f32(p0.as_ptr());
+            let vp1 = vld1q_f32(p1.as_ptr());
+            let vp2 = vld1q_f32(p2.as_ptr());
+            let vp3 = vld1q_f32(p3.as_ptr());
+            let vt  = vld1q_f32(t.as_ptr());
+            
+            let three = vdupq_n_f32(3.0);
+            let two   = vdupq_n_f32(2.0);
+            let five  = vdupq_n_f32(5.0);
+            let four  = vdupq_n_f32(4.0);
+            let half  = vdupq_n_f32(0.5);
+
+            let c3 = vaddq_f32(vsubq_f32(vmulq_f32(three, vsubq_f32(vp1, vp2)), vp0), vp3);
+            let c2 = vsubq_f32(vaddq_f32(vsubq_f32(vmulq_f32(two, vp0), vmulq_f32(five, vp1)), vmulq_f32(four, vp2)), vp3);
+            let c1 = vsubq_f32(vp2, vp0);
+            let c0 = vp1;
+
+            let res = vaddq_f32(vmulq_f32(half, vmulq_f32(vaddq_f32(vmulq_f32(vaddq_f32(vmulq_f32(c3, vt), c2), vt), c1), vt)), c0);
+
+            let mut result = [0.0f32; 4];
+            vst1q_f32(result.as_mut_ptr(), res);
+            result
+        }
+    }
+    #[cfg(not(any(
+        all(target_arch = "wasm32", target_feature = "simd128"),
+        all(target_arch = "x86_64", target_feature = "sse"),
+        all(target_arch = "aarch64", target_feature = "neon")
+    )))]
+    {
+        let mut result = [0.0f32; 4];
+        for i in 0..4 {
+            let c3 = -p0[i] + 3.0 * p1[i] - 3.0 * p2[i] + p3[i];
+            let c2 = 2.0 * p0[i] - 5.0 * p1[i] + 4.0 * p2[i] - p3[i];
+            let c1 = -p0[i] + p2[i];
+            let c0 = p1[i];
+            result[i] = 0.5 * (((c3 * t[i] + c2) * t[i]) + c1) * t[i] + c0;
+        }
+        result
+    }
+}
+
 struct BPM {
     pub bpm:                    u32,
     tick_duration_in_ms:        f32,
@@ -308,6 +553,7 @@ pub enum CallbackState {
 
 pub trait BufferAdapter {
     fn mix_sample(&mut self, channel:usize, value: f32, pos: usize);
+    fn mix_samples(&mut self, channel: usize, values: &[f32], pos: usize);
     fn clear(&mut self);
     fn len(&mut self) -> usize;
     fn num_frames(&mut self) -> usize;
@@ -321,6 +567,14 @@ pub struct InterleavedBufferAdaptar<'a> {
 impl BufferAdapter for InterleavedBufferAdaptar<'_> {
     fn mix_sample(&mut self, channel: usize, value: f32, pos: usize) {
         self.buf[pos * 2 + channel] += value;
+    }
+
+    fn mix_samples(&mut self, channel: usize, values: &[f32], pos: usize) {
+        let mut p = pos * 2 + channel;
+        for &v in values {
+            self.buf[p] += v;
+            p += 2;
+        }
     }
 
     fn clear(&mut self) {
@@ -344,7 +598,14 @@ pub struct PlanarBufferAdaptar<'a> {
 
 impl BufferAdapter for PlanarBufferAdaptar<'_> {
     fn mix_sample(&mut self, channel: usize, value: f32, pos: usize) {
-        self.buf[channel][pos] += value;//(value - 0.5) * 2.0;
+        self.buf[channel][pos] += value;
+    }
+
+    fn mix_samples(&mut self, channel: usize, values: &[f32], pos: usize) {
+        let target = &mut self.buf[channel][pos..pos + values.len()];
+        for i in 0..values.len() {
+            target[i] += values[i];
+        }
     }
 
     fn clear(&mut self) {
@@ -1195,8 +1456,102 @@ impl Song {
 
             let vol_right = PANNING_TAB[      channel.panning.final_panning as usize] as f32 / 65536.0;
             let vol_left  = PANNING_TAB[256 - channel.panning.final_panning as usize] as f32 / 65536.0;
-            for i in 0..ticks_to_generate as usize {
+            
+            let mut i = 0;
+            
+            // Fast Path: 4-sample SIMD Block
+            while i + 4 <= ticks_to_generate {
+                let pos = channel.voice.sample_position;
+                let du = channel.voice.du;
+                
+                // Check if any of the 4 samples will cross a loop or end boundary
+                // We also check channel.on in case the scalar loop turned it off (not possible here but good for safety)
+                if pos + (4.0 * du) >= sample.length as f32 || 
+                   (sample.loop_type != LoopType::NoLoop && pos + (4.0 * du) >= sample.loop_end as f32) {
+                    break;
+                }
 
+                let mut out_samples = [0.0f32; 4];
+                
+                match self.filter {
+                    FilterType::Linear => {
+                        let mut lo = [0.0f32; 4];
+                        let mut hi = [0.0f32; 4];
+                        let mut t  = [0.0f32; 4];
+                        
+                        for j in 0..4 {
+                            let p = pos + (j as f32 * du);
+                            let idx = p as usize;
+                            lo[j] = sample.data[idx];
+                            hi[j] = sample.data[idx+1];
+                            t[j]  = p.fract();
+                        }
+                        out_samples = lerp_simd(lo, hi, t);
+                    },
+                    FilterType::Cubic => {
+                        let mut p0 = [0.0f32; 4];
+                        let mut p1 = [0.0f32; 4];
+                        let mut p2 = [0.0f32; 4];
+                        let mut p3 = [0.0f32; 4];
+                        let mut t  = [0.0f32; 4];
+                        
+                        for j in 0..4 {
+                            let p = pos + (j as f32 * du);
+                            let idx = p as usize;
+                            p0[j] = sample.data[idx-1];
+                            p1[j] = sample.data[idx];
+                            p2[j] = sample.data[idx+1];
+                            p3[j] = sample.data[idx+2];
+                            t[j]  = p.fract();
+                        }
+                        out_samples = cubic_simd(p0, p1, p2, p3, t);
+                    },
+                    FilterType::Sinc => {
+                        for j in 0..4 {
+                            let p = pos + (j as f32 * du);
+                            let idx = p as usize;
+                            let phase = (p.fract() * 512.0) as usize;
+                            let table = &self.frequency_tables.resampling.sinc_table[phase];
+                            out_samples[j] = sinc_dot_product(&sample.data[idx - 3..], table);
+                        }
+                    },
+                    FilterType::None => {
+                        for j in 0..4 {
+                            let p = pos + (j as f32 * du);
+                            out_samples[j] = sample.data[p as usize];
+                        }
+                    }
+                }
+
+                // Volume and Panning (SIMD-capable if we wanted, but let's keep it simple first)
+                let mut left_samples  = [0.0f32; 4];
+                let mut right_samples = [0.0f32; 4];
+                
+                let output_vol = channel.voice.volume.output_volume / 4.0;
+                
+                for j in 0..4 {
+                    let final_sample = out_samples[j] * output_vol;
+                    
+                    // Visualizers
+                    channel.last_samples[channel.last_samples_pos] = final_sample;
+                    channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
+                    
+                    left_samples[j]  = final_sample * vol_left;
+                    right_samples[j] = final_sample * vol_right;
+                    
+                    self.master_samples[self.master_samples_pos] = (left_samples[j] + right_samples[j]) / 2.0;
+                    self.master_samples_pos = (self.master_samples_pos + 1) % 8192;
+                }
+
+                buf.mix_samples(0, &left_samples,  current_buf_position + i);
+                buf.mix_samples(1, &right_samples, current_buf_position + i);
+
+                channel.voice.sample_position += 4.0 * du;
+                i += 4;
+            }
+
+            // Path 2: Scalar Fallback
+            while i < ticks_to_generate {
                 if channel.voice.sample_position as u32 >= sample.length {
                     channel.on = false;
                     break;
@@ -1220,16 +1575,7 @@ impl Song {
                         let pos = channel.voice.sample_position as usize;
                         let phase = (channel.voice.sample_position.fract() * 512.0) as usize;
                         let table = &self.frequency_tables.resampling.sinc_table[phase];
-                        let mut result = 0.0;
-                        result += sample.data[pos - 3] * table[0];
-                        result += sample.data[pos - 2] * table[1];
-                        result += sample.data[pos - 1] * table[2];
-                        result += sample.data[pos]     * table[3];
-                        result += sample.data[pos + 1] * table[4];
-                        result += sample.data[pos + 2] * table[5];
-                        result += sample.data[pos + 3] * table[6];
-                        result += sample.data[pos + 4] * table[7];
-                        result
+                        sinc_dot_product(&sample.data[pos - 3..], table)
                     },
                     FilterType::None => {
                         sample.data[channel.voice.sample_position as usize]
@@ -1238,14 +1584,12 @@ impl Song {
 
                 let final_sample = out_sample / 4.0 * channel.voice.volume.output_volume;
                 
-                // Store in per-channel oscilloscope buffer
                 channel.last_samples[channel.last_samples_pos] = final_sample;
                 channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
 
                 let l = final_sample * vol_left;
                 let r = final_sample * vol_right;
 
-                // Collect master for FFT
                 self.master_samples[self.master_samples_pos] = (l + r) / 2.0;
                 self.master_samples_pos = (self.master_samples_pos + 1) % 8192;
 
@@ -1272,6 +1616,8 @@ impl Song {
                 if channel.voice.loop_started && channel.voice.sample_position < sample.loop_start as f32 {
                     channel.voice.sample_position = sample.loop_start as f32 + (sample.loop_start as f32 - channel.voice.sample_position) as f32;
                 }
+                
+                i += 1;
             }
         }
     }

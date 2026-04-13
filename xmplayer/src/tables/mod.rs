@@ -329,6 +329,7 @@ pub enum TableType {
     AmigaFrequency
 }
 
+#[repr(align(32))]
 pub struct ResamplingTables {
     pub sinc_table: [[f32; 8]; 512],
 }

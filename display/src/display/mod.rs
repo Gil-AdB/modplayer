@@ -65,6 +65,7 @@ pub struct Display {}
 
 impl Display {
     pub fn render(
+        grid: &mut Grid,
         play_data: &PlayData,
         instruments: &Vec<Instrument>,
         patterns: &Vec<Patterns>,
@@ -77,8 +78,7 @@ impl Display {
         _y_offset: isize,
         _panning_mode: u32,
         platform: TargetPlatform,
-    ) -> Grid {
-        let mut grid = Grid::new(width, height);
+    ) {
         let view_mode = ViewMode::from(view_mode_raw);
         
         let theme_id = match play_data.user_data.get("theme_id") {
@@ -123,11 +123,11 @@ impl Display {
 
         match view_mode {
             ViewMode::Pattern => {
-                Self::render_pattern(&mut grid, play_data, instruments, patterns, order, &theme, x_offset, 0, platform, visualizer_mode, theme_id, pat_max_y);
+                Self::render_pattern(grid, play_data, instruments, patterns, order, &theme, x_offset, 0, platform, visualizer_mode, theme_id, pat_max_y);
             },
-            ViewMode::Instruments => Self::render_instruments(&mut grid, instruments, 0, &theme),
-            ViewMode::Message => Self::render_message(&mut grid, &play_data.song_message, 0, &theme),
-            ViewMode::Help => Self::render_help(&mut grid, 0, &theme),
+            ViewMode::Instruments => Self::render_instruments(grid, instruments, 0, &theme),
+            ViewMode::Message => Self::render_message(grid, &play_data.song_message, 0, &theme),
+            ViewMode::Help => Self::render_help(grid, 0, &theme),
         }
 
         // 3. High-Fidelity Visualizers at the bottom
@@ -142,13 +142,12 @@ impl Display {
             }
 
             match visualizer_mode {
-                0 => Self::render_fft(&mut grid, &play_data.master_spectrum, 0, vis_y, width, vis_height, &theme.meter_colors, theme.pat_row_bg),
-                1 => Self::render_master_scope(&mut grid, &play_data.master_oscilloscope, 0, vis_y, width, vis_height, &theme),
-                2 => Self::render_multi_scope(&mut grid, &play_data.channel_status, 0, vis_y, width, vis_height, &theme),
+                0 => Self::render_fft(grid, &play_data.master_spectrum, 0, vis_y, width, vis_height, &theme.meter_colors, theme.pat_row_bg),
+                1 => Self::render_master_scope(grid, &play_data.master_oscilloscope, 0, vis_y, width, vis_height, &theme),
+                2 => Self::render_multi_scope(grid, &play_data.channel_status, 0, vis_y, width, vis_height, &theme),
                 _ => {}
             }
         }
-        grid
     }
 
     fn get_theme(theme_id: u32) -> Theme {
@@ -739,15 +738,15 @@ mod tests {
         
         // 1. Edge reach: 255/255 on width 9 -> index 8
         Display::grid_range(&mut grid, 0, 0, 255, 255, 9, theme.accent_fg, theme.row_bg_even);
-        assert_eq!(grid.cells[8].c, '=');
-        assert_eq!(grid.cells[7].c, '-');
+        assert_eq!(grid.cells[8].c, b'=' as u32);
+        assert_eq!(grid.cells[7].c, b'-' as u32);
 
         // 2. Centering: 127/255 on width 9 -> index 4 (127/255 * 8 = 3.98 -> 4)
         let mut grid2 = Grid::new(20, 1);
         Display::grid_range(&mut grid2, 0, 0, 127, 255, 9, theme.accent_fg, theme.row_bg_even);
-        assert_eq!(grid2.cells[4].c, '='); 
-        assert_eq!(grid2.cells[3].c, '-');
-        assert_eq!(grid2.cells[5].c, '-');
+        assert_eq!(grid2.cells[4].c, b'=' as u32); 
+        assert_eq!(grid2.cells[3].c, b'-' as u32);
+        assert_eq!(grid2.cells[5].c, b'-' as u32);
     }
 
     #[test]
@@ -757,7 +756,7 @@ mod tests {
         
         // Max volume (64/64) on width 12 -> all cells filled
         Display::grid_range_with_color(&mut grid, 0, 0, 64, 64, 12, &theme.meter_colors, theme.row_bg_even);
-        assert_eq!(grid.cells[11].c, '=');
-        assert_eq!(grid.cells[10].c, '=');
+        assert_eq!(grid.cells[11].c, b'=' as u32);
+        assert_eq!(grid.cells[10].c, b'=' as u32);
     }
 }

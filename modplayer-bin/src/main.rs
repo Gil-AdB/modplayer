@@ -15,7 +15,7 @@ use xmplayer::AudioConsumer;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use display::display::{Display, TargetPlatform};
-use display::ViewPort;
+use display::{ViewPort, Grid};
 
 fn main() {
     if env::args().len() < 2 {return;}
@@ -87,7 +87,8 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
             }
         }
 
-        let grid = Display::render(data, instruments, patterns, order, view_port.width, view_port.height, data.view_mode, data.theme_id, view_port.x1, view_port.y1, 0, TargetPlatform::Native);
+        let mut grid = Grid::new(view_port.width, view_port.height);
+        Display::render(&mut grid, data, instruments, patterns, order, view_port.width, view_port.height, data.view_mode, data.theme_id, view_port.x1, view_port.y1, 0, TargetPlatform::Native);
         
         if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0, 0)) {}
         print!("{}", grid.to_ansi());
