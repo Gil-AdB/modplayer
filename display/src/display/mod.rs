@@ -373,7 +373,7 @@ impl Display {
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
                 
                 let f_min = 27.5f32;
-                let f_max = 14080.0f32;
+                let f_max = 131072.0f32;
                 let f_pos = if channel.frequency > 0.0 {
                     ((channel.frequency.max(f_min).min(f_max).ln() - f_min.ln()) / (f_max.ln() - f_min.ln()) * 6.0).ceil() as u32
                 } else {

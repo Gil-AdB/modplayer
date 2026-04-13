@@ -881,7 +881,7 @@ impl Song {
             status.fadeout_volume     = channel.voice.volume.fadeout_vol as f32;
             status.on                 = channel.on;
             status.force_off          = channel.force_off;
-            status.frequency          = channel.frequency + channel.frequency_shift;
+            status.frequency          = channel.voice.frequency;
             status.instrument         = channel.voice.instrument;
             status.sample             = channel.voice.sample;
             let mut sample_position = channel.voice.sample_position;
