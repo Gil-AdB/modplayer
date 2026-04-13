@@ -88,7 +88,7 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
         }
 
         let mut grid = Grid::new(view_port.width, view_port.height);
-        Display::render(&mut grid, data, instruments, patterns, order, view_port.width, view_port.height, data.view_mode, data.theme_id, view_port.x1, view_port.y1, 0, TargetPlatform::Native);
+        Display::render(&mut grid, data, instruments, patterns, order, view_port.width, view_port.height, data.view_mode, data.theme_id, view_port.x1, view_port.y1, TargetPlatform::Native);
         
         if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0, 0)) {}
         print!("{}", grid.to_ansi());
@@ -259,11 +259,7 @@ fn mainloop(song_data: &SongState) {
                                     let _ = tx.send(PlaybackCmd::ToggleScopes);
                                 }
                                 'p' | 'P' => {
-                                    if event.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-                                        let _ = tx.send(PlaybackCmd::TogglePanning);
-                                    } else {
-                                        let _ = tx.send(PlaybackCmd::Prev);
-                                    }
+                                    let _ = tx.send(PlaybackCmd::Prev);
                                 }
                                 '[' => {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataSubISize("x".to_string(), 1));

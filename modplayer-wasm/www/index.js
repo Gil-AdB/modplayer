@@ -414,12 +414,6 @@ function handleKeyboardEvents(e) {
                 e.preventDefault();
             }
             break;
-        case 'KeyP':
-            if (e.shiftKey) {
-                togglePanning();
-                e.preventDefault();
-            }
-            break;
         case 'KeyV':
             if (e.shiftKey) {
                 cycleVisuals();
@@ -484,13 +478,8 @@ function cycleVisuals() {
     updateVisualizerLayout();
 }
 
-function togglePanning() {
-    if (player && player.song) player.song.toggle_panning();
-}
-
 document.querySelector('#cycle-theme').addEventListener('click', cycleTheme);
 document.querySelector('#cycle-visuals').addEventListener('click', cycleVisuals);
-document.querySelector('#toggle-panning').addEventListener('click', togglePanning);
 
 function updateVisualizerLayout() {
     const container = document.querySelector('.visualizers-container');

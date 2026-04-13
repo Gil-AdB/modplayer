@@ -76,7 +76,6 @@ impl Display {
         theme_id: u32,
         x_offset: isize,
         _y_offset: isize,
-        _panning_mode: u32,
         platform: TargetPlatform,
     ) {
         let view_mode = ViewMode::from(view_mode_raw);

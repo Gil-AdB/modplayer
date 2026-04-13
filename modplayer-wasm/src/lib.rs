@@ -156,7 +156,6 @@ impl SongJs {
     }
 
     pub fn toggle_panning(&mut self) {
-        let _ = self.tx.send(PlaybackCmd::TogglePanning);
     }
 
     pub fn display(&mut self, view_mode: u32, theme_id: u32) {
@@ -167,7 +166,7 @@ impl SongJs {
         let width = self.grid.width;
         let height = self.grid.height;
         
-        Display::render(&mut self.grid, play_data, &self.instruments, &self.patterns, &self.order, width, height, view_mode, theme_id, self.scroll_offset_x, self.scroll_offset, play_data.panning_display_mode, TargetPlatform::WASM);
+        Display::render(&mut self.grid, play_data, &self.instruments, &self.patterns, &self.order, width, height, view_mode, theme_id, self.scroll_offset_x, self.scroll_offset, TargetPlatform::WASM);
         
         self.song_row = play_data.row;
         self.song_tick = play_data.tick;
@@ -326,9 +325,6 @@ impl SongJs {
                 }
                 "v" | "V" => {
                     let _ = tx.send(PlaybackCmd::ToggleVisualizerMode);
-                }
-                "P" => {
-                    let _ = tx.send(PlaybackCmd::TogglePanning);
                 }
                 "n" => {
                     let _ = tx.send(PlaybackCmd::Next);
