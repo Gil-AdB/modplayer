@@ -39,6 +39,7 @@ pub struct ViewPort {
 
 pub struct Theme {
     pub meter_colors: [RGB; 12],
+    pub freq_colors: [RGB; 12],
     pub header_bg: RGB,
     pub header_fg: RGB,
     pub accent_fg: RGB,
@@ -159,6 +160,12 @@ impl Display {
                         RGB { r: 90, g: 92, b: 255 }, RGB { r: 66, g: 122, b: 255 }, RGB { r: 33, g: 152, b: 255 },
                         RGB { r: 0, g: 182, b: 254 }, RGB { r: 0, g: 212, b: 254 }, RGB { r: 0, g: 242, b: 254 },
                     ],
+                    freq_colors: [
+                        RGB { r: 0, g: 50, b: 150 }, RGB { r: 0, g: 70, b: 170 }, RGB { r: 0, g: 90, b: 190 },
+                        RGB { r: 0, g: 110, b: 210 }, RGB { r: 0, g: 130, b: 230 }, RGB { r: 0, g: 150, b: 250 },
+                        RGB { r: 0, g: 170, b: 254 }, RGB { r: 0, g: 190, b: 254 }, RGB { r: 0, g: 210, b: 254 },
+                        RGB { r: 0, g: 230, b: 254 }, RGB { r: 50, g: 242, b: 254 }, RGB { r: 100, g: 242, b: 254 },
+                    ],
                     header_bg: RGB { r: 15, g: 16, b: 45 },
                     header_fg: RGB { r: 0, g: 242, b: 254 },
                     accent_fg: RGB { r: 0, g: 242, b: 254 },
@@ -189,6 +196,12 @@ impl Display {
                         RGB { r: 249, g: 38, b: 114 }, RGB { r: 249, g: 38, b: 114 }, RGB { r: 253, g: 151, b: 31 },
                         RGB { r: 253, g: 151, b: 31 }, RGB { r: 166, g: 226, b: 46 }, RGB { r: 166, g: 226, b: 46 },
                     ],
+                    freq_colors: [
+                        RGB { r: 174, g: 129, b: 255 }, RGB { r: 174, g: 129, b: 255 }, RGB { r: 154, g: 149, b: 255 },
+                        RGB { r: 134, g: 169, b: 255 }, RGB { r: 114, g: 189, b: 255 }, RGB { r: 102, g: 217, b: 239 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 122, g: 237, b: 239 },
+                        RGB { r: 142, g: 255, b: 239 }, RGB { r: 162, g: 255, b: 239 }, RGB { r: 182, g: 255, b: 239 },
+                    ],
                     header_bg: RGB { r: 35, g: 35, b: 35 },
                     header_fg: RGB { r: 249, g: 38, b: 114 },
                     accent_fg: RGB { r: 249, g: 38, b: 114 },
@@ -214,6 +227,12 @@ impl Display {
             3 => { // Mono / Amber
                 Theme {
                     meter_colors: [RGB { r: 255, g: 140, b: 0 }; 12],
+                    freq_colors: [
+                        RGB { r: 100, g: 40, b: 0 }, RGB { r: 130, g: 50, b: 0 }, RGB { r: 160, g: 60, b: 0 },
+                        RGB { r: 190, g: 80, b: 0 }, RGB { r: 220, g: 100, b: 0 }, RGB { r: 255, g: 120, b: 0 },
+                        RGB { r: 255, g: 140, b: 0 }, RGB { r: 255, g: 160, b: 0 }, RGB { r: 255, g: 180, b: 0 },
+                        RGB { r: 255, g: 200, b: 0 }, RGB { r: 255, g: 220, b: 0 }, RGB { r: 255, g: 240, b: 0 },
+                    ],
                     header_bg: RGB { r: 30, g: 10, b: 0 },
                     header_fg: RGB { r: 255, g: 140, b: 0 },
                     accent_fg: RGB { r: 255, g: 140, b: 0 },
@@ -243,6 +262,12 @@ impl Display {
                         RGB { r: 180, g: 180, b: 0 }, RGB { r: 210, g: 210, b: 0 }, RGB { r: 240, g: 240, b: 0 },
                         RGB { r: 240, g: 120, b: 0 }, RGB { r: 240, g: 60, b: 0 }, RGB { r: 255, g: 0, b: 0 },
                         RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                    ],
+                    freq_colors: [
+                        RGB { r: 0, g: 0, b: 200 }, RGB { r: 0, g: 50, b: 220 }, RGB { r: 0, g: 100, b: 240 },
+                        RGB { r: 0, g: 150, b: 255 }, RGB { r: 0, g: 200, b: 255 }, RGB { r: 0, g: 255, b: 255 },
+                        RGB { r: 50, g: 255, b: 255 }, RGB { r: 100, g: 255, b: 255 }, RGB { r: 150, g: 255, b: 255 },
+                        RGB { r: 200, g: 255, b: 255 }, RGB { r: 230, g: 255, b: 255 }, RGB { r: 255, g: 255, b: 255 },
                     ],
                     header_bg: RGB { r: 0, g: 0, b: 128 },
                     header_fg: RGB { r: 255, g: 255, b: 255 },
@@ -300,7 +325,7 @@ impl Display {
         };
 
         // Table Header (ABSOLUTE PARITY WITH WEB SCREENSHOT)
-        let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PERD | CHAN VOL | ENVELOPE | GLOBAL VOL | FADEOUT | PANNING |";
+        let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PITC | CHAN VOL | ENVELOPE | GLOBAL VOL | FADEOUT | PANNING |";
         grid.print(x_start, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
         if use_two_columns {
             grid.print(x_start + 130, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
@@ -346,7 +371,15 @@ impl Display {
                 
                 grid.print(x + 60, y, &format!(" {:3} ", channel.note), theme.col_note, row_bg);
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 67, y, &format!(" {:4} ", channel.period), theme.col_note, row_bg);
+                
+                let f_min = 27.5f32;
+                let f_max = 14080.0f32;
+                let f_pos = if channel.frequency > 0.0 {
+                    ((channel.frequency.max(f_min).min(f_max).ln() - f_min.ln()) / (f_max.ln() - f_min.ln()) * 6.0).ceil() as u32
+                } else {
+                    0
+                };
+                Self::grid_range_with_color(grid, x + 67, y, f_pos, 6, 6, &theme.freq_colors, row_bg); 
                 grid.print(x + 73, y, "|", theme.col_sep, row_bg);
                 
                 Self::grid_range_with_color(grid, x + 74, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
