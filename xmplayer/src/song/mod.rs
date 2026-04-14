@@ -1,5 +1,6 @@
 use std::cmp::min;
-use rustfft::{FftPlanner, num_complex::Complex};
+use rustfft::{FftPlanner, Fft, num_complex::Complex};
+use std::sync::Arc;
 use serde::Serialize;
 use std::sync::mpsc::Receiver;
 #[cfg(not(target_arch = "wasm32"))]
@@ -685,6 +686,8 @@ pub struct Song {
     fft_planner:                FftPlanner<f32>,
     pub spectral_peaks:         Vec<f32>,
     pub hanning_window:         Vec<f32>,
+    pub cached_fft:             Option<Arc<dyn Fft<f32>>>,
+    pub bin_map:                Vec<(usize, usize)>,
 }
 
 impl Song {
@@ -707,7 +710,7 @@ impl Song {
 
     pub fn new(song_data: &SongData, triple_buffer_writer: TripleBufferWriter<PlayData>, sample_rate: f32) -> Self {
         let use_amiga = if song_data.use_amiga {AudioTables::calc_tables_amiga()} else {AudioTables::calc_tables_linear()};
-        Self {
+        let mut result = Self {
             name: song_data.name.clone(),
             song_position: 0,
             row: 0,
@@ -796,7 +799,12 @@ impl Song {
             fft_planner: FftPlanner::new(),
             spectral_peaks: vec![0.0; 128],
             hanning_window: (0..2048).map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / 2047.0).cos())).collect(),
-        }
+            cached_fft: None,
+            bin_map: vec![],
+        };
+        result.cached_fft = Some(result.fft_planner.plan_fft_forward(2048));
+        result.recalculate_bin_map();
+        result
     }
 
 
@@ -806,6 +814,24 @@ impl Song {
     //     let frequency = 8363.0 * two.powf((6.0 * 12.0 * 16.0 * 4.0 - period) / (12.0 * 16.0 * 4.0));
     //     frequency as f32
     // }
+
+    fn recalculate_bin_map(&mut self) {
+        let min_f = 20.0f32;
+        let max_f = 20000.0f32;
+        let log_min_f = min_f.ln();
+        let log_max_f = max_f.ln();
+        let mut new_map = Vec::with_capacity(128);
+
+        for j in 0..128 {
+            let f_start = (log_min_f + (j as f32 / 128.0) * (log_max_f - log_min_f)).exp();
+            let f_end = (log_min_f + ((j + 1) as f32 / 128.0) * (log_max_f - log_min_f)).exp();
+            
+            let i_start = (f_start * 2048.0 / self.rate).floor() as usize;
+            let i_end = (f_end * 2048.0 / self.rate).ceil() as usize;
+            new_map.push((i_start, i_end));
+        }
+        self.bin_map = new_map;
+    }
 
     fn queue_display(&mut self) {
         let mut play_data = self.triple_buffer_writer.acquire_buffer();
@@ -940,7 +966,7 @@ impl Song {
         }
         
         // Master FFT (Optimized with persistent planner and robust indexing)
-        let fft = self.fft_planner.plan_fft_forward(2048);
+        let fft = self.cached_fft.as_ref().unwrap();
         let mut fft_input_buffer = vec![0.0f32; 2048];
         let base_offset = (start_offset as isize - 512).rem_euclid(history_len as isize) as usize;
         for i in 0..2048 {
@@ -958,18 +984,9 @@ impl Song {
         }
 
         let decay = if cfg!(target_arch = "wasm32") { 0.88f32 } else { 0.92f32 };
-        let min_f = 20.0f32;
-        let max_f = 20000.0f32;
-        let log_min_f = min_f.ln();
-        let log_max_f = max_f.ln();
 
         for j in 0..128 {
-            // Logarithmic bin matching
-            let f_start = (log_min_f + (j as f32 / 128.0) * (log_max_f - log_min_f)).exp();
-            let f_end = (log_min_f + ((j + 1) as f32 / 128.0) * (log_max_f - log_min_f)).exp();
-            
-            let i_start = (f_start * 2048.0 / self.rate).floor() as usize;
-            let i_end = (f_end * 2048.0 / self.rate).ceil() as usize;
+            let (i_start, i_end) = self.bin_map[j];
             
             let mut max_mag = 0.0f32;
             if i_start == i_end || i_start + 1 == i_end {
@@ -1000,6 +1017,7 @@ impl Song {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.rate = sample_rate;
         self.original_rate = sample_rate;
+        self.recalculate_bin_map();
     }
 
     pub fn get_instruments(&self) -> Vec<Instrument>{
