@@ -575,11 +575,19 @@ impl Display {
                         let vol = if p.volume == 0 { "..".to_string() } else { format!("{:02X}", p.volume) };
                         let effect = if p.effect == 0 && p.effect_param == 0 { "...".to_string() } else { format!("{:01X}{:02X}", p.effect, p.effect_param) };
                         
+                        let is_muted = actual_ch < play_data.channel_status.len()
+                            && play_data.channel_status[actual_ch].force_off;
+                        
                         // MULTICOLOR TRACKER RENDERING WITH CHANNEL SEPARATORS
-                        grid.print(curr_x, draw_y, &note, theme.pat_note_fg, row_bg);
-                        grid.print(curr_x + 4, draw_y, &inst, theme.pat_inst_fg, row_bg);
-                        grid.print(curr_x + 7, draw_y, &vol, theme.pat_vol_fg, row_bg);
-                        grid.print(curr_x + 10, draw_y, &effect, theme.pat_eff_fg, row_bg);
+                        let (note_c, inst_c, vol_c, eff_c) = if is_muted {
+                            (theme.col_off, theme.col_off, theme.col_off, theme.col_off)
+                        } else {
+                            (theme.pat_note_fg, theme.pat_inst_fg, theme.pat_vol_fg, theme.pat_eff_fg)
+                        };
+                        grid.print(curr_x, draw_y, &note, note_c, row_bg);
+                        grid.print(curr_x + 4, draw_y, &inst, inst_c, row_bg);
+                        grid.print(curr_x + 7, draw_y, &vol, vol_c, row_bg);
+                        grid.print(curr_x + 10, draw_y, &effect, eff_c, row_bg);
                         grid.print(curr_x + 13, draw_y, "|", theme.col_sep, row_bg);
                     }
                 }

@@ -1442,9 +1442,15 @@ impl Song {
                         if pattern.effect_param != 0 {
                             channel.last_sample_offset = pattern.effect_param as u32 * 256;
                         }
-                        channel.voice.sample_position = channel.last_sample_offset as f32 + 4.0;
-                        if channel.last_sample_offset > self.song_data.get_sample(channel).length {
+                        let sample = self.song_data.get_sample(channel);
+                        // sample.length includes 4-sample prefix padding; original data starts at offset 4
+                        let original_length = sample.length.saturating_sub(4);
+                        if channel.last_sample_offset >= original_length {
+                            // Offset beyond sample end: kill note per tracker spec
                             channel.key_off(instruments, false);
+                        } else {
+                            // +4.0 skips the sinc prefix padding
+                            channel.voice.sample_position = channel.last_sample_offset as f32 + 4.0;
                         }
                     }
                 }
