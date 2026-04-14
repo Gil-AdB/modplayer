@@ -91,7 +91,7 @@ impl<T> TripleBufferReader<T> {
 
     /// Wakes up the blocking reader thread without producing new data.
     /// Useful for graceful shutdown.
-    pub fn signal(&self) {
+    pub fn wake_reader(&self) {
         if let Some(sem) = &self.triple_buffer.sem {
             sem.signal();
         }

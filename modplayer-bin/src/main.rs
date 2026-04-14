@@ -143,10 +143,10 @@ fn mainloop(song_data: &SongState) {
                         KeyCode::Backspace => {}
                         KeyCode::Enter => {}
                         KeyCode::Left => {
-                            let _ = tx.send(PlaybackCmd::ModifyUserDataSubISize("x".to_string(), 1));
+                            let _ = tx.send(PlaybackCmd::SeekBackward10s);
                         }
                         KeyCode::Right => {
-                            let _ = tx.send(PlaybackCmd::ModifyUserDataAddISize("x".to_string(), 1));
+                            let _ = tx.send(PlaybackCmd::SeekForward10s);
                         }
                         KeyCode::Up => {
                             let _ = tx.send(PlaybackCmd::ModifyUserDataSubISize("y".to_string(), 1));
@@ -198,7 +198,7 @@ fn mainloop(song_data: &SongState) {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataAddUSize("view_mode".to_string(), 1));
                                 }
                                 '0'..='9' => {
-                                    let ch_idx = if ch == '0' { 9 } else { (ch as u8 - '1' as u8) };
+                                    let ch_idx = if ch == '0' { 9 } else { ch as u8 - '1' as u8 };
                                     if event.modifiers.contains(KeyModifiers::SHIFT) {
                                         let _ = tx.send(PlaybackCmd::ChannelSolo(ch_idx));
                                     } else {
@@ -235,7 +235,7 @@ fn mainloop(song_data: &SongState) {
                                 'r' => {
                                     let _ = tx.send(PlaybackCmd::Restart);
                                 }
-                                'a' => {
+                                'A' => {
                                     let _ = tx.send(PlaybackCmd::AmigaTable);
                                 }
                                 'l' => {

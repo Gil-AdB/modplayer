@@ -101,17 +101,28 @@ impl Display {
 
         // 1. Header (FIXED WIDTH TO ENSURE ALIGNMENT)
         let name_trimmed = Self::fixed_width(&play_data.name, 20);
-        let header_str = format!("'{}' dur: {:6.2}ms tick: {:3} pos: {:3X}/{:<3X} row: {:3X}/{:<3X} bpm: {:3} spd: {:2} FPS: {:4.1} f: {:?}", 
-            name_trimmed, play_data.tick_duration_in_ms, play_data.tick,
+        let cur_sec = (play_data.current_duration_ms / 1000.0) as u32;
+        let cur_ms = (play_data.current_duration_ms % 1000.0) as u32;
+        let tot_sec = (play_data.total_duration_ms / 1000.0) as u32;
+        let tot_ms = (play_data.total_duration_ms % 1000.0) as u32;
+        let header_str = format!("'{}' time: {:02}:{:02}.{:03}/{:02}:{:02}.{:03} tick: {:3} pos: {:3X}/{:<3X} row: {:3X}/{:<3X} bpm: {:3} spd: {:2} FPS: {:4.1} f: {:?} GVol: ", 
+            name_trimmed, 
+            cur_sec / 60, cur_sec % 60, cur_ms,
+            tot_sec / 60, tot_sec % 60, tot_ms,
+            play_data.tick,
             play_data.song_position, play_data.song_length.saturating_sub(1), 
             play_data.row, play_data.pattern_len.saturating_sub(1), 
             play_data.bpm, play_data.speed, play_data.display_fps, play_data.filter
         );
+        
         // Fill entire header row with header_bg
         for x in 0..grid.width {
             grid.set_cell(x, 0, ' ', theme.header_fg, theme.header_bg);
         }
+        
+        let header_len = header_str.chars().count();
         grid.print(0, 0, &header_str, theme.header_fg, theme.header_bg);
+        Self::grid_range_with_color(grid, header_len, 0, (play_data.global_volume as f32 / 64.0 * 12.0).ceil() as u32, 12, 12, &theme.meter_colors, theme.header_bg);
 
         // 2. Dynamic Layout Calculation
         let vis_height = if platform == TargetPlatform::Native && visualizer_mode < 3 {
@@ -406,7 +417,7 @@ impl Display {
         };
 
         // Table Header (ABSOLUTE PARITY WITH WEB SCREENSHOT)
-        let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PITCH | CHAN VOL | ENVELOPE | GLOBAL VOL | FADEOUT | PANNING |";
+        let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PITCH | CHAN VOL | ENVELOPE | FADEOUT | PANNING |";
         grid.print(x_start, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
         if use_two_columns {
             grid.print(x_start + 130, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
@@ -428,7 +439,7 @@ impl Display {
             let channel = &play_data.channel_status[actual_ch];
             let row_bg = if i % 2 == 1 { theme.row_bg_odd } else { theme.row_bg_even };
 
-            let status = if channel.force_off { "MUT" } else if channel.on { " ON" } else { "OFF" };
+            let status = if channel.force_off { "MUT" } else if channel.on { "ON " } else { "OFF" };
             let col_status = if channel.force_off { theme.col_off } else if channel.on { theme.col_on } else { theme.col_off };
             
             // PIXEL PERFECT CURSOR-BASED LAYOUT
@@ -470,7 +481,7 @@ impl Display {
                 } else {
                     // Neutral: Center indicator (Slot 3)
                     grid.print(x + 67, y, "   ", theme.col_sep, row_bg);
-                    grid.print(x + 67 + 3, y, "·", theme.col_sep, row_bg);
+                    grid.print(x + 67 + 3, y, "-", theme.col_sep, row_bg);
                     grid.print(x + 67 + 4, y, "   ", theme.col_sep, row_bg);
                 }
                 grid.print(x + 74, y, "|", theme.col_sep, row_bg); // Shifted from 73
@@ -478,17 +489,15 @@ impl Display {
                 Self::grid_range_with_color(grid, x + 75, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
                 grid.print(x + 85, y, "|", theme.col_sep, row_bg);
                 Self::grid_range_with_color(grid, x + 86, y, (channel.envelope_volume as f32 / 16383.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
-                grid.print(x + 96, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 97, y, (channel.global_volume as f32 / 64.0 * 12.0).ceil() as u32, 12, 12, &theme.meter_colors, row_bg);
-                grid.print(x + 109, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 110, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
-                grid.print(x + 119, y, "|", theme.col_sep, row_bg);
-                
-                // ODD WIDTH: 9 chars for perfect centering
-                Self::grid_range(grid, x + 120, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
-                grid.print(x + 129, y, "|", theme.col_sep, row_bg);
-            } else {
-                grid.print(x + 10, y, &" ".repeat(119), theme.col_off, row_bg);
+        grid.print(x + 96, y, "|", theme.col_sep, row_bg);
+
+        Self::grid_range_with_color(grid, x + 97, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
+        grid.print(x + 106, y, "|", theme.col_sep, row_bg);
+
+        Self::grid_range(grid, x + 107, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
+        grid.print(x + 116, y, "|", theme.col_sep, row_bg);
+    } else {
+                grid.print(x + 10, y, &" ".repeat(106), theme.col_off, row_bg);
                 grid.print(x + 32, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 39, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 48, y, "|", theme.col_sep, row_bg);
@@ -497,9 +506,8 @@ impl Display {
                 grid.print(x + 74, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 85, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 96, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 109, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 119, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 129, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 106, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 116, y, "|", theme.col_sep, row_bg);
             }
         }
 

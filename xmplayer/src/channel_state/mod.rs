@@ -151,6 +151,8 @@ pub(crate) struct ChannelState {
     pub(crate) last_played_note:               u8,
     pub(crate) last_samples:                   [f32; 512],
     pub(crate) last_samples_pos:               usize,
+    pub(crate) loop_row:                       u8,
+    pub(crate) loop_count:                     u8,
 }
 
 impl ChannelState {

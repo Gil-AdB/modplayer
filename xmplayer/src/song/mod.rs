@@ -293,8 +293,10 @@ impl BPM {
 struct PatternChange {
     pattern_break:  bool,
     pattern_jump:   bool,
+    is_loop:        bool,
     row:            u8,
     pattern:        u8,
+    pattern_delay:  u8,
 }
 
 impl PatternChange {
@@ -302,8 +304,10 @@ impl PatternChange {
         Self{
             pattern_break: false,
             pattern_jump: false,
+            is_loop: false,
             row: 0,
-            pattern: 0
+            pattern: 0,
+            pattern_delay: 0,
         }
     }
     fn reset(&mut self) {
@@ -395,6 +399,8 @@ pub enum PlaybackCmd {
     DecSpeed,
     Next,
     Prev,
+    SeekForward10s,
+    SeekBackward10s,
     LoopPattern,
     Restart,
     Quit,
@@ -493,6 +499,9 @@ pub struct PlayData {
     pub name:                               String,
     pub tick_duration_in_frames:            usize,
     pub tick_duration_in_ms:                f32,
+    pub total_duration_ms:                  f32,
+    pub current_duration_ms:                f32,
+    pub global_volume:                      u32,
     pub tick:                               u32,
     pub song_position:                      usize,
     pub song_length:                        u16,
@@ -520,6 +529,9 @@ impl Default for PlayData {
             name: "".to_string(),
             tick_duration_in_frames: 0,
             tick_duration_in_ms: 0.0,
+            total_duration_ms: 0.0,
+            current_duration_ms: 0.0,
+            global_volume: 64,
             tick: 0,
             song_position: 0,
             song_length: 1,
@@ -664,12 +676,15 @@ pub struct Song {
     song_data:                  SongData,
     channels:                   Vec<ChannelState>,
     pattern_change:             PatternChange,
+    total_duration_ms:          f32,
     bpm:                        BPM,
     loop_pattern:               bool,
     pause:                      bool,
     filter:                     FilterType,
     display:                    bool,
     frequency_tables:           Box<AudioTables>,
+    is_fast_forwarding:         bool,
+    is_calculating_duration:    bool,
     triple_buffer_writer:       TripleBufferWriter<PlayData>,
     pub master_samples:         [f32; 8192],
     pub master_samples_pos:     usize,
@@ -726,6 +741,7 @@ impl Song {
             rate: sample_rate,
             original_rate: sample_rate,
             speed: song_data.tempo as u32,
+            total_duration_ms: 0.0,
             bpm: BPM::new(song_data.bpm as u32, sample_rate as f32),
             global_volume: GlobalVolume::new(),
             song_message: "".to_string(),
@@ -774,6 +790,8 @@ impl Song {
                 last_played_note: 0,
                 last_samples: [0.0; 512],
                 last_samples_pos: 0,
+                loop_row: 0,
+                loop_count: 0,
             }; song_data.channel_count as usize],
             loop_pattern: false,
             pattern_change: PatternChange::new(),
@@ -781,6 +799,8 @@ impl Song {
             filter: FilterType::Sinc,
             display: true,
             frequency_tables: use_amiga,
+            is_fast_forwarding: false,
+            is_calculating_duration: false,
             triple_buffer_writer,
             master_samples: [0.0; 8192],
             master_samples_pos: 0,
@@ -813,9 +833,153 @@ impl Song {
         };
         result.cached_fft = Some(result.fft_planner.plan_fft_forward(2048));
         result.recalculate_bin_map();
+        result.total_duration_ms = result.compute_total_duration();
         result
-
     }
+
+    fn compute_total_duration(&mut self) -> f32 {
+        let current_display = self.display;
+        let current_ff = self.is_fast_forwarding;
+
+        self.reset();
+        self.display = false;
+        self.is_fast_forwarding = true;
+        self.is_calculating_duration = true;
+        
+        let mut visited_rows = vec![false; 1024 * 512]; // 1024 orders * max 512 rows
+        let max_samples = (20.0 * 60.0 * self.original_rate) as u64; // 20 mins max
+        
+        self.fast_forward_until(|s| {
+            if s.total_samples > max_samples { return true; }
+            if s.tick == 0 {
+                let idx = s.song_position * 512 + s.row;
+                if idx < visited_rows.len() {
+                    if visited_rows[idx] {
+                        return true;
+                    }
+                    visited_rows[idx] = true;
+                }
+            }
+            false
+        });
+        
+        let duration = (self.total_samples as f32 / self.original_rate) * 1000.0;
+        self.reset();
+
+        self.is_calculating_duration = false;
+        self.is_fast_forwarding = current_ff;
+        self.display = current_display;
+
+        duration
+    }
+
+    pub fn reset(&mut self) {
+        self.song_position = 0;
+        self.row = 0;
+        self.tick = 0;
+        self.speed = self.song_data.tempo as u32;
+        self.bpm = BPM::new(self.song_data.bpm as u32, self.rate);
+        self.global_volume = GlobalVolume::new();
+        self.pattern_change = PatternChange::new();
+        self.total_samples = 0;
+        self.last_fps_sample = 0;
+        self.last_display_update_sample = 0;
+        
+        self.tick_state = TickState {
+            state: BufferState::Start,
+            current_buf_position: 0,
+            current_tick_position: 0
+        };
+
+        // Reset all channels to blank slate
+        for ch in self.channels.iter_mut() {
+            *ch = ChannelState {
+                voice: Voice::new(),
+                note: Note::new(),
+                frequency: 0.0,
+                volume_envelope_state: EnvelopeState::new(),
+                panning_envelope_state: EnvelopeState::new(),
+                vibrato_envelope_state: VibratoEnvelopeState::new(),
+                vibrato_state: VibratoState::new(),
+                tremolo_state: TremoloState::new(),
+                frequency_shift: 0.0,
+                period_shift: 0,
+                on: false,
+                last_porta_up: 0,
+                last_porta_down: 0,
+                last_fine_porta_up: 0,
+                last_fine_porta_down: 0,
+                last_volume_slide: 0,
+                last_fine_volume_slide_up: 0,
+                last_fine_volume_slide_down: 0,
+                porta_to_note: PortaToNoteState::new(),
+                last_sample_offset: 0,
+                last_panning_speed: 0,
+                panning: Panning::new(),
+                force_off: false, // Keep force_off or reset? We should preserve muting state if it was requested
+                glissando: false,
+                vibrato_control: 0,
+                tremolo_control: 0,
+                tremor: 0,
+                tremor_count: 0,
+                multi_retrig_count: 0,
+                multi_retrig_volume: 0,
+                last_played_note: 0,
+                last_samples: [0.0; 512],
+                last_samples_pos: 0,
+                loop_row: 0,
+                loop_count: 0,
+            };
+        }
+    }
+
+    pub fn fast_forward_until<F>(&mut self, mut condition: F) 
+    where F: FnMut(&Song) -> bool {
+        let mut dummy_buf = vec![0.0; 32768];
+        let mut adapter = InterleavedBufferAdaptar { buf: &mut dummy_buf };
+        let mut rx = std::sync::mpsc::channel().1;
+        
+        let current_display = self.display;
+        let current_ff = self.is_fast_forwarding;
+        self.display = false;
+        self.is_fast_forwarding = true;
+
+        while !condition(self) {
+            if let CallbackState::Complete = self.get_next_tick(&mut adapter, &mut rx) {
+                // Reached end of track or loop point
+                break;
+            }
+        }
+        
+        self.display = current_display;
+        self.is_fast_forwarding = current_ff;
+    }
+
+    pub fn seek_forward_pattern(&mut self) {
+        let current = self.song_position;
+        self.fast_forward_until(|s| s.song_position > current);
+    }
+
+    pub fn seek_backward_pattern(&mut self) {
+        let target = self.song_position.saturating_sub(1);
+        self.reset();
+        self.fast_forward_until(|s| s.song_position >= target);
+    }
+
+    pub fn seek_forward_seconds(&mut self, seconds: f32) {
+        let current_frames = self.total_samples;
+        let target_frames = current_frames + (seconds * self.rate) as u64;
+        self.fast_forward_until(|s| s.total_samples >= target_frames);
+    }
+
+    pub fn seek_backward_seconds(&mut self, seconds: f32) {
+        let current_frames = self.total_samples;
+        let diff = (seconds * self.rate) as u64;
+        let target_frames = current_frames.saturating_sub(diff);
+        self.reset();
+        self.fast_forward_until(|s| s.total_samples >= target_frames);
+    }
+
 
 
     // fn get_linear_frequency(note: i16, fine_tune: i32, period_offset: i32) -> f32 {
@@ -847,6 +1011,9 @@ impl Song {
         let mut play_data = self.triple_buffer_writer.acquire_buffer();
         
         play_data.name                      = self.name.clone();
+        play_data.total_duration_ms         = self.total_duration_ms;
+        play_data.current_duration_ms       = (self.total_samples as f32 / self.rate) * 1000.0;
+        play_data.global_volume             = self.global_volume.volume;
         play_data.tick_duration_in_frames   = self.bpm.tick_duration_in_frames;
         play_data.tick_duration_in_ms       = self.bpm.tick_duration_in_ms;
         play_data.tick                      = self.tick;
@@ -1123,19 +1290,18 @@ impl Song {
                         return false;
                     }
                     PlaybackCmd::Next => {
-                        if self.song_position < (self.song_data.song_length - 1) as usize {
-                            self.song_position += 1;
-                            self.row = 0;
-                            self.tick = 0;
-                        }
+                        self.seek_forward_pattern();
                     }
                     PlaybackCmd::Prev => {
-                        if self.song_position > 0 as usize {
-                            self.song_position -= 1;
-                            self.row = 0;
-                            self.tick = 0;
-                        }
+                        self.seek_backward_pattern();
                     }
+                    PlaybackCmd::SeekForward10s => {
+                        self.seek_forward_seconds(10.0);
+                    }
+                    PlaybackCmd::SeekBackward10s => {
+                        self.seek_backward_seconds(10.0);
+                    }
+
                     PlaybackCmd::Restart => {
                         self.row = 0;
                         self.tick = 0;
@@ -1251,6 +1417,9 @@ impl Song {
             }
 
         }
+        if self.song_position as usize >= self.song_data.pattern_order.len() {
+            return false;
+        }
         return true;
     }
 
@@ -1261,8 +1430,17 @@ impl Song {
 
         self.tick += 1;
         if self.tick >= self.speed {
-            if self.pattern_change.pattern_break || self.pattern_change.pattern_jump {
-                if !self.pattern_change.pattern_jump {
+            // Handle Pattern Delay (EEx)
+            if self.pattern_change.pattern_delay > 0 {
+                self.pattern_change.pattern_delay -= 1;
+                self.tick = 0;
+                return true;
+            }
+
+            if self.pattern_change.pattern_break || self.pattern_change.pattern_jump || self.pattern_change.is_loop {
+                if self.pattern_change.is_loop {
+                    // Stay in same pattern
+                } else if !self.pattern_change.pattern_jump {
                     self.next_pattern();
                 } else {
                     self.song_position = self.pattern_change.pattern as usize;
@@ -1301,6 +1479,49 @@ impl Song {
         let patterns = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
         let row = &patterns.rows[self.row];
         let first_tick = self.tick == 0;
+
+        // Hyper-optimization for duration calculation:
+        // Skip all expensive effect processing and only handle flow control.
+        if self.is_calculating_duration {
+            for pattern in &row.channels {
+                match pattern.effect {
+                    0xB => { self.pattern_change.set_jump(first_tick, pattern.effect_param); }
+                    0xD => { self.pattern_change.set_break(first_tick, pattern.get_x() * 10 + pattern.get_y()); }
+                    0xF => { 
+                        if first_tick && pattern.effect_param > 0 {
+                            if pattern.effect_param <= 0x1f { self.speed = pattern.effect_param as u32; }
+                            else { self.bpm.update(pattern.effect_param as u32, self.rate); }
+                        }
+                    }
+                    0xE => {
+                        match pattern.get_x() {
+                            0x6 => { 
+                                // Pattern Loop (E6x)
+                                let param = pattern.get_y();
+                                if first_tick {
+                                    if param != 0 {
+                                        // duration calculation handles this via visited_rows.
+                                        // But we can still flag it for potential use.
+                                        self.pattern_change.is_loop = true;
+                                        // We don't have access to channel.loop_row here easily
+                                        // in the fast path, so we'll rely on visited_rows to stop.
+                                    }
+                                }
+                            }
+                            0xE => { 
+                                // Pattern Delay (EEx)
+                                if first_tick {
+                                    self.pattern_change.pattern_delay = pattern.get_y();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
 
         let mut missing = String::new();
         for (i, pattern) in row.channels.iter().enumerate() {
@@ -1414,8 +1635,16 @@ impl Song {
             // handle effects
             match pattern.effect {
                 0x0 => {  // Arpeggio
+                    if first_tick {
+                        channel.period_shift = 0;
+                    }
                     if pattern.effect_param != 0 {
                         channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y());
+                        channel.update_frequency(self.rate, true, &self.frequency_tables);
+                    } else if self.tick != 0 {
+                        // Reset frequency shift if arpeggio was active but row has no param (and not on tick 0)
+                        // Actually ST3/XM memory handling should handle persistent params.
+                        // But we must ensure period_shift is applied or reset.
                         channel.update_frequency(self.rate, true, &self.frequency_tables);
                     }
                 }
@@ -1524,6 +1753,26 @@ impl Song {
                     0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate, &self.frequency_tables); } // Porta down
                     0x3 => { channel.glissando = pattern.get_y() == 1; }
                     0x4 => { channel.vibrato_control = pattern.get_y();}
+                    0x6 => { // Pattern Loop
+                        let param = pattern.get_y();
+                        if first_tick {
+                            if param == 0 {
+                                channel.loop_row = self.row as u8;
+                            } else {
+                                if channel.loop_count == 0 {
+                                    channel.loop_count = param;
+                                    self.pattern_change.is_loop = true;
+                                    self.pattern_change.row = channel.loop_row;
+                                } else {
+                                    channel.loop_count -= 1;
+                                    if channel.loop_count > 0 {
+                                        self.pattern_change.is_loop = true;
+                                        self.pattern_change.row = channel.loop_row;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     0x7 => { channel.tremolo_control = pattern.get_y();}
                     0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
                     0x9 => { channel.retrig_note(instruments, first_tick, self.tick, pattern.get_y(), pattern.note, self.rate, &self.frequency_tables);}
@@ -1531,6 +1780,11 @@ impl Song {
                     0xb => { channel.fine_volume_slide_down(note_delay_first_tick, pattern.get_y());} // volume slide up
                     0xc => { channel.set_volume(self.tick == pattern.get_y() as u32, 0); }
                     0xd => {} // handled elsewhere
+                    0xe => { // Pattern Delay
+                        if first_tick {
+                            self.pattern_change.pattern_delay = pattern.get_y();
+                        }
+                    }
                     _ => {missing.push_str(format!("channel_state: {}, eff: 0xe{:x},", i, pattern.get_x()).as_ref());}
                 }
             }
@@ -1576,6 +1830,10 @@ impl Song {
 
 
     fn output_channels(&mut self, current_buf_position: usize, buf: &mut impl BufferAdapter, ticks_to_generate: usize) {
+        if self.is_fast_forwarding {
+            return;
+        }
+
         for channel in &mut self.channels {
             if !channel.on || channel.force_off {
                 continue;
