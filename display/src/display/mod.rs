@@ -406,7 +406,7 @@ impl Display {
         };
 
         // Table Header (ABSOLUTE PARITY WITH WEB SCREENSHOT)
-        let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PITC | CHAN VOL | ENVELOPE | GLOBAL VOL | FADEOUT | PANNING |";
+        let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PITCH | CHAN VOL | ENVELOPE | GLOBAL VOL | FADEOUT | PANNING |";
         grid.print(x_start, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
         if use_two_columns {
             grid.print(x_start + 130, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
@@ -453,40 +453,40 @@ impl Display {
                 grid.print(x + 60, y, &format!(" {:3} ", channel.note), theme.col_note, row_bg);
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
                 
-                // PITCH POSITION BAR (Bipolar semitone displacement)
+                // PITCH POSITION BAR (Bipolar semitone displacement - 7 slots)
                 let semitones = channel.pitch_shift;
                 let bars = (semitones * 20.0).round() as i32; // 1 bar per 0.05 semitones
                 
                 if bars > 0 {
-                    // Positive: Clear left, Draw right
-                    grid.print(x + 67, y, "   ", theme.col_sep, row_bg); 
+                    // Positive: Clear left half + center, Draw right (Slots 4,5,6)
+                    grid.print(x + 67, y, "    ", theme.col_sep, row_bg); 
                     let val = bars.abs().min(3) as u32;
-                    Self::grid_range_with_color(grid, x + 67 + 3, y, val, 3, 3, &theme.freq_colors, row_bg);
+                    Self::grid_range_with_color(grid, x + 67 + 4, y, val, 3, 3, &theme.freq_colors, row_bg);
                 } else if bars < 0 {
-                    // Negative: Draw left, Clear right
+                    // Negative: Draw left, Clear right half + center (Slots 0,1,2)
                     let val = bars.abs().min(3) as usize;
                     Self::grid_range_with_color(grid, x + 67 + 3 - val, y, val as u32, 3, 3, &theme.freq_colors, row_bg);
-                    grid.print(x + 67 + 3, y, "   ", theme.col_sep, row_bg);
+                    grid.print(x + 67 + 3, y, "    ", theme.col_sep, row_bg); 
                 } else {
-                    // Neutral: Center indicator
-                    grid.print(x + 67, y, "  ", theme.col_sep, row_bg);
-                    grid.print(x + 67 + 2, y, "··", theme.col_sep, row_bg);
-                    grid.print(x + 67 + 4, y, "  ", theme.col_sep, row_bg);
+                    // Neutral: Center indicator (Slot 3)
+                    grid.print(x + 67, y, "   ", theme.col_sep, row_bg);
+                    grid.print(x + 67 + 3, y, "·", theme.col_sep, row_bg);
+                    grid.print(x + 67 + 4, y, "   ", theme.col_sep, row_bg);
                 }
-                grid.print(x + 73, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 74, y, "|", theme.col_sep, row_bg); // Shifted from 73
                 
-                Self::grid_range_with_color(grid, x + 74, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
-                grid.print(x + 84, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 85, y, (channel.envelope_volume as f32 / 16383.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
-                grid.print(x + 95, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 96, y, (channel.global_volume as f32 / 64.0 * 12.0).ceil() as u32, 12, 12, &theme.meter_colors, row_bg);
-                grid.print(x + 108, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 109, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
-                grid.print(x + 118, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color(grid, x + 75, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
+                grid.print(x + 85, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color(grid, x + 86, y, (channel.envelope_volume as f32 / 16383.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
+                grid.print(x + 97, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color(grid, x + 98, y, (channel.global_volume as f32 / 64.0 * 12.0).ceil() as u32, 12, 12, &theme.meter_colors, row_bg);
+                grid.print(x + 110, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color(grid, x + 111, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
+                grid.print(x + 120, y, "|", theme.col_sep, row_bg);
                 
                 // ODD WIDTH: 9 chars for perfect centering
-                Self::grid_range(grid, x + 119, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
-                grid.print(x + 128, y, "|", theme.col_sep, row_bg);
+                Self::grid_range(grid, x + 121, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
+                grid.print(x + 130, y, "|", theme.col_sep, row_bg);
             } else {
                 grid.print(x + 10, y, &" ".repeat(118), theme.col_off, row_bg);
                 grid.print(x + 32, y, "|", theme.col_sep, row_bg);
