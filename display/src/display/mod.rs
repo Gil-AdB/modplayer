@@ -453,14 +453,9 @@ impl Display {
                 grid.print(x + 60, y, &format!(" {:3} ", channel.note), theme.col_note, row_bg);
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
                 
-                let f_min = 27.5f32;
-                let f_max = 131072.0f32;
-                let f_pos = if channel.frequency > 0.0 {
-                    ((channel.frequency.max(f_min).min(f_max).ln() - f_min.ln()) / (f_max.ln() - f_min.ln()) * 6.0).ceil() as u32
-                } else {
-                    0
-                };
-                Self::grid_range_with_color(grid, x + 67, y, f_pos, 6, 6, &theme.freq_colors, row_bg); 
+                // PITCH POSITION BAR (Shows relative displacement from base note)
+                let pitch_pos = (channel.pitch_shift.abs() * 0.5).min(6.0).ceil() as u32;
+                Self::grid_range_with_color(grid, x + 67, y, pitch_pos, 6, 6, &theme.freq_colors, row_bg); 
                 grid.print(x + 73, y, "|", theme.col_sep, row_bg);
                 
                 Self::grid_range_with_color(grid, x + 74, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);

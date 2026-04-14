@@ -435,6 +435,7 @@ pub struct ChannelStatus {
     pub note:                               String,
     pub period:                             u16,
     pub final_panning:                      u8,
+    pub pitch_shift:                        f32,
     pub oscilloscope:                       Vec<f32>,
     pub instrument_name:                    String,
 }
@@ -455,6 +456,7 @@ impl Default for ChannelStatus {
             note: "".to_string(),
             period: 0,
             final_panning: 128,
+            pitch_shift: 0.0,
             oscilloscope: vec![0.0; 512],
             instrument_name: "".to_string(),
         }
@@ -910,6 +912,7 @@ impl Song {
             status.on                 = channel.on;
             status.force_off          = channel.force_off;
             status.frequency          = channel.voice.frequency;
+            status.pitch_shift        = channel.period_shift as f32 + channel.frequency_shift;
             status.instrument         = channel.voice.instrument;
             status.sample             = channel.voice.sample;
             let mut sample_position = channel.voice.sample_position;
@@ -1490,7 +1493,7 @@ impl Song {
 
             channel.panning.update_envelope_panning(envelope_panning);
             // FinalVol = (FadeOutVol/65536)*(EnvelopeVol/64)*(GlobalVol/64)*(Vol/64)*Scale;
-            // channel_state.update_frequency(self.rate);
+            channel.update_frequency(self.rate, channel.glissando, &self.frequency_tables);
 
             let global_volume = self.global_volume.volume as f32 / 64.0 ;
             channel.voice.volume.envelope_vol = envelope_volume as i32;
