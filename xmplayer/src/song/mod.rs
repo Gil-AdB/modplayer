@@ -772,7 +772,7 @@ impl Song {
             triple_buffer_writer,
             master_samples: [0.0; 8192],
             master_samples_pos: 0,
-            visual_latency: 2048,
+            visual_latency: 2432,
             tick_state: TickState {
                 state: BufferState::Start,
                 current_buf_position: 0,
@@ -955,12 +955,34 @@ impl Song {
             play_data.master_spectrum = vec![0.0; 128];
         }
 
-        let decay = if cfg!(target_arch = "wasm32") { 0.82f32 } else { 0.88f32 };
+        let decay = if cfg!(target_arch = "wasm32") { 0.88f32 } else { 0.94f32 };
+        let min_f = 20.0f32;
+        let max_f = 20000.0f32;
+        let log_min_f = min_f.ln();
+        let log_max_f = max_f.ln();
 
-        for i in 0..128 {
-            let val = fft_buffer[i].norm() / 10.0;
-            self.spectral_peaks[i] = val.max(self.spectral_peaks[i] * decay);
-            play_data.master_spectrum[i] = self.spectral_peaks[i];
+        for j in 0..128 {
+            // Logarithmic bin matching
+            let f_start = (log_min_f + (j as f32 / 128.0) * (log_max_f - log_min_f)).exp();
+            let f_end = (log_min_f + ((j + 1) as f32 / 128.0) * (log_max_f - log_min_f)).exp();
+            
+            let i_start = (f_start * 1024.0 / self.rate).floor() as usize;
+            let i_end = (f_end * 1024.0 / self.rate).ceil() as usize;
+            
+            let mut max_mag = 0.0f32;
+            if i_start == i_end || i_start + 1 == i_end {
+                let i = i_start.clamp(1, 511);
+                max_mag = fft_buffer[i].norm() / 10.0;
+            } else {
+                for i in i_start..i_end {
+                    let i_clamped = i.clamp(1, 511);
+                    let mag = fft_buffer[i_clamped].norm() / 10.0;
+                    if mag > max_mag { max_mag = mag; }
+                }
+            }
+
+            self.spectral_peaks[j] = max_mag.max(self.spectral_peaks[j] * decay);
+            play_data.master_spectrum[j] = self.spectral_peaks[j];
         }
 
         play_data.display_fps = self.fps;

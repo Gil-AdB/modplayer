@@ -573,17 +573,17 @@ impl Display {
         for &v in spectrum.iter() {
             if v > max_val { max_val = v; }
         }
-        let gain = (1.5 / max_val).min(5.0); // Normalization gain
-
+        let gain = (2.0 / max_val).min(10.0); // Increased max gain for better visibility
+        
         let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-        let bar_height = height.saturating_sub(1); // Reserve bottom row for labels
+        let bar_height = height.saturating_sub(1); 
 
         for i in 0..width {
             let sample_idx = (i * spectrum.len()) / width;
-            let val = spectrum[sample_idx] * gain;
+            let val = spectrum[sample_idx.min(spectrum.len() - 1)] * gain;
             
-            // 2. Logarithmic-like scaling for better dynamic range perception
-            let log_val = (val * 8.0).ln_1p() / (8.0f32).ln_1p();
+            // Smoother scaling: emphasize higher magnitudes slightly more
+            let log_val = (val * 4.0).ln_1p() / (4.0f32).ln_1p();
             let h_filled = (log_val * (bar_height as f32 * 8.0)).round() as u32;
 
             for h in 0..bar_height {
