@@ -955,7 +955,7 @@ impl Song {
             play_data.master_spectrum = vec![0.0; 128];
         }
 
-        let decay = if cfg!(target_arch = "wasm32") { 0.88f32 } else { 0.94f32 };
+        let decay = if cfg!(target_arch = "wasm32") { 0.88f32 } else { 0.92f32 };
         let min_f = 20.0f32;
         let max_f = 20000.0f32;
         let log_min_f = min_f.ln();
