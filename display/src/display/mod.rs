@@ -38,8 +38,8 @@ pub struct ViewPort {
 }
 
 pub struct Theme {
-    pub meter_colors: [RGB; 12],
-    pub freq_colors: [RGB; 12],
+    pub meter_colors: [RGB; 24],
+    pub freq_colors: [RGB; 24],
     pub header_bg: RGB,
     pub header_fg: RGB,
     pub accent_fg: RGB,
@@ -155,16 +155,24 @@ impl Display {
             1 => { // Cyberpunk / Vibrant (SYNCHRONIZED WITH WEB)
                 Theme {
                     meter_colors: [
-                        RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 },
-                        RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 },
-                        RGB { r: 90, g: 92, b: 255 }, RGB { r: 66, g: 122, b: 255 }, RGB { r: 33, g: 152, b: 255 },
-                        RGB { r: 0, g: 182, b: 254 }, RGB { r: 0, g: 212, b: 254 }, RGB { r: 0, g: 242, b: 254 },
+                        RGB { r: 123, g: 39, b: 255 }, RGB { r: 110, g: 45, b: 255 }, RGB { r: 97, g: 51, b: 255 },
+                        RGB { r: 84, g: 57, b: 255 }, RGB { r: 71, g: 63, b: 255 }, RGB { r: 58, g: 69, b: 255 },
+                        RGB { r: 45, g: 75, b: 255 }, RGB { r: 33, g: 81, b: 255 }, RGB { r: 20, g: 87, b: 255 },
+                        RGB { r: 0, g: 100, b: 254 }, RGB { r: 0, g: 121, b: 254 }, RGB { r: 0, g: 142, b: 254 },
+                        RGB { r: 0, g: 163, b: 254 }, RGB { r: 0, g: 184, b: 254 }, RGB { r: 0, g: 205, b: 254 },
+                        RGB { r: 0, g: 226, b: 254 }, RGB { r: 0, g: 235, b: 254 }, RGB { r: 0, g: 242, b: 254 },
+                        RGB { r: 50, g: 245, b: 254 }, RGB { r: 100, g: 248, b: 254 }, RGB { r: 150, g: 251, b: 254 },
+                        RGB { r: 200, g: 253, b: 254 }, RGB { r: 230, g: 254, b: 254 }, RGB { r: 255, g: 255, b: 255 },
                     ],
                     freq_colors: [
-                        RGB { r: 0, g: 50, b: 150 }, RGB { r: 0, g: 70, b: 170 }, RGB { r: 0, g: 90, b: 190 },
-                        RGB { r: 0, g: 110, b: 210 }, RGB { r: 0, g: 130, b: 230 }, RGB { r: 0, g: 150, b: 250 },
-                        RGB { r: 0, g: 170, b: 254 }, RGB { r: 0, g: 190, b: 254 }, RGB { r: 0, g: 210, b: 254 },
-                        RGB { r: 0, g: 230, b: 254 }, RGB { r: 50, g: 242, b: 254 }, RGB { r: 100, g: 242, b: 254 },
+                        RGB { r: 0, g: 50, b: 150 }, RGB { r: 0, g: 60, b: 160 }, RGB { r: 0, g: 70, b: 170 },
+                        RGB { r: 0, g: 80, b: 180 }, RGB { r: 0, g: 90, b: 190 }, RGB { r: 0, g: 100, b: 200 },
+                        RGB { r: 0, g: 110, b: 210 }, RGB { r: 0, g: 120, b: 220 }, RGB { r: 0, g: 130, b: 230 },
+                        RGB { r: 0, g: 140, b: 240 }, RGB { r: 0, g: 150, b: 250 }, RGB { r: 0, g: 160, b: 254 },
+                        RGB { r: 0, g: 170, b: 254 }, RGB { r: 0, g: 180, b: 254 }, RGB { r: 0, g: 190, b: 254 },
+                        RGB { r: 0, g: 200, b: 254 }, RGB { r: 0, g: 210, b: 254 }, RGB { r: 0, g: 220, b: 254 },
+                        RGB { r: 0, g: 230, b: 254 }, RGB { r: 30, g: 235, b: 254 }, RGB { r: 60, g: 240, b: 254 },
+                        RGB { r: 90, g: 242, b: 254 }, RGB { r: 150, g: 248, b: 254 }, RGB { r: 200, g: 255, b: 255 },
                     ],
                     header_bg: RGB { r: 15, g: 16, b: 45 },
                     header_fg: RGB { r: 0, g: 242, b: 254 },
@@ -191,16 +199,24 @@ impl Display {
             2 => { // Obsidian / Monokai optimized
                 Theme {
                     meter_colors: [
-                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 },
-                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 174, g: 129, b: 255 }, RGB { r: 174, g: 129, b: 255 },
-                        RGB { r: 249, g: 38, b: 114 }, RGB { r: 249, g: 38, b: 114 }, RGB { r: 253, g: 151, b: 31 },
-                        RGB { r: 253, g: 151, b: 31 }, RGB { r: 166, g: 226, b: 46 }, RGB { r: 166, g: 226, b: 46 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 122, g: 227, b: 239 }, RGB { r: 142, g: 237, b: 239 },
+                        RGB { r: 166, g: 226, b: 46 }, RGB { r: 186, g: 236, b: 46 }, RGB { r: 206, g: 246, b: 46 },
+                        RGB { r: 230, g: 255, b: 46 }, RGB { r: 253, g: 241, b: 31 }, RGB { r: 253, g: 201, b: 31 },
+                        RGB { r: 253, g: 151, b: 31 }, RGB { r: 253, g: 121, b: 31 }, RGB { r: 253, g: 91, b: 31 },
+                        RGB { r: 249, g: 38, b: 114 }, RGB { r: 249, g: 68, b: 114 }, RGB { r: 249, g: 98, b: 114 },
+                        RGB { r: 174, g: 129, b: 255 }, RGB { r: 184, g: 149, b: 255 }, RGB { r: 194, g: 169, b: 255 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 142, g: 237, b: 239 }, RGB { r: 182, g: 255, b: 239 },
+                        RGB { r: 222, g: 255, b: 239 }, RGB { r: 242, g: 255, b: 255 }, RGB { r: 255, g: 255, b: 255 },
                     ],
                     freq_colors: [
-                        RGB { r: 174, g: 129, b: 255 }, RGB { r: 174, g: 129, b: 255 }, RGB { r: 154, g: 149, b: 255 },
-                        RGB { r: 134, g: 169, b: 255 }, RGB { r: 114, g: 189, b: 255 }, RGB { r: 102, g: 217, b: 239 },
-                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 122, g: 237, b: 239 },
-                        RGB { r: 142, g: 255, b: 239 }, RGB { r: 162, g: 255, b: 239 }, RGB { r: 182, g: 255, b: 239 },
+                        RGB { r: 174, g: 129, b: 255 }, RGB { r: 164, g: 139, b: 255 }, RGB { r: 154, g: 149, b: 255 },
+                        RGB { r: 144, g: 159, b: 255 }, RGB { r: 134, g: 169, b: 255 }, RGB { r: 124, g: 179, b: 255 },
+                        RGB { r: 114, g: 189, b: 255 }, RGB { r: 108, g: 203, b: 247 }, RGB { r: 102, g: 217, b: 239 },
+                        RGB { r: 112, g: 227, b: 239 }, RGB { r: 122, g: 237, b: 239 }, RGB { r: 132, g: 247, b: 239 },
+                        RGB { r: 142, g: 255, b: 239 }, RGB { r: 152, g: 255, b: 239 }, RGB { r: 162, g: 255, b: 239 },
+                        RGB { r: 172, g: 255, b: 239 }, RGB { r: 182, g: 255, b: 239 }, RGB { r: 192, g: 255, b: 239 },
+                        RGB { r: 202, g: 255, b: 239 }, RGB { r: 212, g: 255, b: 239 }, RGB { r: 222, g: 255, b: 245 },
+                        RGB { r: 232, g: 255, b: 250 }, RGB { r: 242, g: 255, b: 255 }, RGB { r: 255, g: 255, b: 255 },
                     ],
                     header_bg: RGB { r: 35, g: 35, b: 35 },
                     header_fg: RGB { r: 249, g: 38, b: 114 },
@@ -226,12 +242,25 @@ impl Display {
             },
             3 => { // Mono / Amber
                 Theme {
-                    meter_colors: [RGB { r: 255, g: 140, b: 0 }; 12],
+                    meter_colors: [
+                        RGB { r: 100, g: 40, b: 0 }, RGB { r: 110, g: 45, b: 0 }, RGB { r: 120, g: 50, b: 0 },
+                        RGB { r: 130, g: 55, b: 0 }, RGB { r: 140, g: 60, b: 0 }, RGB { r: 150, g: 65, b: 0 },
+                        RGB { r: 160, g: 70, b: 0 }, RGB { r: 170, g: 75, b: 0 }, RGB { r: 180, g: 80, b: 0 },
+                        RGB { r: 190, g: 85, b: 0 }, RGB { r: 200, g: 90, b: 0 }, RGB { r: 210, g: 95, b: 0 },
+                        RGB { r: 220, g: 100, b: 0 }, RGB { r: 230, g: 105, b: 0 }, RGB { r: 240, g: 110, b: 0 },
+                        RGB { r: 250, g: 115, b: 0 }, RGB { r: 255, g: 125, b: 0 }, RGB { r: 255, g: 135, b: 0 },
+                        RGB { r: 255, g: 145, b: 0 }, RGB { r: 255, g: 160, b: 0 }, RGB { r: 255, g: 180, b: 0 },
+                        RGB { r: 255, g: 200, b: 0 }, RGB { r: 255, g: 220, b: 0 }, RGB { r: 255, g: 245, b: 100 },
+                    ],
                     freq_colors: [
-                        RGB { r: 100, g: 40, b: 0 }, RGB { r: 130, g: 50, b: 0 }, RGB { r: 160, g: 60, b: 0 },
-                        RGB { r: 190, g: 80, b: 0 }, RGB { r: 220, g: 100, b: 0 }, RGB { r: 255, g: 120, b: 0 },
-                        RGB { r: 255, g: 140, b: 0 }, RGB { r: 255, g: 160, b: 0 }, RGB { r: 255, g: 180, b: 0 },
-                        RGB { r: 255, g: 200, b: 0 }, RGB { r: 255, g: 220, b: 0 }, RGB { r: 255, g: 240, b: 0 },
+                        RGB { r: 50, g: 20, b: 0 }, RGB { r: 60, g: 25, b: 0 }, RGB { r: 70, g: 30, b: 0 },
+                        RGB { r: 80, g: 35, b: 0 }, RGB { r: 90, g: 40, b: 0 }, RGB { r: 100, g: 45, b: 0 },
+                        RGB { r: 110, g: 50, b: 0 }, RGB { r: 120, g: 55, b: 0 }, RGB { r: 130, g: 60, b: 0 },
+                        RGB { r: 140, g: 65, b: 0 }, RGB { r: 150, g: 70, b: 0 }, RGB { r: 160, g: 75, b: 0 },
+                        RGB { r: 170, g: 80, b: 0 }, RGB { r: 180, g: 85, b: 0 }, RGB { r: 190, g: 90, b: 0 },
+                        RGB { r: 200, g: 95, b: 0 }, RGB { r: 210, g: 100, b: 0 }, RGB { r: 225, g: 110, b: 0 },
+                        RGB { r: 240, g: 120, b: 0 }, RGB { r: 255, g: 140, b: 0 }, RGB { r: 255, g: 160, b: 0 },
+                        RGB { r: 255, g: 190, b: 0 }, RGB { r: 255, g: 220, b: 0 }, RGB { r: 255, g: 255, b: 150 },
                     ],
                     header_bg: RGB { r: 30, g: 10, b: 0 },
                     header_fg: RGB { r: 255, g: 140, b: 0 },
@@ -258,16 +287,24 @@ impl Display {
             _ => { // Default Pro
                 Theme {
                     meter_colors: [
-                        RGB { r: 0, g: 180, b: 0 }, RGB { r: 0, g: 210, b: 0 }, RGB { r: 0, g: 240, b: 0 },
-                        RGB { r: 180, g: 180, b: 0 }, RGB { r: 210, g: 210, b: 0 }, RGB { r: 240, g: 240, b: 0 },
-                        RGB { r: 240, g: 120, b: 0 }, RGB { r: 240, g: 60, b: 0 }, RGB { r: 255, g: 0, b: 0 },
-                        RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                        RGB { r: 0, g: 100, b: 0 }, RGB { r: 0, g: 120, b: 0 }, RGB { r: 0, g: 140, b: 0 },
+                        RGB { r: 0, g: 160, b: 0 }, RGB { r: 0, g: 180, b: 0 }, RGB { r: 0, g: 200, b: 0 },
+                        RGB { r: 0, g: 220, b: 0 }, RGB { r: 0, g: 240, b: 0 }, RGB { r: 100, g: 240, b: 0 },
+                        RGB { r: 140, g: 240, b: 0 }, RGB { r: 180, g: 240, b: 0 }, RGB { r: 220, g: 240, b: 0 },
+                        RGB { r: 240, g: 240, b: 0 }, RGB { r: 240, g: 200, b: 0 }, RGB { r: 240, g: 160, b: 0 },
+                        RGB { r: 240, g: 120, b: 0 }, RGB { r: 240, g: 80, b: 0 }, RGB { r: 240, g: 40, b: 0 },
+                        RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 30, b: 30 }, RGB { r: 255, g: 70, b: 70 },
+                        RGB { r: 255, g: 120, b: 120 }, RGB { r: 255, g: 180, b: 180 }, RGB { r: 255, g: 255, b: 255 },
                     ],
                     freq_colors: [
-                        RGB { r: 0, g: 0, b: 200 }, RGB { r: 0, g: 50, b: 220 }, RGB { r: 0, g: 100, b: 240 },
-                        RGB { r: 0, g: 150, b: 255 }, RGB { r: 0, g: 200, b: 255 }, RGB { r: 0, g: 255, b: 255 },
-                        RGB { r: 50, g: 255, b: 255 }, RGB { r: 100, g: 255, b: 255 }, RGB { r: 150, g: 255, b: 255 },
-                        RGB { r: 200, g: 255, b: 255 }, RGB { r: 230, g: 255, b: 255 }, RGB { r: 255, g: 255, b: 255 },
+                        RGB { r: 0, g: 0, b: 150 }, RGB { r: 0, g: 30, b: 180 }, RGB { r: 0, g: 60, b: 210 },
+                        RGB { r: 0, g: 90, b: 240 }, RGB { r: 0, g: 120, b: 255 }, RGB { r: 0, g: 150, b: 255 },
+                        RGB { r: 0, g: 180, b: 255 }, RGB { r: 0, g: 210, b: 255 }, RGB { r: 0, g: 240, b: 255 },
+                        RGB { r: 30, g: 245, b: 255 }, RGB { r: 60, g: 250, b: 255 }, RGB { r: 90, g: 255, b: 255 },
+                        RGB { r: 120, g: 255, b: 255 }, RGB { r: 150, g: 255, b: 255 }, RGB { r: 180, g: 255, b: 255 },
+                        RGB { r: 210, g: 255, b: 255 }, RGB { r: 230, g: 255, b: 255 }, RGB { r: 255, g: 255, b: 255 },
+                        RGB { r: 255, g: 230, b: 230 }, RGB { r: 255, g: 200, b: 200 }, RGB { r: 255, g: 150, b: 150 },
+                        RGB { r: 255, g: 100, b: 100 }, RGB { r: 255, g: 50, b: 50 }, RGB { r: 255, g: 0, b: 0 },
                     ],
                     header_bg: RGB { r: 0, g: 0, b: 128 },
                     header_fg: RGB { r: 255, g: 255, b: 255 },
@@ -668,8 +705,8 @@ impl Display {
                 if cell_y >= grid.height { continue; }
                 
                 let dot_patterns = [0x01, 0x02, 0x04, 0x40];
-                let color_idx = (y_dot * 12) / vertical_dots;
-                grid.merge_braille_cell(cell_x, cell_y, dot_patterns[dot_in_char], theme.meter_colors[color_idx % 12], theme.pat_row_bg);
+                let color_idx = (y_dot * 24) / vertical_dots;
+                grid.merge_braille_cell(cell_x, cell_y, dot_patterns[dot_in_char], theme.meter_colors[color_idx % 24], theme.pat_row_bg);
             }
             prev_dot_y = Some(dot_y);
         }
@@ -696,13 +733,14 @@ impl Display {
         }
     }
 
-    fn grid_range_with_color(grid: &mut Grid, x: usize, y: usize, pos: u32, end: u32, width: usize, colors: &[RGB; 12], bg: RGB) {
-        if width == 0 { return; }
-        let indicator_pos = if end == 0 { 0 } else { ((pos as f32 / end as f32) * (width as f32)).round() as usize }.min(width);
+    fn grid_range_with_color(grid: &mut Grid, x: usize, y: usize, pos: u32, _end: u32, width: usize, colors: &[RGB; 24], bg: RGB) {
+        let blocks = [' ', '░', '▒', '▓', '█'];
+        let filled_dots = (pos as f32 / width as f32 * (width as f32 * 4.0)).round() as usize;
+
         for i in 0..width {
-            let c = if i == indicator_pos.min(width - 1) && pos > 0 { '=' } else if i < indicator_pos { '=' } else { ' ' };
+            let dot_in_char = filled_dots.saturating_sub(i * 4).min(4);
             let color_idx = (i * colors.len()) / width;
-            grid.set_cell(x + i, y, c, colors[color_idx.min(colors.len() - 1)], bg);
+            grid.set_cell(x + i, y, blocks[dot_in_char], colors[color_idx.min(colors.len() - 1)], bg);
         }
     }
 
