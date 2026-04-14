@@ -83,7 +83,7 @@ let channelCount = 0;
 let filesList = [];
 let filesListPosition = 0;
 let viewMode = 0; // 0: Pattern, 1: Instruments, 2: Message, 3: Help
-let themeMode = 2; // 0: Pro, 1: Vibrant, 2: Obsidian, 3: Mono
+let themeMode = 4; // 0: Pro, 1: Vibrant, 2: Obsidian, 3: Mono, 4: Studio Slate
 let visualMode = 1; // 0: Both(S), 1: Both(A), 2: Scope(S), 3: Scope(A), 4: FFT, 5: Off
 let scopeMode = 'multi'; // 'global' or 'multi'
 let _initPlayerPromise = null;
@@ -470,7 +470,7 @@ window.addEventListener('wheel', (e) => {
 }, { passive: true });
 
 function cycleTheme() {
-    themeMode = (themeMode + 1) % 4;
+    themeMode = (themeMode + 1) % 5;
 }
 
 function cycleVisuals() {
@@ -523,7 +523,8 @@ function drawOscilloscope(song) {
         ['#00ff00', '#ffff00', '#ff0000'], // 0: Pro
         ['#7b27ff', '#00f2fe'],            // 1: Cyberpunk
         ['#66d9ef', '#ae81ff', '#f92672', '#fd971f', '#a6e22e'], // 2: Obsidian (Monokai-ish)
-        ['#ff8c00', '#404040']             // 3: Monochrome
+        ['#ff8c00', '#404040'],            // 3: Monochrome
+        ['#7AA2F7', '#9ECE6A', '#E0AF68', '#F7768E'] // 4: Studio Slate
     ];
     const theme = colors[themeMode] || colors[0];
     const grad = oscCtx.createLinearGradient(0, height, 0, 0); 
@@ -582,7 +583,13 @@ function drawMultiOscilloscope(song) {
     const cellW = width / cols;
     const cellH = height / rows;
     
-    const colors = [['#00ff00', '#ffff00', '#ff0000'], ['#00f2fe', '#7b27ff'], ['#ffff00', '#ff00ff'], ['#ff8c00', '#404040']];
+    const colors = [
+        ['#00ff00', '#ffff00', '#ff0000'], 
+        ['#00f2fe', '#7b27ff'], 
+        ['#ffff00', '#ff00ff'], 
+        ['#ff8c00', '#404040'],
+        ['#7AA2F7', '#9ECE6A', '#E0AF68', '#F7768E']
+    ];
     const theme = colors[themeMode] || colors[0];
     oscCtx.lineWidth = 1;
     oscCtx.font = '8px Share Tech Mono';
@@ -638,7 +645,7 @@ function drawSpectrum() {
         ['#00f2fe', '#7b27ff'], 
         ['#ffff00', '#ff00ff'], 
         ['#ff8c00', '#404040'],
-         
+        ['#7AA2F7', '#9ECE6A', '#E0AF68', '#F7768E']
     ];
     const theme = colors[themeMode] || colors[0];
     
