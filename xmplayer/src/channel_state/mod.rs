@@ -1,4 +1,4 @@
-use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState};
+use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState, WaveControl};
 use crate::instrument::Instruments;
 use crate::tables::AudioTables;
 use crate::module_reader::is_note_valid;
@@ -178,10 +178,9 @@ impl ChannelState {
     }
 
     pub(crate) fn update_frequency(&mut self, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
-        // self.frequency = self.note.frequency(self.period_shift) + self.frequency_shift;
-        // self.frequency = self.note.frequency(self.period_shift, semitone, use_amiga) + self.frequency_shift;
-        // self.du = self.frequency / rate;
-        self.voice.set_frequency(self.note.frequency(self.period_shift, semitone, frequency_tables) + self.frequency_shift, rate)
+        let vibrato_shift = self.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_control));
+        let total_period_shift = self.period_shift + vibrato_shift as i16;
+        self.voice.set_frequency(self.note.frequency(total_period_shift, semitone, frequency_tables) + self.frequency_shift, rate)
     }
 
     pub(crate) fn reset_envelopes(&mut self, instruments: &Instruments) {
