@@ -154,6 +154,8 @@ use crate::pattern::Pattern;
                 panning,
                 relative_note,
                 name,
+                is_ping_pong: false,
+                original_loop_end: 0,
                 data: vec![],
             })
         }

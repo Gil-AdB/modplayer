@@ -60,7 +60,7 @@ pub struct SongState {
     pub(crate) tx:                   Sender<PlaybackCmd>,
     pub(crate) rx:                   Arc<Mutex<Receiver<PlaybackCmd>>>,
     pub(crate) q:                    AudioProducer,
-    pub(crate) display_cb:           Mutex<Option<fn (&PlayData, &Vec<Instrument>)>>,
+    pub(crate) display_cb:           Mutex<Option<fn (&PlayData, &Vec<Instrument>, &Vec<crate::module_reader::Patterns>, &Vec<u8>)>>,
 }
 
 impl SongState {
@@ -68,7 +68,7 @@ impl SongState {
     pub fn new(path: &str) -> SimpleResult<(SongHandle, AudioConsumer)> {
         let song_data = read_module(path)?;
 
-        let triple_buffer = TripleBuffer::<PlayData>::new();
+        let triple_buffer = TripleBuffer::<PlayData>::new_with_signal();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
         let song = Arc::new(Mutex::new(Song::new(&song_data, triple_buffer_writer, 48000.0)));
         let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
@@ -97,11 +97,20 @@ impl SongState {
     fn callback(&self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();
-        while let Some(mut buf) = self.q.acquire_buffer() {
-            let mut adaptar = InterleavedBufferAdaptar{buf: &mut *buf};
-            if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { break; }
+        loop {
+            if !song.handle_commands(rx.deref_mut()) { break; }
+            if self.is_stopped() { break; }
+
+            if let Some(mut buf) = self.q.try_acquire_buffer() {
+                let mut adaptar = InterleavedBufferAdaptar{buf: &mut *buf};
+                if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) { break; }
+            } else {
+                // If we couldn't acquire a buffer, sleep a bit to avoid busy waiting
+                sleep(Duration::from_millis(10));
+            }
         }
         self.stopped.store(true, Ordering::Release);
+        self.triple_buffer_reader.signal();
         self.q.stop();
     }
 
@@ -124,7 +133,7 @@ impl SongState {
 
 
 impl SongHandle {
-    pub fn start(&self, display_cb: fn (&PlayData, &Vec<Instrument>)) -> (Option<JoinHandle<()>>, Option<JoinHandle<()>>) {
+    pub fn start(&self, display_cb: fn (&PlayData, &Vec<Instrument>, &Vec<crate::module_reader::Patterns>, &Vec<u8>)) -> (Option<JoinHandle<()>>, Option<JoinHandle<()>>) {
         {
             let mut cb = self.display_cb.lock().unwrap();
             *cb = Option::from(display_cb);
@@ -136,22 +145,16 @@ impl SongHandle {
         let s2 = self.clone();
         let display_thread = Option::from(spawn(move || {
             let s = &s2;
-            let mut song_row = 0;
-            let mut song_tick = 2000;
             loop {
                 if s.is_stopped() {
                     break;
                 }
-                sleep(Duration::from_millis(30));
+                s.triple_buffer_reader.wait();
                 let (play_data, state) = s.triple_buffer_reader.get_read_buffer();
                 if StateNoChange == state { continue; }
-                if play_data.tick != song_tick || play_data.row != song_row {
-                    let cb_guard = s.display_cb.lock().unwrap();
-                    if let Some(cb) = *cb_guard {
-                        (cb)(play_data, &s.song_data.instruments);
-                    }
-                    song_row = play_data.row;
-                    song_tick = play_data.tick;
+                let cb_guard = s.display_cb.lock().unwrap();
+                if let Some(cb) = *cb_guard {
+                    (cb)(play_data, &s.song_data.instruments, &s.song_data.patterns, &s.song_data.pattern_order);
                 }
             }
         }));
@@ -177,12 +180,14 @@ impl SongState {
 
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
+        self.triple_buffer_reader.signal();
     }
 
     pub fn close(&self) {
         self.stopped.store(true, Ordering::Release);
         let _ = self.tx.send(Quit);
         self.q.stop();
+        self.triple_buffer_reader.signal();
         // if handle.0.is_some() {
         //     handle.0.unwrap().join().unwrap();
         // }
@@ -263,7 +268,7 @@ mod tests {
         // but for now, we just test the StructHolder drop logic with SongState.
         let counter = Arc::new(AtomicUsize::new(0));
         
-        let triple_buffer = TripleBuffer::<PlayData>::new();
+        let triple_buffer = TripleBuffer::<PlayData>::new_with_signal();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
         let song_data = SongData::default();
         let song = Arc::new(Mutex::new(Song::new(&song_data, triple_buffer_writer, 48000.0)));

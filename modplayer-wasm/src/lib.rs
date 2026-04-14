@@ -1,7 +1,5 @@
-#[macro_use]
 mod console;
 mod leak;
-mod display;
 
 use std::cmp::max;
 use wasm_bindgen::prelude::*;
@@ -14,8 +12,7 @@ use std::sync::Mutex;
 
 use std::ffi::c_void;
 use xmplayer::instrument::Instrument;
-use display::Display;
-use display::ViewPort;
+use display::{Display, ViewPort, display::TargetPlatform};
 use xmplayer::module_reader::{open_module, Patterns};
 use shared_sync_primitives::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
@@ -114,7 +111,7 @@ pub struct SongJs {
 }
 
 use js_sys::{Array, JsString};
-use crate::display::RGB;
+use display::RGB;
 
 #[wasm_bindgen(module = "/export.js")]
 extern "C" {
@@ -168,12 +165,12 @@ impl SongJs {
             height: 50
         };
 
-        let screen = Display::display(play_data, &self.instruments, &self.patterns, &self.order, view_port, view_mode, theme_id, self.scroll_offset, self.panning_display_mode);
+        let grid = Display::render(play_data, &self.instruments, &self.patterns, &self.order, view_port.width, view_port.height, view_mode, theme_id, self.scroll_offset_x, self.scroll_offset, self.panning_display_mode, TargetPlatform::WASM);
         
         self.song_row = play_data.row;
         self.song_tick = play_data.tick;
         
-        js_sys::Uint8Array::from(&screen.to_binary()[..])
+        js_sys::Uint8Array::from(&grid.to_binary()[..])
     }
 
     pub fn scroll(&mut self, delta: isize) {
@@ -253,6 +250,19 @@ impl SongJs {
                 }
                 " " => {
                     let _ = tx.send(PlaybackCmd::PauseToggle);
+                }
+                "F1" => { let _ = tx.send(PlaybackCmd::SetViewMode(0)); }
+                "F2" => { let _ = tx.send(PlaybackCmd::SetViewMode(1)); }
+                "F3" => { let _ = tx.send(PlaybackCmd::SetViewMode(2)); }
+                "F4" => { let _ = tx.send(PlaybackCmd::SetViewMode(3)); }
+                "T" => {
+                    let _ = tx.send(PlaybackCmd::CycleTheme);
+                }
+                "S" => {
+                    let _ = tx.send(PlaybackCmd::ToggleScopes);
+                }
+                "v" => {
+                    let _ = tx.send(PlaybackCmd::ToggleVisualizerMode);
                 }
                 "n" => {
                     let _ = tx.send(PlaybackCmd::Next);
