@@ -733,14 +733,13 @@ impl Display {
         }
     }
 
-    fn grid_range_with_color(grid: &mut Grid, x: usize, y: usize, pos: u32, _end: u32, width: usize, colors: &[RGB; 24], bg: RGB) {
-        let blocks = [' ', '░', '▒', '▓', '█'];
-        let filled_dots = (pos as f32 / width as f32 * (width as f32 * 4.0)).round() as usize;
-
+    fn grid_range_with_color(grid: &mut Grid, x: usize, y: usize, pos: u32, end: u32, width: usize, colors: &[RGB; 24], bg: RGB) {
+        if width == 0 { return; }
+        let indicator_pos = if end == 0 { 0 } else { ((pos as f32 / end as f32) * (width as f32)).round() as usize }.min(width);
         for i in 0..width {
-            let dot_in_char = filled_dots.saturating_sub(i * 4).min(4);
+            let c = if i == indicator_pos.min(width - 1) && pos > 0 { '=' } else if i < indicator_pos { '=' } else { ' ' };
             let color_idx = (i * colors.len()) / width;
-            grid.set_cell(x + i, y, blocks[dot_in_char], colors[color_idx.min(colors.len() - 1)], bg);
+            grid.set_cell(x + i, y, c, colors[color_idx.min(colors.len() - 1)], bg);
         }
     }
 
