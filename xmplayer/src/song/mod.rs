@@ -693,7 +693,7 @@ pub struct Song {
     pub last_fps_time:          Instant,
     fft_planner:                FftPlanner<f32>,
     pub spectral_peaks:         Vec<f32>,
-    pub hanning_window:         Vec<f32>,
+    pub hann_window:              Vec<f32>,
     pub cached_fft:             Option<Arc<dyn Fft<f32>>>,
     pub bin_map:                Vec<(usize, usize)>,
 }
@@ -807,7 +807,7 @@ impl Song {
             last_display_update_sample: 0,
             fft_planner: FftPlanner::new(),
             spectral_peaks: vec![0.0; 128],
-            hanning_window: (0..2048).map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / 2047.0).cos())).collect(),
+            hann_window: (0..2048).map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / 2047.0).cos())).collect(),
             cached_fft: None,
             bin_map: vec![],
         };
@@ -989,7 +989,7 @@ impl Song {
         let base_offset = (start_offset as isize - 512).rem_euclid(history_len as isize) as usize;
         for i in 0..2048 {
             let idx = (base_offset + i) % history_len; 
-            fft_input_buffer[i] = self.master_samples[idx] * self.hanning_window[i];
+            fft_input_buffer[i] = self.master_samples[idx] * self.hann_window[i];
 
         }
         
