@@ -992,21 +992,20 @@ impl Song {
             if i_start == i_end || i_start + 1 == i_end {
                 // HIGH-RESOLUTION SUB-BIN PIXEL INTERPOLATION
                 // This ensures that the low-end (20-200Hz) doesn't look like a single block.
-                let i = i_start.clamp(1, 1022);
-                let bin_low = fft_buffer[i].norm() / 20.0;
-                let bin_high = fft_buffer[i + 1].norm() / 20.0;
-                
-                // We fake a sub-bin position based on the band index relative to its bin boundaries
-                // This creates a smooth gradient across multiple bars sharing the same bin.
-                // Re-calculating center frequency for this band to find interpolation factor
                 let min_f = 20.0f32;
-                let max_f = 22050.0f32;
+                let max_f = 20000.0f32; // Synchronized with recalculate_bin_map
                 let log_min_f = min_f.ln();
                 let log_max_f = max_f.ln();
                 let f_center = (log_min_f + ((j as f32 + 0.5) / 128.0) * (log_max_f - log_min_f)).exp();
                 let exact_bin = f_center * 2048.0 / self.rate;
+                
+                // Better interpolation: ensure we are interpolating around the exact center
+                let i_floor = exact_bin.floor() as usize;
+                let i = i_floor.clamp(1, 1022);
                 let t = exact_bin - i as f32;
                 
+                let bin_low = fft_buffer[i].norm() / 20.0;
+                let bin_high = fft_buffer[i + 1].norm() / 20.0;
                 max_mag = bin_low * (1.0 - t.clamp(0.0, 1.0)) + bin_high * t.clamp(0.0, 1.0);
             } else {
                 for i in i_start..i_end {
