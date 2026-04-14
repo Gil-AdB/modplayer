@@ -453,9 +453,26 @@ impl Display {
                 grid.print(x + 60, y, &format!(" {:3} ", channel.note), theme.col_note, row_bg);
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
                 
-                // PITCH POSITION BAR (Shows semitone displacement from base note)
-                let pitch_pos = (channel.pitch_shift * 10.0).min(6.0).ceil() as u32;
-                Self::grid_range_with_color(grid, x + 67, y, pitch_pos, 6, 6, &theme.freq_colors, row_bg); 
+                // PITCH POSITION BAR (Bipolar semitone displacement)
+                let semitones = channel.pitch_shift;
+                let bars = (semitones * 20.0).round() as i32; // 1 bar per 0.05 semitones
+                
+                if bars > 0 {
+                    // Positive: Clear left, Draw right
+                    grid.print(x + 67, y, "   ", theme.col_sep, row_bg); 
+                    let val = bars.abs().min(3) as u32;
+                    Self::grid_range_with_color(grid, x + 67 + 3, y, val, 3, 3, &theme.freq_colors, row_bg);
+                } else if bars < 0 {
+                    // Negative: Draw left, Clear right
+                    let val = bars.abs().min(3) as usize;
+                    Self::grid_range_with_color(grid, x + 67 + 3 - val, y, val as u32, 3, 3, &theme.freq_colors, row_bg);
+                    grid.print(x + 67 + 3, y, "   ", theme.col_sep, row_bg);
+                } else {
+                    // Neutral: Center indicator
+                    grid.print(x + 67, y, "  ", theme.col_sep, row_bg);
+                    grid.print(x + 67 + 2, y, "··", theme.col_sep, row_bg);
+                    grid.print(x + 67 + 4, y, "  ", theme.col_sep, row_bg);
+                }
                 grid.print(x + 73, y, "|", theme.col_sep, row_bg);
                 
                 Self::grid_range_with_color(grid, x + 74, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);

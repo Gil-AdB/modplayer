@@ -913,7 +913,7 @@ impl Song {
             status.force_off          = channel.force_off;
             status.frequency          = channel.voice.frequency;
             if channel.frequency > 0.0 && channel.voice.frequency > 0.0 {
-                status.pitch_shift = (channel.voice.frequency / channel.frequency).log2().abs() * 12.0;
+                status.pitch_shift = (channel.voice.frequency / channel.frequency).log2() * 12.0;
             } else {
                 status.pitch_shift = 0.0;
             }
