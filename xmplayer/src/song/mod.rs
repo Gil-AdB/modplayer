@@ -1,6 +1,7 @@
 use std::cmp::min;
 use rustfft::{FftPlanner, Fft, num_complex::Complex};
 use std::sync::Arc;
+
 use serde::Serialize;
 use std::sync::mpsc::Receiver;
 #[cfg(not(target_arch = "wasm32"))]
@@ -263,6 +264,7 @@ fn cubic_simd(p0: [f32; 4], p1: [f32; 4], p2: [f32; 4], p3: [f32; 4], t: [f32; 4
     }
 }
 
+
 struct BPM {
     pub bpm:                    u32,
     tick_duration_in_ms:        f32,
@@ -461,6 +463,7 @@ impl Default for ChannelStatus {
             final_panning: 128,
             pitch_shift: 0.0,
             oscilloscope: vec![0.0; 512],
+
             instrument_name: "".to_string(),
         }
     }
@@ -782,6 +785,7 @@ impl Song {
             master_samples: [0.0; 8192],
             master_samples_pos: 0,
             visual_latency: 2432,
+
             tick_state: TickState {
                 state: BufferState::Start,
                 current_buf_position: 0,
@@ -810,6 +814,7 @@ impl Song {
         result.cached_fft = Some(result.fft_planner.plan_fft_forward(2048));
         result.recalculate_bin_map();
         result
+
     }
 
 
@@ -862,6 +867,7 @@ impl Song {
         play_data.theme_id         = self.theme_id;
         play_data.view_mode        = self.view_mode;
         play_data.user_data        = self.user_data.clone();
+
         play_data.scopes_enabled            = match self.user_data.get("scopes_enabled") {
             Some(UserData::USize(v)) => *v % 2 != 0,
             _ => true
@@ -906,6 +912,7 @@ impl Song {
                 for j in 0..512 {
                     status.oscilloscope[j] = 0.0;
                 }
+
             }
 
             status.volume             = channel.voice.volume.volume as f32;
@@ -920,6 +927,7 @@ impl Song {
             } else {
                 status.pitch_shift = 0.0;
             }
+
             status.instrument         = channel.voice.instrument;
             status.sample             = channel.voice.sample;
             let mut sample_position = channel.voice.sample_position;
@@ -982,6 +990,7 @@ impl Song {
         for i in 0..2048 {
             let idx = (base_offset + i) % history_len; 
             fft_input_buffer[i] = self.master_samples[idx] * self.hanning_window[i];
+
         }
         
         let mut fft_buffer: Vec<Complex<f32>> = fft_input_buffer.iter()
@@ -1001,8 +1010,6 @@ impl Song {
         let log_max_f = max_f.ln();
 
         for j in 0..128 {
-            // UNIFIED SPATIAL SMOOTHING
-            // We calculate the exact floating-point bin range for this band
             let f_start = (log_min_f + (j as f32 / 128.0) * (log_max_f - log_min_f)).exp();
             let f_end   = (log_min_f + ((j as f32 + 1.0) / 128.0) * (log_max_f - log_min_f)).exp();
             
@@ -1013,18 +1020,13 @@ impl Song {
             let mut magnitude = 0.0f32;
 
             if b_end - b_start <= 1.0 {
-                // INTERPOLATION MODE (Low frequencies)
-                // Sample the exact center of the band using linear interpolation
                 let i = b_center.floor() as usize;
                 let i = i.clamp(1, 1022);
                 let t = b_center - i as f32;
-                
                 let m0 = fft_buffer[i].norm() / 20.0;
                 let m1 = fft_buffer[i + 1].norm() / 20.0;
                 magnitude = m0 * (1.0 - t.clamp(0.0, 1.0)) + m1 * t.clamp(0.0, 1.0);
             } else {
-                // PEAK MODE (High frequencies)
-                // Range is wide enough to cover multiple bins, take the max in range
                 let i_s = b_start.floor() as usize;
                 let i_e = b_end.ceil() as usize;
                 for i in i_s..i_e {
@@ -1036,6 +1038,7 @@ impl Song {
 
             self.spectral_peaks[j] = magnitude.max(self.spectral_peaks[j] * decay);
             play_data.master_spectrum[j] = self.spectral_peaks[j];
+
         }
 
         play_data.display_fps = self.fps;
@@ -1223,6 +1226,7 @@ impl Song {
                     }
                     PlaybackCmd::CycleTheme => {
                         self.theme_id = (self.theme_id + 1) % 5;
+
                     }
                     PlaybackCmd::ToggleScopes => {
                         self.visualizer_enabled = !self.visualizer_enabled;
@@ -1627,7 +1631,7 @@ impl Song {
                     }
                 }
 
-                // Volume and Panning (SIMD-capable if we wanted, but let's keep it simple first)
+                // Volume and Panning
                 let mut left_samples  = [0.0f32; 4];
                 let mut right_samples = [0.0f32; 4];
                 
@@ -1636,7 +1640,6 @@ impl Song {
                 for j in 0..4 {
                     let final_sample = out_samples[j] * output_vol;
                     
-                    // Visualizers
                     channel.last_samples[channel.last_samples_pos] = final_sample;
                     channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
                     
@@ -1656,6 +1659,7 @@ impl Song {
 
             // Path 2: Scalar Fallback
             while i < ticks_to_generate {
+
                 if channel.voice.sample_position as u32 >= sample.length {
                     channel.on = false;
                     break;
@@ -1680,6 +1684,7 @@ impl Song {
                         let phase = (channel.voice.sample_position.fract() * 512.0) as usize;
                         let table = &self.frequency_tables.resampling.sinc_table[phase];
                         sinc_dot_product(&sample.data[pos - 3..], table)
+
                     },
                     FilterType::None => {
                         sample.data[channel.voice.sample_position as usize]
@@ -1694,7 +1699,9 @@ impl Song {
                 let l = final_sample * vol_left;
                 let r = final_sample * vol_right;
 
+
                 self.master_samples[self.master_samples_pos] = (l + r) / 2.0;
+
                 self.master_samples_pos = (self.master_samples_pos + 1) % 8192;
 
                 buf.mix_sample(0, l, current_buf_position + i);
