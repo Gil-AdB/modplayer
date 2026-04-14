@@ -1438,7 +1438,7 @@ impl Song {
                     channel.panning.set_panning(pattern.effect_param as i32);
                 }
                 0x9 => { // sample offset
-                    if first_tick && pattern.instrument != 0 {
+                    if first_tick && is_note_valid(channel.last_played_note) {
                         if pattern.effect_param != 0 {
                             channel.last_sample_offset = pattern.effect_param as u32 * 256;
                         }

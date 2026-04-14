@@ -194,7 +194,7 @@ fn mainloop(song_data: &SongState) {
                                     let _ = tx.send(PlaybackCmd::Quit);
                                     break;
                                 }
-                                '3' => {
+                                'c' => {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataAddUSize("view_mode".to_string(), 1));
                                 }
                                 '0'..='9' => {

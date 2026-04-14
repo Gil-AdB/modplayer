@@ -428,8 +428,8 @@ impl Display {
             let channel = &play_data.channel_status[actual_ch];
             let row_bg = if i % 2 == 1 { theme.row_bg_odd } else { theme.row_bg_even };
 
-            let status = if channel.force_off { " x " } else if channel.on { " ON" } else { "OFF" };
-            let col_status = if channel.on { theme.col_on } else { theme.col_off };
+            let status = if channel.force_off { "MUT" } else if channel.on { " ON" } else { "OFF" };
+            let col_status = if channel.force_off { theme.col_off } else if channel.on { theme.col_on } else { theme.col_off };
             
             // PIXEL PERFECT CURSOR-BASED LAYOUT
             grid.print(x, y, status, col_status, row_bg);
@@ -437,7 +437,7 @@ impl Display {
             grid.print(x + 5, y, &format!(" {:02} ", actual_ch + 1), theme.col_note, row_bg);
             grid.print(x + 9, y, "|", theme.col_sep, row_bg);
 
-            if channel.on {
+            if channel.on && !channel.force_off {
                 grid.print(x + 10, y, &format!(" {:>2}:{:17} ", channel.instrument, Self::fixed_width(&channel.instrument_name, 17)), theme.col_inst, row_bg);
                 grid.print(x + 32, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 33, y, &format!(" {:<4} ", channel.frequency as u32 % 100000), theme.col_freq, row_bg);
