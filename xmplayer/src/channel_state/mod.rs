@@ -105,8 +105,8 @@ impl Voice {
         self.du = self.frequency / rate;
     }
 
-    pub(crate) fn trigger_note(&mut self) {
-        self.sample_position = 0.0;
+    pub fn trigger_note(&mut self) {
+        self.sample_position = 4.0;
         self.loop_started = false;
         self.ping = true;
         self.sustained = true;

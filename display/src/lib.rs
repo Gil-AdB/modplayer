@@ -1,9 +1,8 @@
 pub mod display;
+pub mod grid;
 
-#[derive(Debug)]
-pub struct ViewPort {
-    pub x1: isize,
-    pub y1: isize,
-    pub width: usize,
-    pub height: usize,
-}
+pub use display::Display;
+pub use grid::RGB;
+pub use display::ViewMode;
+pub use display::ViewPort;
+pub use grid::Grid;

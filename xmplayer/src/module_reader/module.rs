@@ -248,6 +248,8 @@
             panning: 128,
             relative_note: 0,
             name,
+            is_ping_pong: false,
+            original_loop_end: 0,
             data: vec![],
         })
     }
