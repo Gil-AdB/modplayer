@@ -478,28 +478,28 @@ impl Display {
                 Self::grid_range_with_color(grid, x + 75, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
                 grid.print(x + 85, y, "|", theme.col_sep, row_bg);
                 Self::grid_range_with_color(grid, x + 86, y, (channel.envelope_volume as f32 / 16383.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
-                grid.print(x + 97, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 98, y, (channel.global_volume as f32 / 64.0 * 12.0).ceil() as u32, 12, 12, &theme.meter_colors, row_bg);
-                grid.print(x + 110, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 111, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
-                grid.print(x + 120, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 96, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color(grid, x + 97, y, (channel.global_volume as f32 / 64.0 * 12.0).ceil() as u32, 12, 12, &theme.meter_colors, row_bg);
+                grid.print(x + 109, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color(grid, x + 110, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
+                grid.print(x + 119, y, "|", theme.col_sep, row_bg);
                 
                 // ODD WIDTH: 9 chars for perfect centering
-                Self::grid_range(grid, x + 121, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
-                grid.print(x + 130, y, "|", theme.col_sep, row_bg);
+                Self::grid_range(grid, x + 120, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
+                grid.print(x + 129, y, "|", theme.col_sep, row_bg);
             } else {
-                grid.print(x + 10, y, &" ".repeat(118), theme.col_off, row_bg);
+                grid.print(x + 10, y, &" ".repeat(119), theme.col_off, row_bg);
                 grid.print(x + 32, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 39, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 48, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 59, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 73, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 84, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 95, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 108, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 118, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 128, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 74, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 85, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 96, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 109, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 119, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 129, y, "|", theme.col_sep, row_bg);
             }
         }
 
