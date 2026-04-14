@@ -453,8 +453,8 @@ impl Display {
                 grid.print(x + 60, y, &format!(" {:3} ", channel.note), theme.col_note, row_bg);
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
                 
-                // PITCH POSITION BAR (Shows relative displacement from base note)
-                let pitch_pos = (channel.pitch_shift.abs() * 0.5).min(6.0).ceil() as u32;
+                // PITCH POSITION BAR (Shows semitone displacement from base note)
+                let pitch_pos = (channel.pitch_shift * 10.0).min(6.0).ceil() as u32;
                 Self::grid_range_with_color(grid, x + 67, y, pitch_pos, 6, 6, &theme.freq_colors, row_bg); 
                 grid.print(x + 73, y, "|", theme.col_sep, row_bg);
                 

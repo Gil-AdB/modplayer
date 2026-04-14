@@ -912,8 +912,11 @@ impl Song {
             status.on                 = channel.on;
             status.force_off          = channel.force_off;
             status.frequency          = channel.voice.frequency;
-            let vibrato_shift = channel.vibrato_state.get_frequency_shift(WaveControl::from(channel.vibrato_control));
-            status.pitch_shift        = (channel.period_shift as f32 + channel.frequency_shift + vibrato_shift as f32).abs();
+            if channel.frequency > 0.0 && channel.voice.frequency > 0.0 {
+                status.pitch_shift = (channel.voice.frequency / channel.frequency).log2().abs() * 12.0;
+            } else {
+                status.pitch_shift = 0.0;
+            }
             status.instrument         = channel.voice.instrument;
             status.sample             = channel.voice.sample;
             let mut sample_position = channel.voice.sample_position;
