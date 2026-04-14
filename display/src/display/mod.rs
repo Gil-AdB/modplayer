@@ -284,7 +284,7 @@ impl Display {
                     pat_eff_fg: RGB { r: 255, g: 140, b: 0 },
                 }
             },
-            _ => { // Studio Slate (Modernized Pro)
+            4 => { // Studio Slate (Modernized Pro)
                 Theme {
                     meter_colors: [
                         RGB { r: 47, g: 51, b: 77 }, RGB { r: 54, g: 61, b: 94 }, RGB { r: 61, g: 71, b: 112 },
@@ -326,6 +326,50 @@ impl Display {
                     pat_inst_fg: RGB { r: 158, g: 206, b: 106 },
                     pat_vol_fg: RGB { r: 224, g: 175, b: 104 },
                     pat_eff_fg: RGB { r: 247, g: 118, b: 142 },
+                }
+            },
+            _ => { // Classic Pro (Refined)
+                Theme {
+                    meter_colors: [
+                        RGB { r: 0, g: 100, b: 0 }, RGB { r: 0, g: 120, b: 0 }, RGB { r: 0, g: 140, b: 0 },
+                        RGB { r: 0, g: 160, b: 0 }, RGB { r: 0, g: 180, b: 0 }, RGB { r: 0, g: 200, b: 0 },
+                        RGB { r: 0, g: 220, b: 0 }, RGB { r: 0, g: 240, b: 0 }, RGB { r: 60, g: 240, b: 0 },
+                        RGB { r: 120, g: 240, b: 0 }, RGB { r: 180, g: 240, b: 0 }, RGB { r: 240, g: 240, b: 0 },
+                        RGB { r: 240, g: 210, b: 0 }, RGB { r: 240, g: 180, b: 0 }, RGB { r: 240, g: 150, b: 0 },
+                        RGB { r: 240, g: 120, b: 0 }, RGB { r: 240, g: 90, b: 0 }, RGB { r: 240, g: 60, b: 0 },
+                        RGB { r: 240, g: 30, b: 0 }, RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                        RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                    ],
+                    freq_colors: [
+                        RGB { r: 0, g: 0, b: 150 }, RGB { r: 0, g: 30, b: 180 }, RGB { r: 0, g: 60, b: 210 },
+                        RGB { r: 0, g: 90, b: 240 }, RGB { r: 0, g: 120, b: 255 }, RGB { r: 0, g: 150, b: 255 },
+                        RGB { r: 0, g: 180, b: 255 }, RGB { r: 0, g: 210, b: 180 }, RGB { r: 0, g: 240, b: 100 },
+                        RGB { r: 30, g: 255, b: 0 }, RGB { r: 60, g: 255, b: 0 }, RGB { r: 90, g: 255, b: 0 },
+                        RGB { r: 120, g: 255, b: 0 }, RGB { r: 150, g: 255, b: 0 }, RGB { r: 180, g: 255, b: 0 },
+                        RGB { r: 210, g: 255, b: 0 }, RGB { r: 240, g: 255, b: 0 }, RGB { r: 255, g: 180, b: 0 },
+                        RGB { r: 255, g: 120, b: 0 }, RGB { r: 255, g: 60, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                        RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                    ],
+                    header_bg: RGB { r: 0, g: 0, b: 128 },
+                    header_fg: RGB { r: 255, g: 255, b: 255 },
+                    accent_fg: RGB { r: 255, g: 255, b: 255 },
+                    table_hdr_bg: RGB { r: 0, g: 0, b: 64 },
+                    table_hdr_fg: RGB { r: 255, g: 255, b: 255 },
+                    row_bg_odd: RGB { r: 15, g: 15, b: 15 },
+                    row_bg_even: RGB { r: 0, g: 0, b: 0 },
+                    col_on: RGB { r: 0, g: 255, b: 0 },
+                    col_off: RGB { r: 128, g: 128, b: 128 },
+                    col_inst: RGB { r: 220, g: 220, b: 220 },
+                    col_freq: RGB { r: 0, g: 242, b: 254 },
+                    col_note: RGB { r: 255, g: 255, b: 0 },
+                    col_period: RGB { r: 0, g: 255, b: 0 },
+                    col_sep: RGB { r: 128, g: 128, b: 128 },
+                    pat_row_bg: RGB { r: 0, g: 0, b: 0 },
+                    pat_curr_bg: RGB { r: 42, g: 60, b: 126 },
+                    pat_note_fg: RGB { r: 255, g: 255, b: 255 },
+                    pat_inst_fg: RGB { r: 74, g: 246, b: 38 },
+                    pat_vol_fg: RGB { r: 246, g: 211, b: 45 },
+                    pat_eff_fg: RGB { r: 241, g: 76, b: 76 },
                 }
             }
         }

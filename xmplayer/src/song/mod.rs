@@ -1167,7 +1167,7 @@ impl Song {
                         self.view_mode = mode;
                     }
                     PlaybackCmd::CycleTheme => {
-                        self.theme_id = (self.theme_id + 1) % 4;
+                        self.theme_id = (self.theme_id + 1) % 5;
                     }
                     PlaybackCmd::ToggleScopes => {
                         self.visualizer_enabled = !self.visualizer_enabled;
