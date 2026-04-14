@@ -985,37 +985,46 @@ impl Song {
 
         let decay = if cfg!(target_arch = "wasm32") { 0.88f32 } else { 0.92f32 };
 
+        let min_f = 20.0f32;
+        let max_f = 20000.0f32;
+        let log_min_f = min_f.ln();
+        let log_max_f = max_f.ln();
+
         for j in 0..128 {
-            let (i_start, i_end) = self.bin_map[j];
+            // UNIFIED SPATIAL SMOOTHING
+            // We calculate the exact floating-point bin range for this band
+            let f_start = (log_min_f + (j as f32 / 128.0) * (log_max_f - log_min_f)).exp();
+            let f_end   = (log_min_f + ((j as f32 + 1.0) / 128.0) * (log_max_f - log_min_f)).exp();
             
-            let mut max_mag = 0.0f32;
-            if i_start == i_end || i_start + 1 == i_end {
-                // HIGH-RESOLUTION SUB-BIN PIXEL INTERPOLATION
-                // This ensures that the low-end (20-200Hz) doesn't look like a single block.
-                let min_f = 20.0f32;
-                let max_f = 20000.0f32; // Synchronized with recalculate_bin_map
-                let log_min_f = min_f.ln();
-                let log_max_f = max_f.ln();
-                let f_center = (log_min_f + ((j as f32 + 0.5) / 128.0) * (log_max_f - log_min_f)).exp();
-                let exact_bin = f_center * 2048.0 / self.rate;
+            let b_start = f_start * 2048.0 / self.rate;
+            let b_end   = f_end   * 2048.0 / self.rate;
+            let b_center = (b_start + b_end) * 0.5;
+
+            let mut magnitude = 0.0f32;
+
+            if b_end - b_start <= 1.0 {
+                // INTERPOLATION MODE (Low frequencies)
+                // Sample the exact center of the band using linear interpolation
+                let i = b_center.floor() as usize;
+                let i = i.clamp(1, 1022);
+                let t = b_center - i as f32;
                 
-                // Better interpolation: ensure we are interpolating around the exact center
-                let i_floor = exact_bin.floor() as usize;
-                let i = i_floor.clamp(1, 1022);
-                let t = exact_bin - i as f32;
-                
-                let bin_low = fft_buffer[i].norm() / 20.0;
-                let bin_high = fft_buffer[i + 1].norm() / 20.0;
-                max_mag = bin_low * (1.0 - t.clamp(0.0, 1.0)) + bin_high * t.clamp(0.0, 1.0);
+                let m0 = fft_buffer[i].norm() / 20.0;
+                let m1 = fft_buffer[i + 1].norm() / 20.0;
+                magnitude = m0 * (1.0 - t.clamp(0.0, 1.0)) + m1 * t.clamp(0.0, 1.0);
             } else {
-                for i in i_start..i_end {
+                // PEAK MODE (High frequencies)
+                // Range is wide enough to cover multiple bins, take the max in range
+                let i_s = b_start.floor() as usize;
+                let i_e = b_end.ceil() as usize;
+                for i in i_s..i_e {
                     let i_clamped = i.clamp(1, 1023);
-                    let mag = fft_buffer[i_clamped].norm() / 20.0;
-                    if mag > max_mag { max_mag = mag; }
+                    let m = fft_buffer[i_clamped].norm() / 20.0;
+                    if m > magnitude { magnitude = m; }
                 }
             }
 
-            self.spectral_peaks[j] = max_mag.max(self.spectral_peaks[j] * decay);
+            self.spectral_peaks[j] = magnitude.max(self.spectral_peaks[j] * decay);
             play_data.master_spectrum[j] = self.spectral_peaks[j];
         }
 
