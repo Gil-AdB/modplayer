@@ -325,7 +325,7 @@ impl Display {
                     pat_note_fg: RGB { r: 255, g: 255, b: 255 },
                     pat_inst_fg: RGB { r: 0, g: 255, b: 0 },
                     pat_vol_fg: RGB { r: 255, g: 255, b: 0 },
-                    pat_eff_fg: RGB { r: 255, g: 128, b: 0 },
+                    pat_eff_fg: RGB { r: 255, g: 0, b: 0 },
                 }
             }
         }
