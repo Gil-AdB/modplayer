@@ -82,8 +82,8 @@ impl Display {
         let view_mode = ViewMode::from(view_mode_raw);
         
         let theme_id = match play_data.user_data.get("theme_id") {
-            Some(UserData::USize(v)) => (*v % 4) as u32,
-            _ => theme_id % 4
+            Some(UserData::USize(v)) => (*v % 5) as u32,
+            _ => theme_id % 5
         };
         let theme = Self::get_theme(theme_id);
 
