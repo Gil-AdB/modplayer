@@ -592,8 +592,7 @@ impl Display {
                 
                 let block_idx = if h_filled >= ((h + 1) * 8) as u32 { 7 } else if h_filled < (h * 8) as u32 { 0 } else { (h_filled % 8) as usize };
                 if block_idx > 0 {
-                    let cur_h = (h_filled as usize + 7) / 8;
-                    let color_idx = (h * colors.len()) / cur_h.max(1);
+                    let color_idx = (h * colors.len()) / bar_height;
                     grid.set_cell(x + i, cell_y, blocks[block_idx], colors[color_idx.min(colors.len()-1)], bg);
                 } else {
                     grid.set_cell(x + i, cell_y, ' ', colors[0], bg);

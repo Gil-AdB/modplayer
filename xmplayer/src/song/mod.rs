@@ -684,6 +684,7 @@ pub struct Song {
     pub last_fps_time:          Instant,
     fft_planner:                FftPlanner<f32>,
     pub spectral_peaks:         Vec<f32>,
+    pub hanning_window:         Vec<f32>,
 }
 
 impl Song {
@@ -794,6 +795,7 @@ impl Song {
             last_display_update_sample: 0,
             fft_planner: FftPlanner::new(),
             spectral_peaks: vec![0.0; 128],
+            hanning_window: (0..2048).map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / 2047.0).cos())).collect(),
         }
     }
 
@@ -938,12 +940,12 @@ impl Song {
         }
         
         // Master FFT (Optimized with persistent planner and robust indexing)
-        let fft = self.fft_planner.plan_fft_forward(1024);
-        let mut fft_input_buffer = vec![0.0f32; 1024];
-        let base_offset = (start_offset as isize - 256).rem_euclid(history_len as isize) as usize;
-        for i in 0..1024 {
+        let fft = self.fft_planner.plan_fft_forward(2048);
+        let mut fft_input_buffer = vec![0.0f32; 2048];
+        let base_offset = (start_offset as isize - 512).rem_euclid(history_len as isize) as usize;
+        for i in 0..2048 {
             let idx = (base_offset + i) % history_len; 
-            fft_input_buffer[i] = self.master_samples[idx];
+            fft_input_buffer[i] = self.master_samples[idx] * self.hanning_window[i];
         }
         
         let mut fft_buffer: Vec<Complex<f32>> = fft_input_buffer.iter()
@@ -966,17 +968,17 @@ impl Song {
             let f_start = (log_min_f + (j as f32 / 128.0) * (log_max_f - log_min_f)).exp();
             let f_end = (log_min_f + ((j + 1) as f32 / 128.0) * (log_max_f - log_min_f)).exp();
             
-            let i_start = (f_start * 1024.0 / self.rate).floor() as usize;
-            let i_end = (f_end * 1024.0 / self.rate).ceil() as usize;
+            let i_start = (f_start * 2048.0 / self.rate).floor() as usize;
+            let i_end = (f_end * 2048.0 / self.rate).ceil() as usize;
             
             let mut max_mag = 0.0f32;
             if i_start == i_end || i_start + 1 == i_end {
-                let i = i_start.clamp(1, 511);
-                max_mag = fft_buffer[i].norm() / 10.0;
+                let i = i_start.clamp(1, 1023);
+                max_mag = fft_buffer[i].norm() / 20.0;
             } else {
                 for i in i_start..i_end {
-                    let i_clamped = i.clamp(1, 511);
-                    let mag = fft_buffer[i_clamped].norm() / 10.0;
+                    let i_clamped = i.clamp(1, 1023);
+                    let mag = fft_buffer[i_clamped].norm() / 20.0;
                     if mag > max_mag { max_mag = mag; }
                 }
             }
