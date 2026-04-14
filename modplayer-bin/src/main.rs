@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 use std::io::{stdout, Write};
 
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use xmplayer::song_state::{SongState, SongHandle};
 use xmplayer::AudioConsumer;
 
@@ -198,20 +198,18 @@ fn mainloop(song_data: &SongState) {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataAddUSize("view_mode".to_string(), 1));
                                 }
                                 '0'..='9' => {
-                                    if SystemTime::now() > last_time + Duration::from_secs(1) {
-                                        last_char = '\0';
-                                    }
-
-                                    if is_num(last_char) {
-                                        let channel_number = (last_char as u8 - '0' as u8) * 10 + (ch as u8 - '0' as u8);
-                                        if channel_number > 0 && channel_number <= 32 {
-                                            let _ = tx.send(PlaybackCmd::ChannelToggle(channel_number - 1));
-                                        }
-                                        last_char = '\0';
+                                    let ch_idx = if ch == '0' { 9 } else { (ch as u8 - '1' as u8) };
+                                    if event.modifiers.contains(KeyModifiers::SHIFT) {
+                                        let _ = tx.send(PlaybackCmd::ChannelSolo(ch_idx));
                                     } else {
-                                        last_char = ch;
+                                        let _ = tx.send(PlaybackCmd::ChannelToggle(ch_idx));
                                     }
-                                    last_time = SystemTime::now();
+                                }
+                                'a' => {
+                                    let _ = tx.send(PlaybackCmd::ChannelUnmuteAll);
+                                }
+                                'm' => {
+                                    let _ = tx.send(PlaybackCmd::ChannelMuteAll);
                                 }
                                 '+' => {
                                     let _ = tx.send(PlaybackCmd::IncSpeed);

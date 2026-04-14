@@ -402,6 +402,9 @@ pub enum PlaybackCmd {
     FilterToggle,
     DisplayToggle,
     ChannelToggle(u8),
+    ChannelSolo(u8),
+    ChannelUnmuteAll,
+    ChannelMuteAll,
     SetUserData(String, UserData),
     ModifyUserDataAddUSize(String, usize),
     ModifyUserDataSubUSize(String, usize),
@@ -1149,7 +1152,28 @@ impl Song {
                         }
                     }
                     PlaybackCmd::DisplayToggle => {self.display = !self.display;}
-                    PlaybackCmd::ChannelToggle(channel) => {self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;}
+                    PlaybackCmd::ChannelToggle(channel) => {
+                        if (channel as usize) < self.channels.len() {
+                            self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;
+                        }
+                    }
+                    PlaybackCmd::ChannelSolo(channel_idx) => {
+                        if (channel_idx as usize) < self.channels.len() {
+                            for (i, channel) in self.channels.iter_mut().enumerate() {
+                                channel.force_off = i != channel_idx as usize;
+                            }
+                        }
+                    }
+                    PlaybackCmd::ChannelUnmuteAll => {
+                        for channel in self.channels.iter_mut() {
+                            channel.force_off = false;
+                        }
+                    }
+                    PlaybackCmd::ChannelMuteAll => {
+                        for channel in self.channels.iter_mut() {
+                            channel.force_off = true;
+                        }
+                    }
                     PlaybackCmd::AmigaTable => {self.frequency_tables = AudioTables::calc_tables_amiga();}
                     PlaybackCmd::LinearTable => {self.frequency_tables = AudioTables::calc_tables_linear();}
                     PlaybackCmd::SetUserData(key, value) => {self.user_data.insert(key, value);}
