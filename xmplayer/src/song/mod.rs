@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::channel_state::{ChannelState, Voice};
 use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp, VibratoEnvelopeState};
 use crate::instrument::{LoopType, Instrument};
-use crate::module_reader::{SongData, is_note_valid, Patterns};
+use crate::module_reader::{SongData, SongType, is_note_valid, Patterns};
 #[cfg(test)]
 #[allow(unused_imports)]
 use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
@@ -1442,15 +1442,30 @@ impl Song {
                         if pattern.effect_param != 0 {
                             channel.last_sample_offset = pattern.effect_param as u32 * 256;
                         }
+                        let mut offset = channel.last_sample_offset;
                         let sample = self.song_data.get_sample(channel);
-                        // sample.length includes 4-sample prefix padding; original data starts at offset 4
-                        let original_length = sample.length.saturating_sub(4);
-                        if channel.last_sample_offset >= original_length {
-                            // Offset beyond sample end: kill note per tracker spec
-                            channel.key_off(instruments, false);
+                        // sample.length / loop_start / loop_end include the 4-sample sinc prefix.
+                        // Subtract 4 to get the logical (original) coordinates.
+                        let orig_length    = sample.length.saturating_sub(4);
+                        let orig_loop_start = sample.loop_start.saturating_sub(4);
+                        let orig_loop_end   = sample.loop_end.saturating_sub(4);
+                        let is_looped = sample.loop_type != crate::instrument::LoopType::NoLoop
+                            && orig_loop_end > orig_loop_start;
+
+                        let is_s3m = matches!(self.song_data.song_type, SongType::S3M | SongType::STM);
+
+                        if is_s3m && is_looped && offset >= orig_loop_end {
+                            // S3M loop wrap-around: offset folds back into the loop region
+                            let loop_len = orig_loop_end - orig_loop_start;
+                            offset = (offset - orig_loop_start) % loop_len + orig_loop_start;
+                            channel.voice.sample_position = offset as f32 + 4.0;
+                        } else if offset >= orig_length {
+                            // Offset past end: silence the channel (FT2/ST3 compat - stop, not key-off)
+                            channel.on = false;
+                            channel.voice.volume.set_volume(0);
                         } else {
                             // +4.0 skips the sinc prefix padding
-                            channel.voice.sample_position = channel.last_sample_offset as f32 + 4.0;
+                            channel.voice.sample_position = offset as f32 + 4.0;
                         }
                     }
                 }
