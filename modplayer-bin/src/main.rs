@@ -13,9 +13,8 @@ use xmplayer::AudioConsumer;
 #[cfg(feature="sdl2-feature")] use sdl2_audio::AudioOutput;
 #[cfg(feature="portaudio-feature")] mod portaudio_audio;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
-use crossterm::cursor::{MoveToNextLine, Hide, MoveTo, Show};
-use crossterm::terminal::{Clear, ClearType};
-use display::display::Display;
+use crossterm::cursor::{Hide, MoveTo, Show};
+use display::display::{Display, TargetPlatform};
 use display::ViewPort;
 
 fn main() {
@@ -66,13 +65,13 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
 
     let mut audio = AudioOutput::new(consumer, SAMPLE_RATE);
 
-    let handle = song_data.start(|data, instruments| {
+    let handle = song_data.start(|data, instruments, patterns, order| {
 
         let mut view_port = ViewPort {
             x1: 0,
             y1: 0,
-            width: 80,
-            height: 20
+            width: 120, // Increased width for full view
+            height: 40
         };
 
         if let UserData::ISize(x) = data.user_data.get("x").unwrap_or(&UserData::ISize(0)) {
@@ -88,12 +87,11 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
             }
         }
 
+        let grid = Display::render(data, instruments, patterns, order, view_port.width, view_port.height, data.view_mode, data.theme_id, view_port.x1, view_port.y1, 0, TargetPlatform::Native);
+        
         if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0, 0)) {}
-        Display::display(data, instruments, view_port, &mut|str| {
-            write!(stdout(), "{}", str).expect("write error");
-            if let Err(_e) = crossterm::execute!(stdout(), Clear(ClearType::UntilNewLine), MoveToNextLine(1)) {}
-            // if let Err(_e) = crossterm::execute!(stdout(), ) {}
-        });
+        print!("{}", grid.to_ansi());
+        let _ = stdout().flush();
         if let Err(_e) = crossterm::execute!(stdout(), Show) {}
     });
 
@@ -130,11 +128,11 @@ fn mainloop(song_data: &SongState) {
     let mut last_time = SystemTime::now();
     let mut last_char= '\0';
 
+    if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
     loop {
-        if song_data.is_stopped() {return;}
+        if song_data.is_stopped() {break;}
         // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
-        if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
-        if crossterm::event::poll(Duration::from_millis(100)).is_ok() {
+        if crossterm::event::poll(Duration::from_millis(10)).is_ok() {
             // It's guaranteed that the `read()` won't block when the `poll()`
             // function returns `true`
             match crossterm::event::read() {
@@ -173,13 +171,16 @@ fn mainloop(song_data: &SongState) {
                             let tx = &mut song_data.get_sender();
                             match num {
                                 1 => {
-                                    let _ = tx.send(PlaybackCmd::SpeedDown);
+                                    let _ = tx.send(PlaybackCmd::SetViewMode(0));
                                 }
                                 2 => {
-                                    let _ = tx.send(PlaybackCmd::SpeedReset);
+                                    let _ = tx.send(PlaybackCmd::SetViewMode(1));
                                 }
                                 3 => {
-                                    let _ = tx.send(PlaybackCmd::SpeedUp);
+                                    let _ = tx.send(PlaybackCmd::SetViewMode(2));
+                                }
+                                4 => {
+                                    let _ = tx.send(PlaybackCmd::SetViewMode(3));
                                 }
                                 _ => {}
                             }
@@ -191,6 +192,9 @@ fn mainloop(song_data: &SongState) {
                                 'q' => {
                                     let _ = tx.send(PlaybackCmd::Quit);
                                     break;
+                                }
+                                '3' => {
+                                    let _ = tx.send(PlaybackCmd::ModifyUserDataAddUSize("view_mode".to_string(), 1));
                                 }
                                 '0'..='9' => {
                                     if SystemTime::now() > last_time + Duration::from_secs(1) {
@@ -246,6 +250,27 @@ fn mainloop(song_data: &SongState) {
                                 }
                                 'd' => {
                                     let _ = tx.send(PlaybackCmd::DisplayToggle);
+                                }
+                                't' | 'T' => {
+                                    let _ = tx.send(PlaybackCmd::CycleTheme);
+                                }
+                                'v' | 'V' => {
+                                    let _ = tx.send(PlaybackCmd::ToggleVisualizerMode);
+                                }
+                                's' | 'S' => {
+                                    let _ = tx.send(PlaybackCmd::ToggleScopes);
+                                }
+                                '[' => {
+                                    let _ = tx.send(PlaybackCmd::ModifyUserDataSubISize("x".to_string(), 1));
+                                }
+                                ']' => {
+                                    let _ = tx.send(PlaybackCmd::ModifyUserDataAddISize("x".to_string(), 1));
+                                }
+                                '(' => {
+                                    let _ = tx.send(PlaybackCmd::DecLatency);
+                                }
+                                ')' => {
+                                    let _ = tx.send(PlaybackCmd::IncLatency);
                                 }
                                 _ => {}
                             }

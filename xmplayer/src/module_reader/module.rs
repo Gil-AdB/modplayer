@@ -257,6 +257,8 @@
             name,
             global_volume: 64,
             surround: false,
+            is_ping_pong: false,
+            original_loop_end: 0,
             data: vec![],
         })
     }

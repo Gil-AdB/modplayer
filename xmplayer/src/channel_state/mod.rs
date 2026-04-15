@@ -224,7 +224,7 @@ impl Voice {
     }
 
     pub(crate) fn trigger_note(&mut self, instruments: &Instruments) {
-        self.sample_position = 0.0;
+        self.sample_position = 4.0;
         self.loop_started = false;
         self.ping = true;
         self.sustained = true;

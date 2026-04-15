@@ -150,8 +150,8 @@ class ModPlayerProcessor {
         this.sampleRate = sampleRate;
         this.port = port;
         this.playing = false;
-        this.leftBuf = new Float32Array(4096);
-        this.rightBuf = new Float32Array(4096);
+        this.leftBuf = new Float32Array(1024);
+        this.rightBuf = new Float32Array(1024);
         if (state_change_cb) this.state_change_cb = state_change_cb;
         if (finished_cb) this.finished_cb = finished_cb;
         this.port.onmessage = (e) => {

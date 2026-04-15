@@ -156,6 +156,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 relative_note,
                 name: name.trim().to_string(),
                 global_volume: sample_global_volume,
+                is_ping_pong: false,
+                original_loop_end: 0,
                 data: vec![],
             };
 

@@ -42,6 +42,7 @@ pub struct TripleBuffer<T> {
     // 4-5: ready index (most recently written)
     // 6:   dirty bit (new data available)
     indexes: AtomicU32,
+    sem: Option<Semaphore>,
 }
 
 unsafe impl<T: Send> Send for TripleBuffer<T> {}
@@ -75,6 +76,21 @@ impl<T> TripleBufferReader<T> where T: Clone + Default {
 
             let idx = TripleBuffer::<T>::get_reader_idx(new_indexes) as usize;
             return (tb.get_buffer_ref(idx), State::StateDirty);
+        }
+    }
+
+    /// Blocks the current thread until new data is available in the buffer.
+    pub fn wait(&self) {
+        if let Some(sem) = &self.triple_buffer.sem {
+            sem.wait();
+        }
+    }
+
+    /// Wakes up the blocking reader thread without producing new data.
+    /// Useful for graceful shutdown.
+    pub fn signal(&self) {
+        if let Some(sem) = &self.triple_buffer.sem {
+            sem.signal();
         }
     }
 }
@@ -134,6 +150,9 @@ impl<T> TripleBufferWriter<T> where T: Clone + Default {
             let new_indexes = TripleBuffer::<T>::swap_ready_and_writer(current_indexes);
             
             if tb.indexes.compare_exchange_weak(current_indexes, new_indexes, Release, Relaxed).is_ok() {
+                if let Some(sem) = &tb.sem {
+                    sem.signal();
+                }
                 break;
             }
         }
@@ -144,7 +163,16 @@ impl<T> TripleBuffer<T> {
     pub fn new() -> Box<Self> where T: Clone + Default {
         Box::new(TripleBuffer {
             buffer: UnsafeCell::new(array_init(|_| T::default())),
-            indexes: AtomicU32::new(INITIAL_STATE)
+            indexes: AtomicU32::new(INITIAL_STATE),
+            sem: None
+        })
+    }
+
+    pub fn new_with_signal() -> Box<Self> where T: Clone + Default {
+        Box::new(TripleBuffer {
+            buffer: UnsafeCell::new(array_init(|_| T::default())),
+            indexes: AtomicU32::new(INITIAL_STATE),
+            sem: Some(Semaphore::new(0))
         })
     }
 
@@ -433,6 +461,19 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE
     pub fn acquire_buffer(&self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
         if self.q.wait_for_write() {
             Some(ProducerGuard { producer: self })
+        } else {
+            None
+        }
+    }
+
+    pub fn try_acquire_buffer(&self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+        if self.q.empty_count.try_wait() {
+            if self.q.stopped.load(Acquire) {
+                self.q.empty_count.signal();
+                None
+            } else {
+                Some(ProducerGuard { producer: self })
+            }
         } else {
             None
         }
