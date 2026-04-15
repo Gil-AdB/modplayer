@@ -151,6 +151,8 @@ pub(crate) struct ChannelState {
     pub(crate) last_played_note:               u8,
     pub(crate) last_samples:                   [f32; 512],
     pub(crate) last_samples_pos:               usize,
+    pub(crate) loop_row:                       u8,
+    pub(crate) loop_count:                     u8,
 }
 
 impl ChannelState {
@@ -178,9 +180,6 @@ impl ChannelState {
     }
 
     pub(crate) fn update_frequency(&mut self, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
-        // self.frequency = self.note.frequency(self.period_shift) + self.frequency_shift;
-        // self.frequency = self.note.frequency(self.period_shift, semitone, use_amiga) + self.frequency_shift;
-        // self.du = self.frequency / rate;
         self.voice.set_frequency(self.note.frequency(self.period_shift, semitone, frequency_tables) + self.frequency_shift, rate)
     }
 

@@ -4,6 +4,7 @@ use wasm_bindgen::prelude::*;
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct RGB {
     pub r: u8,
     pub g: u8,
@@ -12,8 +13,9 @@ pub struct RGB {
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 #[derive(Copy, Clone, Debug, PartialEq)]
+#[repr(C)]
 pub struct Cell {
-    pub c: char,
+    pub c: u32,
     pub fg: RGB,
     pub bg: RGB,
 }
@@ -21,7 +23,7 @@ pub struct Cell {
 impl Default for Cell {
     fn default() -> Self {
         Self {
-            c: ' ',
+            c: ' ' as u32,
             fg: RGB { r: 255, g: 255, b: 255 },
             bg: RGB { r: 0, g: 0, b: 0 },
         }
@@ -45,7 +47,7 @@ impl Grid {
 
     pub fn set_cell(&mut self, x: usize, y: usize, c: char, fg: RGB, bg: RGB) {
         if x < self.width && y < self.height {
-            self.cells[y * self.width + x] = Cell { c, fg, bg };
+            self.cells[y * self.width + x] = Cell { c: c as u32, fg, bg };
         }
     }
 
@@ -53,14 +55,13 @@ impl Grid {
         if x < self.width && y < self.height {
             let idx = y * self.width + x;
             let current_c = self.cells[idx].c;
-            let current_bits = if (0x2800..=0x28FF).contains(&(current_c as u32)) {
-                (current_c as u32 - 0x2800) as u8
+            let current_bits = if (0x2800..=0x28FF).contains(&current_c) {
+                (current_c - 0x2800) as u8
             } else {
                 0
             };
             let new_bits = current_bits | dot_bit;
-            let new_c = unsafe { std::char::from_u32_unchecked(0x2800 + new_bits as u32) };
-            self.cells[idx] = Cell { c: new_c, fg, bg };
+            self.cells[idx] = Cell { c: 0x2800 + new_bits as u32, fg, bg };
         }
     }
 
@@ -90,25 +91,10 @@ impl Grid {
                     last_fg = Some(cell.fg);
                     last_bg = Some(cell.bg);
                 }
-                result.push(cell.c);
+                result.push(std::char::from_u32(cell.c).unwrap_or(' '));
             }
-            // result.push('\n');
         }
         result.push_str("\x1b[0m");
-        result
-    }
-
-    pub fn to_binary(&self) -> Vec<u8> {
-        let mut result = Vec::with_capacity(self.cells.len() * 7);
-        for cell in &self.cells {
-            result.push(cell.c as u8);
-            result.push(cell.fg.r);
-            result.push(cell.fg.g);
-            result.push(cell.fg.b);
-            result.push(cell.bg.r);
-            result.push(cell.bg.g);
-            result.push(cell.bg.b);
-        }
         result
     }
 }

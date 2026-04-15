@@ -79,6 +79,9 @@ impl<T> TripleBufferReader<T> where T: Clone + Default {
         }
     }
 
+}
+
+impl<T> TripleBufferReader<T> {
     /// Blocks the current thread until new data is available in the buffer.
     pub fn wait(&self) {
         if let Some(sem) = &self.triple_buffer.sem {
@@ -88,7 +91,7 @@ impl<T> TripleBufferReader<T> where T: Clone + Default {
 
     /// Wakes up the blocking reader thread without producing new data.
     /// Useful for graceful shutdown.
-    pub fn signal(&self) {
+    pub fn wake_reader(&self) {
         if let Some(sem) = &self.triple_buffer.sem {
             sem.signal();
         }

@@ -38,7 +38,8 @@ pub struct ViewPort {
 }
 
 pub struct Theme {
-    pub meter_colors: [RGB; 12],
+    pub meter_colors: [RGB; 24],
+    pub freq_colors: [RGB; 24],
     pub header_bg: RGB,
     pub header_fg: RGB,
     pub accent_fg: RGB,
@@ -65,6 +66,7 @@ pub struct Display {}
 
 impl Display {
     pub fn render(
+        grid: &mut Grid,
         play_data: &PlayData,
         instruments: &Vec<Instrument>,
         patterns: &Vec<Patterns>,
@@ -75,15 +77,13 @@ impl Display {
         theme_id: u32,
         x_offset: isize,
         _y_offset: isize,
-        _panning_mode: u32,
         platform: TargetPlatform,
-    ) -> Grid {
-        let mut grid = Grid::new(width, height);
+    ) {
         let view_mode = ViewMode::from(view_mode_raw);
         
         let theme_id = match play_data.user_data.get("theme_id") {
-            Some(UserData::USize(v)) => (*v % 4) as u32,
-            _ => theme_id % 4
+            Some(UserData::USize(v)) => (*v % 5) as u32,
+            _ => theme_id % 5
         };
         let theme = Self::get_theme(theme_id);
 
@@ -101,17 +101,28 @@ impl Display {
 
         // 1. Header (FIXED WIDTH TO ENSURE ALIGNMENT)
         let name_trimmed = Self::fixed_width(&play_data.name, 20);
-        let header_str = format!("'{}' dur: {:6.2}ms tick: {:3} pos: {:3X}/{:<3X} row: {:3X}/{:<3X} bpm: {:3} spd: {:2} FPS: {:4.1} f: {:?}", 
-            name_trimmed, play_data.tick_duration_in_ms, play_data.tick,
+        let cur_sec = (play_data.current_duration_ms / 1000.0) as u32;
+        let cur_ms = (play_data.current_duration_ms % 1000.0) as u32;
+        let tot_sec = (play_data.total_duration_ms / 1000.0) as u32;
+        let tot_ms = (play_data.total_duration_ms % 1000.0) as u32;
+        let header_str = format!("'{}' time: {:02}:{:02}.{:03}/{:02}:{:02}.{:03} tick: {:3} pos: {:3X}/{:<3X} row: {:3X}/{:<3X} bpm: {:3} spd: {:2} FPS: {:4.1} f: {:?} GVol: ", 
+            name_trimmed, 
+            cur_sec / 60, cur_sec % 60, cur_ms,
+            tot_sec / 60, tot_sec % 60, tot_ms,
+            play_data.tick,
             play_data.song_position, play_data.song_length.saturating_sub(1), 
             play_data.row, play_data.pattern_len.saturating_sub(1), 
             play_data.bpm, play_data.speed, play_data.display_fps, play_data.filter
         );
+        
         // Fill entire header row with header_bg
         for x in 0..grid.width {
             grid.set_cell(x, 0, ' ', theme.header_fg, theme.header_bg);
         }
+        
+        let header_len = header_str.chars().count();
         grid.print(0, 0, &header_str, theme.header_fg, theme.header_bg);
+        Self::grid_range_with_color(grid, header_len, 0, (play_data.global_volume as f32 / 64.0 * 12.0).ceil() as u32, 12, 12, &theme.meter_colors, theme.header_bg);
 
         // 2. Dynamic Layout Calculation
         let vis_height = if platform == TargetPlatform::Native && visualizer_mode < 3 {
@@ -123,11 +134,11 @@ impl Display {
 
         match view_mode {
             ViewMode::Pattern => {
-                Self::render_pattern(&mut grid, play_data, instruments, patterns, order, &theme, x_offset, 0, platform, visualizer_mode, theme_id, pat_max_y);
+                Self::render_pattern(grid, play_data, instruments, patterns, order, &theme, x_offset, 0, platform, visualizer_mode, theme_id, pat_max_y);
             },
-            ViewMode::Instruments => Self::render_instruments(&mut grid, instruments, 0, &theme),
-            ViewMode::Message => Self::render_message(&mut grid, &play_data.song_message, 0, &theme),
-            ViewMode::Help => Self::render_help(&mut grid, 0, &theme),
+            ViewMode::Instruments => Self::render_instruments(grid, instruments, 0, &theme),
+            ViewMode::Message => Self::render_message(grid, &play_data.song_message, 0, &theme),
+            ViewMode::Help => Self::render_help(grid, 0, &theme),
         }
 
         // 3. High-Fidelity Visualizers at the bottom
@@ -142,13 +153,12 @@ impl Display {
             }
 
             match visualizer_mode {
-                0 => Self::render_fft(&mut grid, &play_data.master_spectrum, 0, vis_y, width, vis_height, &theme.meter_colors, theme.pat_row_bg),
-                1 => Self::render_master_scope(&mut grid, &play_data.master_oscilloscope, 0, vis_y, width, vis_height, &theme),
-                2 => Self::render_multi_scope(&mut grid, &play_data.channel_status, 0, vis_y, width, vis_height, &theme),
+                0 => Self::render_fft(grid, &play_data.master_spectrum, 0, vis_y, width, vis_height, &theme.meter_colors, theme.pat_row_bg),
+                1 => Self::render_master_scope(grid, &play_data.master_oscilloscope, 0, vis_y, width, vis_height, &theme),
+                2 => Self::render_multi_scope(grid, &play_data.channel_status, 0, vis_y, width, vis_height, &theme),
                 _ => {}
             }
         }
-        grid
     }
 
     fn get_theme(theme_id: u32) -> Theme {
@@ -156,10 +166,24 @@ impl Display {
             1 => { // Cyberpunk / Vibrant (SYNCHRONIZED WITH WEB)
                 Theme {
                     meter_colors: [
-                        RGB { r: 0, g: 242, b: 254 }, RGB { r: 0, g: 212, b: 254 }, RGB { r: 0, g: 182, b: 254 },
-                        RGB { r: 33, g: 152, b: 255 }, RGB { r: 66, g: 122, b: 255 }, RGB { r: 90, g: 92, b: 255 },
-                        RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 },
-                        RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 }, RGB { r: 123, g: 39, b: 255 },
+                        RGB { r: 123, g: 39, b: 255 }, RGB { r: 115, g: 42, b: 255 }, RGB { r: 107, g: 45, b: 255 },
+                        RGB { r: 99, g: 48, b: 255 }, RGB { r: 91, g: 51, b: 255 }, RGB { r: 83, g: 54, b: 255 },
+                        RGB { r: 75, g: 57, b: 255 }, RGB { r: 67, g: 60, b: 255 }, RGB { r: 59, g: 63, b: 255 },
+                        RGB { r: 51, g: 66, b: 255 }, RGB { r: 43, g: 69, b: 255 }, RGB { r: 35, g: 72, b: 255 },
+                        RGB { r: 0, g: 142, b: 254 }, RGB { r: 0, g: 154, b: 254 }, RGB { r: 0, g: 166, b: 254 },
+                        RGB { r: 0, g: 178, b: 254 }, RGB { r: 0, g: 190, b: 254 }, RGB { r: 0, g: 202, b: 254 },
+                        RGB { r: 0, g: 214, b: 254 }, RGB { r: 0, g: 226, b: 254 }, RGB { r: 0, g: 234, b: 254 },
+                        RGB { r: 0, g: 242, b: 254 }, RGB { r: 0, g: 250, b: 254 }, RGB { r: 0, g: 255, b: 255 },
+                    ],
+                    freq_colors: [
+                        RGB { r: 0, g: 50, b: 150 }, RGB { r: 0, g: 60, b: 160 }, RGB { r: 0, g: 70, b: 170 },
+                        RGB { r: 0, g: 80, b: 180 }, RGB { r: 0, g: 90, b: 190 }, RGB { r: 0, g: 100, b: 200 },
+                        RGB { r: 0, g: 110, b: 210 }, RGB { r: 0, g: 120, b: 220 }, RGB { r: 0, g: 130, b: 230 },
+                        RGB { r: 0, g: 140, b: 240 }, RGB { r: 0, g: 150, b: 250 }, RGB { r: 0, g: 160, b: 254 },
+                        RGB { r: 0, g: 170, b: 254 }, RGB { r: 0, g: 180, b: 254 }, RGB { r: 0, g: 190, b: 254 },
+                        RGB { r: 0, g: 200, b: 254 }, RGB { r: 0, g: 210, b: 254 }, RGB { r: 0, g: 220, b: 254 },
+                        RGB { r: 0, g: 230, b: 254 }, RGB { r: 0, g: 242, b: 254 }, RGB { r: 0, g: 242, b: 254 },
+                        RGB { r: 0, g: 242, b: 254 }, RGB { r: 0, g: 242, b: 254 }, RGB { r: 0, g: 242, b: 254 },
                     ],
                     header_bg: RGB { r: 15, g: 16, b: 45 },
                     header_fg: RGB { r: 0, g: 242, b: 254 },
@@ -186,9 +210,23 @@ impl Display {
             2 => { // Obsidian / Monokai optimized
                 Theme {
                     meter_colors: [
-                        RGB { r: 166, g: 226, b: 46 }, RGB { r: 206, g: 226, b: 46 }, RGB { r: 253, g: 151, b: 31 },
-                        RGB { r: 253, g: 151, b: 31 }, RGB { r: 249, g: 38, b: 114 }, RGB { r: 249, g: 38, b: 114 },
-                        RGB { r: 174, g: 129, b: 255 }, RGB { r: 174, g: 129, b: 255 }, RGB { r: 102, g: 217, b: 239 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 112, g: 220, b: 190 }, RGB { r: 122, g: 223, b: 141 },
+                        RGB { r: 132, g: 226, b: 92 }, RGB { r: 142, g: 227, b: 43 }, RGB { r: 166, g: 226, b: 46 },
+                        RGB { r: 186, g: 226, b: 46 }, RGB { r: 206, g: 226, b: 46 }, RGB { r: 220, g: 215, b: 46 },
+                        RGB { r: 253, g: 211, b: 31 }, RGB { r: 253, g: 196, b: 31 }, RGB { r: 253, g: 181, b: 31 },
+                        RGB { r: 253, g: 166, b: 31 }, RGB { r: 253, g: 151, b: 31 }, RGB { r: 250, g: 123, b: 51 },
+                        RGB { r: 248, g: 95, b: 72 }, RGB { r: 249, g: 67, b: 93 }, RGB { r: 249, g: 38, b: 114 },
+                        RGB { r: 229, g: 60, b: 149 }, RGB { r: 210, g: 83, b: 184 }, RGB { r: 191, g: 106, b: 219 },
+                        RGB { r: 174, g: 129, b: 255 }, RGB { r: 174, g: 129, b: 255 }, RGB { r: 174, g: 129, b: 255 },
+                    ],
+                    freq_colors: [
+                        RGB { r: 174, g: 129, b: 255 }, RGB { r: 164, g: 139, b: 255 }, RGB { r: 154, g: 149, b: 255 },
+                        RGB { r: 144, g: 159, b: 255 }, RGB { r: 134, g: 169, b: 255 }, RGB { r: 124, g: 179, b: 255 },
+                        RGB { r: 114, g: 189, b: 155 }, RGB { r: 108, g: 203, b: 197 }, RGB { r: 102, g: 217, b: 239 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 },
+                        RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 },
                         RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 }, RGB { r: 102, g: 217, b: 239 },
                     ],
                     header_bg: RGB { r: 35, g: 35, b: 35 },
@@ -215,7 +253,26 @@ impl Display {
             },
             3 => { // Mono / Amber
                 Theme {
-                    meter_colors: [RGB { r: 255, g: 140, b: 0 }; 12],
+                    meter_colors: [
+                        RGB { r: 100, g: 40, b: 0 }, RGB { r: 110, g: 45, b: 0 }, RGB { r: 120, g: 50, b: 0 },
+                        RGB { r: 130, g: 55, b: 0 }, RGB { r: 140, g: 60, b: 0 }, RGB { r: 150, g: 65, b: 0 },
+                        RGB { r: 160, g: 70, b: 0 }, RGB { r: 170, g: 75, b: 0 }, RGB { r: 180, g: 80, b: 0 },
+                        RGB { r: 190, g: 85, b: 0 }, RGB { r: 200, g: 90, b: 0 }, RGB { r: 210, g: 95, b: 0 },
+                        RGB { r: 220, g: 100, b: 0 }, RGB { r: 230, g: 105, b: 0 }, RGB { r: 240, g: 110, b: 0 },
+                        RGB { r: 250, g: 115, b: 0 }, RGB { r: 255, g: 125, b: 0 }, RGB { r: 255, g: 135, b: 0 },
+                        RGB { r: 255, g: 145, b: 0 }, RGB { r: 255, g: 145, b: 0 }, RGB { r: 255, g: 145, b: 0 },
+                        RGB { r: 255, g: 145, b: 0 }, RGB { r: 255, g: 145, b: 0 }, RGB { r: 255, g: 145, b: 0 },
+                    ],
+                    freq_colors: [
+                        RGB { r: 50, g: 20, b: 0 }, RGB { r: 60, g: 25, b: 0 }, RGB { r: 70, g: 30, b: 0 },
+                        RGB { r: 80, g: 35, b: 0 }, RGB { r: 90, g: 40, b: 0 }, RGB { r: 100, g: 45, b: 0 },
+                        RGB { r: 110, g: 50, b: 0 }, RGB { r: 120, g: 55, b: 0 }, RGB { r: 130, g: 60, b: 0 },
+                        RGB { r: 140, g: 65, b: 0 }, RGB { r: 150, g: 70, b: 0 }, RGB { r: 160, g: 75, b: 0 },
+                        RGB { r: 170, g: 80, b: 0 }, RGB { r: 180, g: 85, b: 0 }, RGB { r: 190, g: 90, b: 0 },
+                        RGB { r: 200, g: 95, b: 0 }, RGB { r: 210, g: 100, b: 0 }, RGB { r: 225, g: 110, b: 0 },
+                        RGB { r: 240, g: 120, b: 0 }, RGB { r: 255, g: 140, b: 0 }, RGB { r: 255, g: 140, b: 0 },
+                        RGB { r: 255, g: 140, b: 0 }, RGB { r: 255, g: 140, b: 0 }, RGB { r: 255, g: 140, b: 0 },
+                    ],
                     header_bg: RGB { r: 30, g: 10, b: 0 },
                     header_fg: RGB { r: 255, g: 140, b: 0 },
                     accent_fg: RGB { r: 255, g: 140, b: 0 },
@@ -238,12 +295,70 @@ impl Display {
                     pat_eff_fg: RGB { r: 255, g: 140, b: 0 },
                 }
             },
-            _ => { // Default Pro
+            4 => { // Studio Slate (Modernized Pro)
                 Theme {
                     meter_colors: [
-                        RGB { r: 0, g: 180, b: 0 }, RGB { r: 0, g: 210, b: 0 }, RGB { r: 0, g: 240, b: 0 },
-                        RGB { r: 180, g: 180, b: 0 }, RGB { r: 210, g: 210, b: 0 }, RGB { r: 240, g: 240, b: 0 },
-                        RGB { r: 240, g: 120, b: 0 }, RGB { r: 240, g: 60, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                        RGB { r: 47, g: 51, b: 77 }, RGB { r: 54, g: 61, b: 94 }, RGB { r: 61, g: 71, b: 112 },
+                        RGB { r: 68, g: 81, b: 130 }, RGB { r: 75, g: 91, b: 148 }, RGB { r: 82, g: 101, b: 166 },
+                        RGB { r: 122, g: 162, b: 247 }, RGB { r: 111, g: 172, b: 232 }, RGB { r: 100, g: 182, b: 217 },
+                        RGB { r: 89, g: 192, b: 202 }, RGB { r: 78, g: 202, b: 187 }, RGB { r: 67, g: 212, b: 172 },
+                        RGB { r: 158, g: 206, b: 106 }, RGB { r: 182, g: 201, b: 103 }, RGB { r: 206, g: 196, b: 100 },
+                        RGB { r: 224, g: 175, b: 104 }, RGB { r: 230, g: 158, b: 116 }, RGB { r: 236, g: 141, b: 128 },
+                        RGB { r: 247, g: 118, b: 142 }, RGB { r: 230, g: 100, b: 130 }, RGB { r: 210, g: 80, b: 110 },
+                        RGB { r: 190, g: 60, b: 90 }, RGB { r: 170, g: 40, b: 70 }, RGB { r: 150, g: 20, b: 50 },
+                    ],
+                    freq_colors: [
+                        RGB { r: 35, g: 55, b: 115 }, RGB { r: 45, g: 65, b: 135 }, RGB { r: 55, g: 75, b: 155 },
+                        RGB { r: 65, g: 85, b: 175 }, RGB { r: 75, g: 95, b: 195 }, RGB { r: 85, g: 105, b: 215 },
+                        RGB { r: 122, g: 162, b: 247 }, RGB { r: 112, g: 172, b: 237 }, RGB { r: 102, g: 182, b: 227 },
+                        RGB { r: 92, g: 192, b: 217 }, RGB { r: 82, g: 202, b: 207 }, RGB { r: 72, g: 212, b: 197 },
+                        RGB { r: 158, g: 206, b: 106 }, RGB { r: 158, g: 206, b: 106 }, RGB { r: 158, g: 206, b: 106 },
+                        RGB { r: 158, g: 206, b: 106 }, RGB { r: 158, g: 206, b: 106 }, RGB { r: 150, g: 220, b: 100 },
+                        RGB { r: 140, g: 240, b: 90 }, RGB { r: 130, g: 255, b: 80 }, RGB { r: 160, g: 255, b: 100 },
+                        RGB { r: 190, g: 255, b: 120 }, RGB { r: 220, g: 255, b: 140 }, RGB { r: 255, g: 255, b: 255 },
+                    ],
+                    header_bg: RGB { r: 26, g: 27, b: 38 },
+                    header_fg: RGB { r: 192, g: 202, b: 245 },
+                    accent_fg: RGB { r: 122, g: 162, b: 247 },
+                    table_hdr_bg: RGB { r: 22, g: 22, b: 30 },
+                    table_hdr_fg: RGB { r: 122, g: 162, b: 247 },
+                    row_bg_odd: RGB { r: 26, g: 27, b: 38 },
+                    row_bg_even: RGB { r: 22, g: 22, b: 30 },
+                    col_on: RGB { r: 158, g: 206, b: 106 },
+                    col_off: RGB { r: 65, g: 72, b: 104 },
+                    col_inst: RGB { r: 158, g: 206, b: 106 },
+                    col_freq: RGB { r: 122, g: 162, b: 247 },
+                    col_note: RGB { r: 192, g: 202, b: 245 },
+                    col_period: RGB { r: 158, g: 206, b: 106 },
+                    col_sep: RGB { r: 65, g: 72, b: 104 },
+                    pat_row_bg: RGB { r: 22, g: 22, b: 30 },
+                    pat_curr_bg: RGB { r: 47, g: 51, b: 77 },
+                    pat_note_fg: RGB { r: 192, g: 202, b: 245 },
+                    pat_inst_fg: RGB { r: 158, g: 206, b: 106 },
+                    pat_vol_fg: RGB { r: 224, g: 175, b: 104 },
+                    pat_eff_fg: RGB { r: 247, g: 118, b: 142 },
+                }
+            },
+            _ => { // Classic Pro (Refined)
+                Theme {
+                    meter_colors: [
+                        RGB { r: 0, g: 100, b: 0 }, RGB { r: 0, g: 120, b: 0 }, RGB { r: 0, g: 140, b: 0 },
+                        RGB { r: 0, g: 160, b: 0 }, RGB { r: 0, g: 180, b: 0 }, RGB { r: 0, g: 200, b: 0 },
+                        RGB { r: 0, g: 220, b: 0 }, RGB { r: 0, g: 240, b: 0 }, RGB { r: 60, g: 240, b: 0 },
+                        RGB { r: 120, g: 240, b: 0 }, RGB { r: 180, g: 240, b: 0 }, RGB { r: 240, g: 240, b: 0 },
+                        RGB { r: 240, g: 210, b: 0 }, RGB { r: 240, g: 180, b: 0 }, RGB { r: 240, g: 150, b: 0 },
+                        RGB { r: 240, g: 120, b: 0 }, RGB { r: 240, g: 90, b: 0 }, RGB { r: 240, g: 60, b: 0 },
+                        RGB { r: 240, g: 30, b: 0 }, RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                        RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 },
+                    ],
+                    freq_colors: [
+                        RGB { r: 0, g: 0, b: 150 }, RGB { r: 0, g: 30, b: 180 }, RGB { r: 0, g: 60, b: 210 },
+                        RGB { r: 0, g: 90, b: 240 }, RGB { r: 0, g: 120, b: 255 }, RGB { r: 0, g: 150, b: 255 },
+                        RGB { r: 0, g: 180, b: 255 }, RGB { r: 0, g: 210, b: 180 }, RGB { r: 0, g: 240, b: 100 },
+                        RGB { r: 30, g: 255, b: 0 }, RGB { r: 60, g: 255, b: 0 }, RGB { r: 90, g: 255, b: 0 },
+                        RGB { r: 120, g: 255, b: 0 }, RGB { r: 150, g: 255, b: 0 }, RGB { r: 180, g: 255, b: 0 },
+                        RGB { r: 210, g: 255, b: 0 }, RGB { r: 240, g: 255, b: 0 }, RGB { r: 255, g: 180, b: 0 },
+                        RGB { r: 255, g: 120, b: 0 }, RGB { r: 255, g: 60, b: 0 }, RGB { r: 255, g: 0, b: 0 },
                         RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 }, RGB { r: 255, g: 0, b: 0 },
                     ],
                     header_bg: RGB { r: 0, g: 0, b: 128 },
@@ -261,11 +376,11 @@ impl Display {
                     col_period: RGB { r: 0, g: 255, b: 0 },
                     col_sep: RGB { r: 128, g: 128, b: 128 },
                     pat_row_bg: RGB { r: 0, g: 0, b: 0 },
-                    pat_curr_bg: RGB { r: 45, g: 45, b: 128 },
+                    pat_curr_bg: RGB { r: 42, g: 60, b: 126 },
                     pat_note_fg: RGB { r: 255, g: 255, b: 255 },
-                    pat_inst_fg: RGB { r: 0, g: 255, b: 0 },
-                    pat_vol_fg: RGB { r: 255, g: 255, b: 0 },
-                    pat_eff_fg: RGB { r: 255, g: 128, b: 0 },
+                    pat_inst_fg: RGB { r: 74, g: 246, b: 38 },
+                    pat_vol_fg: RGB { r: 246, g: 211, b: 45 },
+                    pat_eff_fg: RGB { r: 255, g: 0, b: 0 },
                 }
             }
         }
@@ -302,7 +417,7 @@ impl Display {
         };
 
         // Table Header (ABSOLUTE PARITY WITH WEB SCREENSHOT)
-        let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PERD | CHAN VOL | ENVELOPE | GLOBAL VOL | FADEOUT | PANNING |";
+        let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PITCH | CHAN VOL | ENVELOPE | FADEOUT | PANNING |";
         grid.print(x_start, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
         if use_two_columns {
             grid.print(x_start + 130, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
@@ -324,8 +439,8 @@ impl Display {
             let channel = &play_data.channel_status[actual_ch];
             let row_bg = if i % 2 == 1 { theme.row_bg_odd } else { theme.row_bg_even };
 
-            let status = if channel.force_off { " x " } else if channel.on { " ON" } else { "OFF" };
-            let col_status = if channel.on { theme.col_on } else { theme.col_off };
+            let status = if channel.force_off { "MUT" } else if channel.on { "ON " } else { "OFF" };
+            let col_status = if channel.force_off { theme.col_off } else if channel.on { theme.col_on } else { theme.col_off };
             
             // PIXEL PERFECT CURSOR-BASED LAYOUT
             grid.print(x, y, status, col_status, row_bg);
@@ -333,7 +448,7 @@ impl Display {
             grid.print(x + 5, y, &format!(" {:02} ", actual_ch + 1), theme.col_note, row_bg);
             grid.print(x + 9, y, "|", theme.col_sep, row_bg);
 
-            if channel.on {
+            if channel.on && !channel.force_off {
                 grid.print(x + 10, y, &format!(" {:>2}:{:17} ", channel.instrument, Self::fixed_width(&channel.instrument_name, 17)), theme.col_inst, row_bg);
                 grid.print(x + 32, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 33, y, &format!(" {:<4} ", channel.frequency as u32 % 100000), theme.col_freq, row_bg);
@@ -348,34 +463,51 @@ impl Display {
                 
                 grid.print(x + 60, y, &format!(" {:3} ", channel.note), theme.col_note, row_bg);
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 67, y, &format!(" {:4} ", channel.period), theme.col_note, row_bg);
-                grid.print(x + 73, y, "|", theme.col_sep, row_bg);
                 
-                Self::grid_range_with_color(grid, x + 74, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
-                grid.print(x + 84, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 85, y, (channel.envelope_volume as f32 / 16383.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
-                grid.print(x + 95, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 96, y, (channel.global_volume as f32 / 64.0 * 12.0).ceil() as u32, 12, 12, &theme.meter_colors, row_bg);
-                grid.print(x + 108, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 109, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
-                grid.print(x + 118, y, "|", theme.col_sep, row_bg);
+                // PITCH POSITION BAR (Bipolar semitone displacement - 7 slots)
+                let semitones = channel.pitch_shift;
+                let bars = (semitones * 20.0).round() as i32; // 1 bar per 0.05 semitones
                 
-                // ODD WIDTH: 9 chars for perfect centering
-                Self::grid_range(grid, x + 119, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
-                grid.print(x + 128, y, "|", theme.col_sep, row_bg);
-            } else {
-                grid.print(x + 10, y, &" ".repeat(118), theme.col_off, row_bg);
+                if bars > 0 {
+                    // Positive: Clear left half + center, Draw right (Slots 4,5,6)
+                    grid.print(x + 67, y, "    ", theme.col_sep, row_bg); 
+                    let val = bars.abs().min(3) as u32;
+                    Self::grid_range_with_color(grid, x + 67 + 4, y, val, 3, 3, &theme.freq_colors, row_bg);
+                } else if bars < 0 {
+                    // Negative: Draw left, Clear right half + center (Slots 0,1,2)
+                    let val = bars.abs().min(3) as usize;
+                    Self::grid_range_with_color(grid, x + 67 + 3 - val, y, val as u32, 3, 3, &theme.freq_colors, row_bg);
+                    grid.print(x + 67 + 3, y, "    ", theme.col_sep, row_bg); 
+                } else {
+                    // Neutral: Center indicator (Slot 3)
+                    grid.print(x + 67, y, "   ", theme.col_sep, row_bg);
+                    grid.print(x + 67 + 3, y, "-", theme.col_sep, row_bg);
+                    grid.print(x + 67 + 4, y, "   ", theme.col_sep, row_bg);
+                }
+                grid.print(x + 74, y, "|", theme.col_sep, row_bg); // Shifted from 73
+                
+                Self::grid_range_with_color(grid, x + 75, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
+                grid.print(x + 85, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color(grid, x + 86, y, (channel.envelope_volume as f32 / 16383.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
+        grid.print(x + 96, y, "|", theme.col_sep, row_bg);
+
+        Self::grid_range_with_color(grid, x + 97, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
+        grid.print(x + 106, y, "|", theme.col_sep, row_bg);
+
+        Self::grid_range(grid, x + 107, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
+        grid.print(x + 116, y, "|", theme.col_sep, row_bg);
+    } else {
+                grid.print(x + 10, y, &" ".repeat(106), theme.col_off, row_bg);
                 grid.print(x + 32, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 39, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 48, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 59, y, "|", theme.col_sep, row_bg);
                 grid.print(x + 66, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 73, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 84, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 95, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 108, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 118, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 128, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 74, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 85, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 96, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 106, y, "|", theme.col_sep, row_bg);
+                grid.print(x + 116, y, "|", theme.col_sep, row_bg);
             }
         }
 
@@ -451,11 +583,19 @@ impl Display {
                         let vol = if p.volume == 0 { "..".to_string() } else { format!("{:02X}", p.volume) };
                         let effect = if p.effect == 0 && p.effect_param == 0 { "...".to_string() } else { format!("{:01X}{:02X}", p.effect, p.effect_param) };
                         
+                        let is_muted = actual_ch < play_data.channel_status.len()
+                            && play_data.channel_status[actual_ch].force_off;
+                        
                         // MULTICOLOR TRACKER RENDERING WITH CHANNEL SEPARATORS
-                        grid.print(curr_x, draw_y, &note, theme.pat_note_fg, row_bg);
-                        grid.print(curr_x + 4, draw_y, &inst, theme.pat_inst_fg, row_bg);
-                        grid.print(curr_x + 7, draw_y, &vol, theme.pat_vol_fg, row_bg);
-                        grid.print(curr_x + 10, draw_y, &effect, theme.pat_eff_fg, row_bg);
+                        let (note_c, inst_c, vol_c, eff_c) = if is_muted {
+                            (theme.col_off, theme.col_off, theme.col_off, theme.col_off)
+                        } else {
+                            (theme.pat_note_fg, theme.pat_inst_fg, theme.pat_vol_fg, theme.pat_eff_fg)
+                        };
+                        grid.print(curr_x, draw_y, &note, note_c, row_bg);
+                        grid.print(curr_x + 4, draw_y, &inst, inst_c, row_bg);
+                        grid.print(curr_x + 7, draw_y, &vol, vol_c, row_bg);
+                        grid.print(curr_x + 10, draw_y, &effect, eff_c, row_bg);
                         grid.print(curr_x + 13, draw_y, "|", theme.col_sep, row_bg);
                     }
                 }
@@ -542,17 +682,17 @@ impl Display {
         for &v in spectrum.iter() {
             if v > max_val { max_val = v; }
         }
-        let gain = (1.5 / max_val).min(5.0); // Normalization gain
-
+        let gain = (2.0 / max_val).min(10.0); // Increased max gain for better visibility
+        
         let blocks = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-        let bar_height = height.saturating_sub(1); // Reserve bottom row for labels
+        let bar_height = height.saturating_sub(1); 
 
         for i in 0..width {
             let sample_idx = (i * spectrum.len()) / width;
-            let val = spectrum[sample_idx] * gain;
+            let val = spectrum[sample_idx.min(spectrum.len() - 1)] * gain;
             
-            // 2. Logarithmic-like scaling for better dynamic range perception
-            let log_val = (val * 8.0).ln_1p() / (8.0f32).ln_1p();
+            // Smoother scaling: emphasize higher magnitudes slightly more
+            let log_val = (val * 4.0).ln_1p() / (4.0f32).ln_1p();
             let h_filled = (log_val * (bar_height as f32 * 8.0)).round() as u32;
 
             for h in 0..bar_height {
@@ -637,8 +777,8 @@ impl Display {
                 if cell_y >= grid.height { continue; }
                 
                 let dot_patterns = [0x01, 0x02, 0x04, 0x40];
-                let color_idx = (y_dot * 12) / vertical_dots;
-                grid.merge_braille_cell(cell_x, cell_y, dot_patterns[dot_in_char], theme.meter_colors[color_idx % 12], theme.pat_row_bg);
+                let color_idx = (y_dot * 24) / vertical_dots;
+                grid.merge_braille_cell(cell_x, cell_y, dot_patterns[dot_in_char], theme.meter_colors[color_idx % 24], theme.pat_row_bg);
             }
             prev_dot_y = Some(dot_y);
         }
@@ -665,7 +805,7 @@ impl Display {
         }
     }
 
-    fn grid_range_with_color(grid: &mut Grid, x: usize, y: usize, pos: u32, end: u32, width: usize, colors: &[RGB; 12], bg: RGB) {
+    fn grid_range_with_color(grid: &mut Grid, x: usize, y: usize, pos: u32, end: u32, width: usize, colors: &[RGB; 24], bg: RGB) {
         if width == 0 { return; }
         let indicator_pos = if end == 0 { 0 } else { ((pos as f32 / end as f32) * (width as f32)).round() as usize }.min(width);
         for i in 0..width {
@@ -739,15 +879,15 @@ mod tests {
         
         // 1. Edge reach: 255/255 on width 9 -> index 8
         Display::grid_range(&mut grid, 0, 0, 255, 255, 9, theme.accent_fg, theme.row_bg_even);
-        assert_eq!(grid.cells[8].c, '=');
-        assert_eq!(grid.cells[7].c, '-');
+        assert_eq!(grid.cells[8].c, b'=' as u32);
+        assert_eq!(grid.cells[7].c, b'-' as u32);
 
         // 2. Centering: 127/255 on width 9 -> index 4 (127/255 * 8 = 3.98 -> 4)
         let mut grid2 = Grid::new(20, 1);
         Display::grid_range(&mut grid2, 0, 0, 127, 255, 9, theme.accent_fg, theme.row_bg_even);
-        assert_eq!(grid2.cells[4].c, '='); 
-        assert_eq!(grid2.cells[3].c, '-');
-        assert_eq!(grid2.cells[5].c, '-');
+        assert_eq!(grid2.cells[4].c, b'=' as u32); 
+        assert_eq!(grid2.cells[3].c, b'-' as u32);
+        assert_eq!(grid2.cells[5].c, b'-' as u32);
     }
 
     #[test]
@@ -757,7 +897,7 @@ mod tests {
         
         // Max volume (64/64) on width 12 -> all cells filled
         Display::grid_range_with_color(&mut grid, 0, 0, 64, 64, 12, &theme.meter_colors, theme.row_bg_even);
-        assert_eq!(grid.cells[11].c, '=');
-        assert_eq!(grid.cells[10].c, '=');
+        assert_eq!(grid.cells[11].c, b'=' as u32);
+        assert_eq!(grid.cells[10].c, b'=' as u32);
     }
 }
