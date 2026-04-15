@@ -20,3 +20,6 @@ modplayer-wasm/www/modplayer-wasm-app-*.tgz
 .vscode/
 *.swp
 *.swo
+
+# Deployment
+.publish/
