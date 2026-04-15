@@ -2,6 +2,8 @@
 
 A module music player written in Rust with terminal and WebAssembly backends.
 
+[**Live Demo**](https://diffuse2000.github.io/rust-modplayer/)
+
 ## 🌟 Overview
 
 **modplayer** is a module player that provides a way to listen to classic tracker music in the browser and the command line. It features a custom terminal-inspired interface with real-time channel visualization and basic effect support.
