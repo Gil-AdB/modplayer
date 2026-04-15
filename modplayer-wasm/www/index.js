@@ -2,6 +2,7 @@ import './libs/bootstrap.min.css';
 import './style.css';
 import * as wglt from 'wglt';
 import * as modplayer from '../pkg/modplayer_wasm';
+import { memory } from '../pkg/modplayer_wasm_bg.wasm';
 let font = require("./8x16 Font.png");
 
 class NonResizeableTerminal extends wglt.Terminal {
@@ -82,9 +83,9 @@ let channelCount = 0;
 let filesList = [];
 let filesListPosition = 0;
 let viewMode = 0; // 0: Pattern, 1: Instruments, 2: Message, 3: Help
-let themeMode = 0; // 0: Pro, 1: Vibrant, 2: Obsidian, 3: Mono
-let visualMode = 0; // 0: Both(S), 1: Both(A), 2: Scope(S), 3: Scope(A), 4: FFT, 5: Off
-let scopeMode = 'global'; // 'global' or 'multi'
+let themeMode = 4; // 0: Pro, 1: Vibrant, 2: Obsidian, 3: Mono, 4: Studio Slate
+let visualMode = 1; // 0: Both(S), 1: Both(A), 2: Scope(S), 3: Scope(A), 4: FFT, 5: Off
+let scopeMode = 'multi'; // 'global' or 'multi'
 let _initPlayerPromise = null;
 
 function unlockAudio() {
@@ -222,50 +223,55 @@ class ModPlayerProcessor {
                 term.drawString(80, 25, " [ CLICK TO ACTIVATE AUDIO ] ", wglt.fromRgb(255,255,255), wglt.fromRgb(200,0,0));
             }
 
-            const buffer = this.song.display(viewMode, themeMode);
+            this.song.display(viewMode, themeMode);
+            const gridPtr = this.song.get_grid_ptr();
+            const gridLen = this.song.get_grid_size();
+            
+            // ZERO-COPY: Create a view directly into WASM memory
+            const wasmMemory = memory.buffer;
+            const gridData = new Uint8Array(wasmMemory, gridPtr, gridLen);
+
             const width = 200;
             const height = 50;
-            const stride = 7; 
-            if (!this.lastBuffer) this.lastBuffer = new Uint8Array(buffer.length);
+            const strideBytes = 12; // char(4) + fg(3) + bg(3) + align(2)
+            
+            if (!this.lastBuffer || this.lastBuffer.length !== gridLen) {
+                this.lastBuffer = new Uint8Array(gridLen);
+                this.lastBuffer.fill(0); // Force initial render
+            }
+            
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
-                    const offset = (y * width + x) * stride;
+                    const offset = (y * width + x) * strideBytes;
                     
-                    // Optimization: Skip if cell hasn't changed (Unrolled for 7-byte stride)
-                    if (this.lastBuffer[offset] === buffer[offset] &&
-                        this.lastBuffer[offset + 1] === buffer[offset + 1] &&
-                        this.lastBuffer[offset + 2] === buffer[offset + 2] &&
-                        this.lastBuffer[offset + 3] === buffer[offset + 3] &&
-                        this.lastBuffer[offset + 4] === buffer[offset + 4] &&
-                        this.lastBuffer[offset + 5] === buffer[offset + 5] &&
-                        this.lastBuffer[offset + 6] === buffer[offset + 6]) {
-                        continue;
+                    // Fast dirty-check across 10 relevant bytes
+                    let dirty = false;
+                    for (let i = 0; i < 10; i++) {
+                        if (this.lastBuffer[offset + i] !== gridData[offset + i]) {
+                            dirty = true;
+                            break;
+                        }
                     }
+                    
+                    if (dirty) {
+                        const charCode = gridData[offset]; // Lower 8 bits of u32 (ASCII)
+                        const fr = gridData[offset + 4];
+                        const fg = gridData[offset + 5];
+                        const fb = gridData[offset + 6];
+                        const br = gridData[offset + 7];
+                        const bg = gridData[offset + 8];
+                        const bb = gridData[offset + 9];
 
-                    // Update cache
-                    this.lastBuffer[offset] = buffer[offset];
-                    this.lastBuffer[offset + 1] = buffer[offset + 1];
-                    this.lastBuffer[offset + 2] = buffer[offset + 2];
-                    this.lastBuffer[offset + 3] = buffer[offset + 3];
-                    this.lastBuffer[offset + 4] = buffer[offset + 4];
-                    this.lastBuffer[offset + 5] = buffer[offset + 5];
-                    this.lastBuffer[offset + 6] = buffer[offset + 6];
+                        const fgColor = wglt.fromRgb(fr, fg, fb);
+                        const bgColor = wglt.fromRgb(br, bg, bb);
 
-                    const charCode = buffer[offset];
-                    const fr = buffer[offset + 1], fg = buffer[offset + 2], fb = buffer[offset + 3];
-                    const br = buffer[offset + 4], bg = buffer[offset + 5], bb = buffer[offset + 6];
-
-                    const fgColor = wglt.fromRgb(fr, fg, fb);
-                    const bgColor = wglt.fromRgb(br, bg, bb);
-                    const char = String.fromCharCode(charCode);
-
-                    if (term.drawChar) {
-                        term.drawChar(x, y, char, fgColor, bgColor);
-                    } else {
                         const cell = term.getCell(x, y);
-                        cell.setChar(char);
-                        cell.setForeground(fgColor);
-                        cell.setBackground(bgColor);
+                        cell.setValue(charCode, fgColor, bgColor);
+                        
+                        // Update cache
+                        for (let i = 0; i < 10; i++) {
+                            this.lastBuffer[offset + i] = gridData[offset + i];
+                        }
                     }
                 }
             }
@@ -404,20 +410,19 @@ function handleKeyboardEvents(e) {
     switch (e.code) {
         case 'KeyT':
             if (e.shiftKey) {
-                themeMode = (themeMode + 1) % 4;
+                cycleTheme();
                 e.preventDefault();
             }
             break;
-        case 'KeyP':
+        case 'KeyV':
             if (e.shiftKey) {
-                if (player && player.song) player.song.toggle_panning();
+                cycleVisuals();
                 e.preventDefault();
             }
             break;
-        case 'KeyO':
+        case 'KeyS':
             if (e.shiftKey) {
-                visualMode = (visualMode + 1) % 6;
-                updateVisualizerLayout();
+                if (player && player.song) player.song.handle_input(['S']);
                 e.preventDefault();
             }
             break;
@@ -464,6 +469,18 @@ window.addEventListener('wheel', (e) => {
     }
 }, { passive: true });
 
+function cycleTheme() {
+    themeMode = (themeMode + 1) % 5;
+}
+
+function cycleVisuals() {
+    visualMode = (visualMode + 1) % 6;
+    updateVisualizerLayout();
+}
+
+document.querySelector('#cycle-theme').addEventListener('click', cycleTheme);
+document.querySelector('#cycle-visuals').addEventListener('click', cycleVisuals);
+
 function updateVisualizerLayout() {
     const container = document.querySelector('.visualizers-container');
     const scope = document.querySelector('#oscilloscope');
@@ -492,7 +509,7 @@ function updateVisualizerLayout() {
     }
 }
 
-function drawOscilloscope(playData) {
+function drawOscilloscope(song) {
     if (![0, 2].includes(visualMode)) return;
     const canvas = document.querySelector('#oscilloscope');
     const oscCtx = canvas.getContext('2d');
@@ -501,22 +518,22 @@ function drawOscilloscope(playData) {
     oscCtx.fillStyle = '#000';
     oscCtx.fillRect(0, 0, width, height);
 
-    const channels = playData.channel_status;
     oscCtx.lineWidth = 2;
     const colors = [
         ['#00ff00', '#ffff00', '#ff0000'], // 0: Pro
-        ['#00f2fe', '#7b27ff'],            // 1: Cyberpunk
-        ['#ffff00', '#ff00ff'],            // 2: Obsidian
-        ['#ff8c00', '#404040']             // 3: Monochrome
+        ['#7b27ff', '#00f2fe'],            // 1: Cyberpunk
+        ['#66d9ef', '#ae81ff', '#f92672', '#fd971f', '#a6e22e'], // 2: Obsidian (Monokai-ish)
+        ['#ff8c00', '#404040'],            // 3: Monochrome
+        ['#7AA2F7', '#9ECE6A', '#E0AF68', '#F7768E'] // 4: Studio Slate
     ];
     const theme = colors[themeMode] || colors[0];
     const grad = oscCtx.createLinearGradient(0, height, 0, 0); 
     if (themeMode === 0) {
-        grad.addColorStop(0, '#ff0000');   // Top peak
-        grad.addColorStop(0.15, '#ffff00'); // Top warning
-        grad.addColorStop(0.5, '#00ff00'); // Center baseline
-        grad.addColorStop(0.85, '#ffff00'); // Bottom warning
-        grad.addColorStop(1, '#ff0000');   // Bottom peak
+        grad.addColorStop(0, '#ff0000');   
+        grad.addColorStop(0.15, '#ffff00'); 
+        grad.addColorStop(0.5, '#00ff00'); 
+        grad.addColorStop(0.85, '#ffff00'); 
+        grad.addColorStop(1, '#ff0000');   
     } else {
         grad.addColorStop(0, theme[0]);
         grad.addColorStop(0.5, theme[theme.length - 1]);
@@ -525,15 +542,20 @@ function drawOscilloscope(playData) {
     oscCtx.strokeStyle = grad;
     oscCtx.beginPath();
 
-    const bufferLength = 512;
+    const ptr = song.get_scopes_ptr();
+    const len = song.get_scopes_len();
+    const scopes = new Float32Array(memory.buffer, ptr, len);
+
+    const bufferLength = 128; // Downsampled
     const sliceWidth = width / bufferLength;
     let x = 0;
     for (let i = 0; i < bufferLength; i++) {
         let v = 0;
         let activeChannels = 0;
-        for (let c = 0; c < channels.length; c++) {
-            if (channels[c].on) {
-                v += channels[c].oscilloscope[i];
+        for (let c = 0; c < channelCount; c++) {
+            const sample = scopes[c * 128 + i];
+            if (sample !== 0.0) {
+                v += sample;
                 activeChannels++;
             }
         }
@@ -546,7 +568,7 @@ function drawOscilloscope(playData) {
     oscCtx.stroke();
 }
 
-function drawMultiOscilloscope(playData) {
+function drawMultiOscilloscope(song) {
     if (![1, 3].includes(visualMode)) return;
     const canvas = document.querySelector('#oscilloscope');
     const oscCtx = canvas.getContext('2d');
@@ -554,55 +576,53 @@ function drawMultiOscilloscope(playData) {
     const height = canvas.height;
     oscCtx.fillStyle = '#000';
     oscCtx.fillRect(0, 0, width, height);
-    const channels = playData.channel_status;
-    const n = channels.length;
+
+    const n = channelCount;
     const cols = Math.ceil(Math.sqrt(n));
     const rows = Math.ceil(n / cols);
     const cellW = width / cols;
     const cellH = height / rows;
+    
     const colors = [
-        ['#00ff00', '#ffff00', '#ff0000'],
+        ['#00ff00', '#ffff00', '#ff0000'], 
         ['#00f2fe', '#7b27ff'], 
         ['#ffff00', '#ff00ff'], 
         ['#ff8c00', '#404040'],
-         
+        ['#7AA2F7', '#9ECE6A', '#E0AF68', '#F7768E']
     ];
     const theme = colors[themeMode] || colors[0];
     oscCtx.lineWidth = 1;
     oscCtx.font = '8px Share Tech Mono';
     oscCtx.fillStyle = '#a0a0c0';
 
-    for (let i = 0; i < Math.min(channels.length, cols * rows); i++) {
+    const ptr = song.get_scopes_ptr();
+    const len = song.get_scopes_len();
+    const scopes = new Float32Array(memory.buffer, ptr, len);
+
+    for (let i = 0; i < Math.min(channelCount, cols * rows); i++) {
         const xBase = (i % cols) * cellW;
         const yBase = Math.floor(i / cols) * cellH;
         oscCtx.strokeStyle = 'rgba(255,255,255,0.05)';
         oscCtx.strokeRect(xBase, yBase, cellW, cellH);
-        if (channels[i].on) {
-            oscCtx.fillText((i + 1).toString(), xBase + 2, yBase + 8);
-            const grad = oscCtx.createLinearGradient(0, yBase + cellH, 0, yBase);
-            if (themeMode === 0) {
-                grad.addColorStop(0, '#ff0000');   // Top peak
-                grad.addColorStop(0.15, '#ffff00'); // Top warning
-                grad.addColorStop(0.5, '#00ff00'); // Center baseline
-                grad.addColorStop(0.85, '#ffff00'); // Bottom warning
-                grad.addColorStop(1, '#ff0000');   // Bottom peak
-            } else {
-                grad.addColorStop(0, theme[0]);
-                grad.addColorStop(0.5, theme[theme.length - 1]);
-                grad.addColorStop(1, theme[0]);
-            }
-            oscCtx.strokeStyle = grad;
-            oscCtx.beginPath();
-            const bufferLength = 512;
-            const sliceW = cellW / bufferLength;
-            for (let s = 0; s < bufferLength; s++) {
-                const v = channels[i].oscilloscope[s];
-                const y = (v * 1.0 * cellH * 0.7) + yBase + cellH / 2;
-                if (s === 0) oscCtx.moveTo(xBase, y);
-                else oscCtx.lineTo(xBase + s * sliceW, y);
-            }
-            oscCtx.stroke();
+        
+        oscCtx.fillText((i + 1).toString(), xBase + 2, yBase + 8);
+        const grad = oscCtx.createLinearGradient(0, yBase + cellH, 0, yBase);
+        if (themeMode === 0) {
+            grad.addColorStop(0, '#ff0000'); grad.addColorStop(0.15, '#ffff00'); grad.addColorStop(0.5, '#00ff00'); grad.addColorStop(0.85, '#ffff00'); grad.addColorStop(1, '#ff0000');
+        } else {
+            grad.addColorStop(0, theme[0]); grad.addColorStop(0.5, theme[theme.length - 1]); grad.addColorStop(1, theme[0]);
         }
+        oscCtx.strokeStyle = grad;
+        oscCtx.beginPath();
+        
+        const sliceW = cellW / 128;
+        for (let s = 0; s < 128; s++) {
+            const v = scopes[i * 128 + s];
+            const y = (v * 1.0 * cellH * 0.7) + yBase + cellH / 2;
+            if (s === 0) oscCtx.moveTo(xBase, y);
+            else oscCtx.lineTo(xBase + s * sliceW, y);
+        }
+        oscCtx.stroke();
     }
 }
 
@@ -625,7 +645,7 @@ function drawSpectrum() {
         ['#00f2fe', '#7b27ff'], 
         ['#ffff00', '#ff00ff'], 
         ['#ff8c00', '#404040'],
-         
+        ['#7AA2F7', '#9ECE6A', '#E0AF68', '#F7768E']
     ];
     const theme = colors[themeMode] || colors[0];
     
@@ -635,8 +655,8 @@ function drawSpectrum() {
         grad.addColorStop(0.5, '#ffff00');
         grad.addColorStop(1, '#ff0000');
     } else {
-        grad.addColorStop(0, theme[theme.length - 1]);
-        grad.addColorStop(1, theme[0]);
+        grad.addColorStop(0, theme[0]);
+        grad.addColorStop(1, theme[theme.length - 1]);
     }
     
     let x = 0;
@@ -663,9 +683,8 @@ function render(timestamp) {
     if (player && player.IsPlaying() && player.song) {
         try {
             player.Display();
-            const playData = player.song.get_play_data();
-            drawOscilloscope(playData);
-            drawMultiOscilloscope(playData);
+            drawOscilloscope(player.song);
+            drawMultiOscilloscope(player.song);
             drawSpectrum();
         } catch (e) {
             console.error("Display Loop Error:", e);

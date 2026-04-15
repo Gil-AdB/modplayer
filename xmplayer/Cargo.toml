@@ -14,10 +14,7 @@ crate-type = ["rlib"]
 [dependencies]
 shared-sync-primitives = { path = "../shared-sync-primitives" }
 binary-reader-io = { path = "../binary-reader-io" }
-byteorder = "1"
-array-const-fn-init = "0.1.1"
 lazy_static = "1.4.0"
-array-init = "0.1.1"
 simple-error = "0.2.2"
 serde = { version = "1.0", features = ["derive"] }
 rustfft = "6.2.0"
