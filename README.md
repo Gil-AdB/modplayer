@@ -2,7 +2,7 @@
 
 A module music player written in Rust with terminal and WebAssembly backends.
 
-[**Live Demo**](https://diffuse2000.github.io/rust-modplayer/)
+[**Live Demo**](https://Gil-AdB.github.io/rust-modplayer/)
 
 ## 🌟 Overview
 
