@@ -17,10 +17,10 @@ impl Pattern {
 
     pub fn new() -> Self {
         Self {
-            note: 0,
-            instrument: 0,
+            note: 255,
+            instrument: 255,
             volume: 255,
-            effect: 0,
+            effect: 255,
             effect_param: 0
         }
     }
@@ -49,13 +49,15 @@ impl Pattern {
     pub(crate) fn has_vibrato(&self, song_type: SongType) -> bool {
         match song_type {
             SongType::IT => self.effect == 0x08 || self.effect == 0x06, // H or F
+            SongType::S3M => self.effect == 0x08 || self.effect == 0x0B, // H or K (Vibrato+VolSlide)
             _ => self.get_volume_effect() == 0xb || self.effect == 0x4 || self.effect == 0x6
         }
     }
 
     pub(crate) fn has_tremolo(&self, song_type: SongType) -> bool {
         match song_type {
-            SongType::IT => self.effect == 0x12, // R? No, IT has different Tremolo.
+            SongType::IT => self.effect == 0x1D, // Tremolo in IT is 0x1D (R)? No, actually S3M/IT/XM vary.
+            SongType::S3M => self.effect == 0x12, // R
             _ => self.effect == 0x7
         }
     }

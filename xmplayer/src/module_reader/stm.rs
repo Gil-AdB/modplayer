@@ -299,6 +299,10 @@
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
+
+            // Map all notes to sample 0 for classic MOD/STM behavior
+            instrument.sample_indexes = (0..120).map(|i| (i as u8, 0)).collect();
+
             instruments.push(instrument);
         }
         Ok(instruments)

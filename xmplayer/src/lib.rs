@@ -66,7 +66,10 @@ pub mod song_state;
 #[cfg(test)]
 mod it_fidelity_tests;
 #[cfg(test)]
+mod s3m_fidelity_tests;
+#[cfg(test)]
 mod it_mapping_tests;
+
 pub mod test_utils;
 
 

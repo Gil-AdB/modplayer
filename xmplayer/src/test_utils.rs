@@ -1,7 +1,7 @@
 use crate::module_reader::{SongData, SongType, FrequencyType, Patterns};
 use crate::pattern::Pattern;
 use crate::instrument::{Instrument, Sample};
-use crate::song::{Song, PlayData, GlobalVolume};
+use crate::song::{Song, PlayData};
 use shared_sync_primitives::{TripleBuffer};
 
 pub struct MockSongBuilder {
@@ -44,19 +44,23 @@ impl MockSongBuilder {
         instrument.name = name.to_string();
         let mut sample = Sample::new();
         sample.name = name.to_string();
-        sample.length = sample_data.len() as u32;
+        let data_len = sample_data.len();
+        sample.length = data_len as u32;
         sample.data = sample_data;
+        sample.setup_loops_and_padding();
+        instrument.samples.clear(); // Remove default empty sample from Instrument::new()
         instrument.samples.push(sample);
         // Map all notes to first sample
         for i in 0..120 {
             instrument.sample_indexes[i] = (i as u8, 1);
         }
+        instrument.idx = self.instruments.len() as u8;
         self.instruments.push(instrument);
         self
     }
 
     pub fn build(&self) -> SongData {
-        SongData {
+        let mut data = SongData {
             id: "MOCK".to_string(),
             name: "Mock Song".to_string(),
             song_type: self.song_type,
@@ -80,7 +84,15 @@ impl MockSongBuilder {
             mixing_volume: 128,
             old_effects: false,
             compatible_g: false,
+        };
+
+        if self.song_type == SongType::S3M || self.song_type == SongType::MOD {
+            data.use_amiga = true;
+            data.frequency_type = FrequencyType::AMIGA;
+            data.global_volume = 128; // S3M max
+            data.compatible_g = true;
         }
+        data
     }
 
     pub fn get_tester(&self) -> SongTester {

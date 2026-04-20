@@ -166,10 +166,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 file.seek(SeekFrom::Start(sample_data_ptr as u64))?;
                 
                 if (flags & 8) == 8 { // Compressed
+                    let cv = convert; // CV as provided by convert byte for now
                     if bitness == 8 {
-                        // IT compression blocks are not easily size-predictable without reading headers.
-                        // For simplicity, we'll read the whole block-based structure.
-                        // Actually, ITTECH says each block has a 16-bit length.
                         let mut decompressed_data = vec![0i8; length as usize];
                         let mut decomp_pos = 0usize;
                         while decomp_pos < length as usize {
@@ -177,7 +175,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                             let mut block_data = vec![0u8; block_len as usize];
                             file.read_exact(&mut block_data)?;
                             let todo = std::cmp::min(0x8000, length as usize - decomp_pos);
-                            it_compression::decompress_it_block_8bit(&block_data, &mut decompressed_data[decomp_pos..decomp_pos+todo])?;
+                            it_compression::decompress_it_block_8bit(&block_data, &mut decompressed_data[decomp_pos..decomp_pos+todo], cv as u16)?;
                             decomp_pos += todo;
                         }
                         sample.data = Sample::upsamplei16(Sample::upsamplei8(decompressed_data));
@@ -189,7 +187,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                             let mut block_data = vec![0u8; block_len as usize];
                             file.read_exact(&mut block_data)?;
                             let todo = std::cmp::min(0x4000, length as usize - decomp_pos);
-                            it_compression::decompress_it_block_16bit(&block_data, &mut decompressed_data[decomp_pos..decomp_pos+todo])?;
+                            it_compression::decompress_it_block_16bit(&block_data, &mut decompressed_data[decomp_pos..decomp_pos+todo], cv as u16)?;
                             decomp_pos += todo;
                         }
                         sample.data = Sample::upsamplei16(decompressed_data);

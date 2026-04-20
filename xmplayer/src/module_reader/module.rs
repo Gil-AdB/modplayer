@@ -272,12 +272,16 @@
 
         instruments.push(Instrument::new());
 
-        for instrument_idx in 1..instrument_count +1 {
+        for instrument_idx in 1..instrument_count + 1 {
             let mut instrument = Instrument::new();
             let sample = read_sample(file)?;
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
+            
+            // Map all notes to sample 0 for classic MOD/STM behavior
+            instrument.sample_indexes = (0..120).map(|i| (i as u8, 0)).collect();
+            
             instruments.push(instrument);
         }
         Ok(instruments)

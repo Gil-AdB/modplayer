@@ -323,7 +323,8 @@ impl ChannelState {
     }
 
     pub(crate) fn update_frequency_voice(&mut self, voice: &mut Voice, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
-        self.frequency = self.note.frequency(self.period_shift, semitone, frequency_tables) + voice.frequency_shift;
+        let hz = self.note.frequency(self.period_shift, semitone, frequency_tables);
+        self.frequency = (hz + voice.frequency_shift).max(0.0);
         voice.set_frequency(self.frequency, rate)
     }
 
@@ -455,10 +456,11 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, amount: i8) {
+    pub(crate) fn volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, slide: i8) {
         if !first_tick {
-            if let Some(v) = voice {
-                v.volume.set_volume(v.volume.volume as i32 + amount as i32);
+            self.volume.volume = ((self.volume.volume as i32 + slide as i32).max(0).min(64)) as u8;
+            if let Some(v) = voice { 
+                v.volume.set_volume(self.volume.volume as i32); 
             }
         }
     }
@@ -615,5 +617,75 @@ impl ChannelState {
                 }
             }
         }
+    }
+
+    pub(crate) fn retrig_note(&mut self, voice: Option<&mut Voice>, instruments: &Instruments, first_tick: bool, tick: u32, param: u8) {
+        if !first_tick && param != 0 && (tick % param as u32 == 0) {
+            if let Some(v) = voice {
+                v.trigger_note(instruments);
+            }
+        }
+    }
+
+    pub(crate) fn multi_retrig(&mut self, voice: Option<&mut Voice>, instruments: &Instruments, first_tick: bool, tick: u32, param: u8) {
+        if first_tick {
+            if param != 0 {
+                self.multi_retrig_count = (param & 0xf0) >> 4;
+                self.multi_retrig_volume = param & 0xf;
+            }
+        } else {
+            if self.multi_retrig_count != 0 && (tick % self.multi_retrig_count as u32 == 0) {
+                if let Some(v) = voice {
+                    let mut vol = v.volume.get_volume();
+                    match self.multi_retrig_volume {
+                        0x1 => { vol -= 1;  }
+                        0x2 => { vol -= 2;  }
+                        0x3 => { vol -= 4;  }
+                        0x4 => { vol -= 8;  }
+                        0x5 => { vol -= 16; }
+                        0x6 => { vol = vol * 2 / 3; }
+                        0x7 => { vol /= 2; }
+                        0x8 => {} // does not change completion
+                        0x9 => { vol += 1;  }
+                        0xA => { vol += 2;  }
+                        0xB => { vol += 4;  }
+                        0xC => { vol += 8;  }
+                        0xD => { vol += 16; }
+                        0xE => { vol = vol * 3 / 2; }
+                        0xF => { vol *= 2;  }
+                        _ => {}
+                    }
+                    v.volume.set_volume(vol as i32);
+                    v.trigger_note(instruments);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn tremor(&mut self, tick: u32, param: u8) {
+        if tick == 0 {
+            if param != 0 {
+                self.tremor = param;
+            }
+        }
+
+        let mut tremor_sign = self.tremor_count & 0x80;
+        let mut tremor_data = (self.tremor_count & 0x7F) as i8;
+
+        tremor_data -= 1;
+        if tremor_data < 0 {
+            if tremor_sign == 0x80 {
+                tremor_sign = 0x00;
+                tremor_data = (self.tremor & 0xf) as i8;
+            } else {
+                tremor_sign = 0x80;
+                tremor_data = (self.tremor >> 4) as i8;
+            }
+        }
+
+        self.tremor_count = tremor_sign | (tremor_data as u32 & 0x7F);
+        // We set channel.on based on tremor_sign. 
+        // Note: tremor_sign 0x80 means "on" in IT/XM
+        self.on = tremor_sign == 0x80;
     }
 }

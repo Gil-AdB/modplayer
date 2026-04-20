@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 use std::io::{stdout, Write};
 
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use xmplayer::song_state::{SongState, SongHandle};
 use xmplayer::AudioConsumer;
 
@@ -15,7 +15,7 @@ use xmplayer::AudioConsumer;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use display::display::{Display, TargetPlatform};
-use display::ViewPort;
+use display::{ViewPort, Grid};
 
 fn main() {
     if env::args().len() < 2 {return;}
@@ -44,7 +44,7 @@ struct TerminalModeSetter {
 
 impl TerminalModeSetter {
     fn new() -> Self {
-        if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
+        if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen, Hide) {}
         let _ = crossterm::terminal::enable_raw_mode();
         TerminalModeSetter {}
     }
@@ -52,6 +52,7 @@ impl TerminalModeSetter {
 
 impl Drop for TerminalModeSetter {
     fn drop(&mut self) {
+        let _ = crossterm::execute!(stdout(), Show, LeaveAlternateScreen);
         let _ = crossterm::terminal::disable_raw_mode();
     }
 }
@@ -74,25 +75,17 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
             height: 40
         };
 
-        if let UserData::ISize(x) = data.user_data.get("x").unwrap_or(&UserData::ISize(0)) {
-            if let UserData::ISize(y) = data.user_data.get("y").unwrap_or(&UserData::ISize(0)) {
-                if let UserData::USize(height) = data.user_data.get("height").unwrap_or(&UserData::USize(0)) {
-                    if let UserData::USize(width) = data.user_data.get("width").unwrap_or(&UserData::USize(0)) {
-                        view_port.x1 = *x;
-                        view_port.y1 = *y;
-                        view_port.width = *width;
-                        view_port.height = *height;
-                    }
-                }
-            }
-        }
+        if let Some(UserData::ISize(x)) = data.user_data.get("x") { view_port.x1 = *x; }
+        if let Some(UserData::ISize(y)) = data.user_data.get("y") { view_port.y1 = *y; }
+        if let Some(UserData::USize(h)) = data.user_data.get("height") { if *h > 0 { view_port.height = *h; } }
+        if let Some(UserData::USize(w)) = data.user_data.get("width") { if *w > 0 { view_port.width = *w; } }
 
-        let grid = Display::render(data, instruments, patterns, order, view_port.width, view_port.height, data.view_mode, data.theme_id, view_port.x1, view_port.y1, 0, TargetPlatform::Native);
+        let mut grid = Grid::new(view_port.width, view_port.height);
+        Display::render(&mut grid, data, instruments, patterns, order, view_port.width, view_port.height, data.view_mode, data.theme_id, view_port.x1, view_port.y1, TargetPlatform::Native);
         
-        if let Err(_e) = crossterm::execute!(stdout(), Hide, MoveTo(0, 0)) {}
+        if let Err(_e) = crossterm::execute!(stdout(), MoveTo(0, 0)) {}
         print!("{}", grid.to_ansi());
         let _ = stdout().flush();
-        if let Err(_e) = crossterm::execute!(stdout(), Show) {}
     });
 
     audio.start_audio_output();
@@ -107,7 +100,6 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
     }
 
     audio.close();
-    if let Err(_e) = crossterm::execute!(stdout(), LeaveAlternateScreen) {}
 }
 
 fn is_num (ch: char) -> bool {
@@ -142,10 +134,10 @@ fn mainloop(song_data: &SongState) {
                         KeyCode::Backspace => {}
                         KeyCode::Enter => {}
                         KeyCode::Left => {
-                            let _ = tx.send(PlaybackCmd::ModifyUserDataSubISize("x".to_string(), 1));
+                            let _ = tx.send(PlaybackCmd::SeekBackward10s);
                         }
                         KeyCode::Right => {
-                            let _ = tx.send(PlaybackCmd::ModifyUserDataAddISize("x".to_string(), 1));
+                            let _ = tx.send(PlaybackCmd::SeekForward10s);
                         }
                         KeyCode::Up => {
                             let _ = tx.send(PlaybackCmd::ModifyUserDataSubISize("y".to_string(), 1));
@@ -193,24 +185,22 @@ fn mainloop(song_data: &SongState) {
                                     let _ = tx.send(PlaybackCmd::Quit);
                                     break;
                                 }
-                                '3' => {
+                                'c' => {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataAddUSize("view_mode".to_string(), 1));
                                 }
                                 '0'..='9' => {
-                                    if SystemTime::now() > last_time + Duration::from_secs(1) {
-                                        last_char = '\0';
-                                    }
-
-                                    if is_num(last_char) {
-                                        let channel_number = (last_char as u8 - '0' as u8) * 10 + (ch as u8 - '0' as u8);
-                                        if channel_number > 0 && channel_number <= 32 {
-                                            let _ = tx.send(PlaybackCmd::ChannelToggle(channel_number - 1));
-                                        }
-                                        last_char = '\0';
+                                    let ch_idx = if ch == '0' { 9 } else { ch as u8 - '1' as u8 };
+                                    if event.modifiers.contains(KeyModifiers::SHIFT) {
+                                        let _ = tx.send(PlaybackCmd::ChannelSolo(ch_idx));
                                     } else {
-                                        last_char = ch;
+                                        let _ = tx.send(PlaybackCmd::ChannelToggle(ch_idx));
                                     }
-                                    last_time = SystemTime::now();
+                                }
+                                'a' => {
+                                    let _ = tx.send(PlaybackCmd::ChannelUnmuteAll);
+                                }
+                                'm' => {
+                                    let _ = tx.send(PlaybackCmd::ChannelMuteAll);
                                 }
                                 '+' => {
                                     let _ = tx.send(PlaybackCmd::IncSpeed);
@@ -233,13 +223,10 @@ fn mainloop(song_data: &SongState) {
                                 '/' => {
                                     let _ = tx.send(PlaybackCmd::LoopPattern);
                                 }
-                                'p' => {
-                                    let _ = tx.send(PlaybackCmd::Prev);
-                                }
                                 'r' => {
                                     let _ = tx.send(PlaybackCmd::Restart);
                                 }
-                                'a' => {
+                                'A' => {
                                     let _ = tx.send(PlaybackCmd::AmigaTable);
                                 }
                                 'l' => {
@@ -259,6 +246,9 @@ fn mainloop(song_data: &SongState) {
                                 }
                                 's' | 'S' => {
                                     let _ = tx.send(PlaybackCmd::ToggleScopes);
+                                }
+                                'p' | 'P' => {
+                                    let _ = tx.send(PlaybackCmd::Prev);
                                 }
                                 '[' => {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataSubISize("x".to_string(), 1));

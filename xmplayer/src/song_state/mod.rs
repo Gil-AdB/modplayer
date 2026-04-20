@@ -110,6 +110,7 @@ impl SongState {
             }
         }
         self.stopped.store(true, Ordering::Release);
+        self.triple_buffer_reader.wake_reader();
         self.q.stop();
     }
 
@@ -179,12 +180,14 @@ impl SongState {
 
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
+        self.triple_buffer_reader.wake_reader();
     }
 
     pub fn close(&self) {
         self.stopped.store(true, Ordering::Release);
         let _ = self.tx.send(Quit);
         self.q.stop();
+        self.triple_buffer_reader.wake_reader();
         // if handle.0.is_some() {
         //     handle.0.unwrap().join().unwrap();
         // }

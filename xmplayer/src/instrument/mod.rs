@@ -166,7 +166,7 @@ impl Sample {
                 self.data.push(self.data[idx]);
             }
         } else {
-            let last = *self.data.last().unwrap();
+            let last = *self.data.last().unwrap_or(&0.0);
             for _ in 0..4 {
                 self.data.push(last);
             }
@@ -181,7 +181,7 @@ impl Sample {
             }
             prefix.reverse();
         } else {
-            let first = self.data[0];
+            let first = if !self.data.is_empty() { self.data[0] } else { 0.0 };
             for _ in 0..4 {
                 prefix.push(first);
             }

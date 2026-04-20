@@ -630,7 +630,11 @@ impl Note {
 
         //period = clamp(period, 0, 65535);
 
-        return frequency_tables.d_period2hz_tab[period as usize] as f32;
+        let period_idx = period as usize;
+        if period_idx >= frequency_tables.d_period2hz_tab.len() {
+            return 0.0;
+        }
+        return frequency_tables.d_period2hz_tab[period_idx] as f32;
         // let two = 2.0f32;
         // let freq = 8363.0 * two.powf((6 * 12 * 16 * 4 - period) as f32 / (12 * 16 * 4) as f32);
         // return freq

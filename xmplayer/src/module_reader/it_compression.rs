@@ -6,18 +6,21 @@ pub(crate) struct ITDecompressor<'a> {
     reader: Cursor<&'a [u8]>,
     bit_buf: u32,
     bit_count: u32,
+    method: u8, // 1 or 2
 }
 
 impl<'a> ITDecompressor<'a> {
-    fn new(data: &'a [u8]) -> Self {
+    fn new(data: &'a [u8], cv: u16) -> Self {
         Self {
             reader: Cursor::new(data),
             bit_buf: 0,
             bit_count: 0,
+            method: if cv < 0x202 { 1 } else { 2 },
         }
     }
 
     fn read_bits(&mut self, count: u32) -> SimpleResult<u32> {
+        if count == 0 { return Ok(0); }
         while self.bit_count < count {
             let mut buf = [0u8; 1];
             if self.reader.read_exact(&mut buf).is_err() {
@@ -32,14 +35,15 @@ impl<'a> ITDecompressor<'a> {
         Ok(res)
     }
 
-    pub fn decompress_8bit(data: &[u8], out: &mut [i8]) -> SimpleResult<()> {
-        let mut decompressor = ITDecompressor::new(data);
+    pub fn decompress_8bit(data: &[u8], out: &mut [i8], cv: u16) -> SimpleResult<()> {
+        let mut decompressor = ITDecompressor::new(data, cv);
         let mut bit_width = 9u32;
         let mut out_pos = 0usize;
         let mut last_val = 0i8;
 
         while out_pos < out.len() {
             let val = decompressor.read_bits(bit_width)?;
+            
             if bit_width <= 6 {
                 if val == (1 << (bit_width - 1)) {
                     let mut new_width = decompressor.read_bits(3)? + 1;
@@ -65,6 +69,10 @@ impl<'a> ITDecompressor<'a> {
                 return Err(SimpleError::new("Invalid bit width in IT decompression"));
             }
 
+            if bit_width > 9 {
+                 return Err(SimpleError::new("Invalid bit width in IT decompression (too large)"));
+            }
+
             let mut final_val = val as i32;
             let shift = 32 - bit_width;
             final_val <<= shift;
@@ -77,8 +85,8 @@ impl<'a> ITDecompressor<'a> {
         Ok(())
     }
 
-    pub fn decompress_16bit(data: &[u8], out: &mut [i16]) -> SimpleResult<()> {
-        let mut decompressor = ITDecompressor::new(data);
+    pub fn decompress_16bit(data: &[u8], out: &mut [i16], cv: u16) -> SimpleResult<()> {
+        let mut decompressor = ITDecompressor::new(data, cv);
         let mut bit_width = 17u32;
         let mut out_pos = 0usize;
         let mut last_val = 0i16;
@@ -110,6 +118,10 @@ impl<'a> ITDecompressor<'a> {
                  return Err(SimpleError::new("Invalid bit width in IT decompression"));
             }
 
+            if bit_width > 17 {
+                return Err(SimpleError::new("Invalid bit width in IT decompression (too large)"));
+            }
+
             let mut final_val = val as i32;
             let shift = 32 - bit_width;
             final_val <<= shift;
@@ -123,10 +135,10 @@ impl<'a> ITDecompressor<'a> {
     }
 }
 
-pub(crate) fn decompress_it_block_8bit(data: &[u8], out: &mut [i8]) -> SimpleResult<()> {
-    ITDecompressor::decompress_8bit(data, out)
+pub(crate) fn decompress_it_block_8bit(data: &[u8], out: &mut [i8], cv: u16) -> SimpleResult<()> {
+    ITDecompressor::decompress_8bit(data, out, cv)
 }
 
-pub(crate) fn decompress_it_block_16bit(data: &[u8], out: &mut [i16]) -> SimpleResult<()> {
-    ITDecompressor::decompress_16bit(data, out)
+pub(crate) fn decompress_it_block_16bit(data: &[u8], out: &mut [i16], cv: u16) -> SimpleResult<()> {
+    ITDecompressor::decompress_16bit(data, out, cv)
 }

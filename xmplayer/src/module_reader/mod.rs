@@ -1,4 +1,5 @@
 use std::{fmt, fs};
+use serde::Serialize;
 use crate::{SimpleResult};
 use crate::instrument::{Instrument, Sample};
 use crate::module_reader::module::read_mod;
@@ -19,7 +20,7 @@ mod stm;
 mod it;
 mod it_compression;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize)]
 pub enum SongType {
     XM,
     MOD,
@@ -36,6 +37,7 @@ pub enum FrequencyType {
 pub(crate) fn is_note_valid(note: u8, song_type: SongType) -> bool {
     match song_type {
         SongType::IT => note > 0 && note <= 120,
+        SongType::S3M => note > 0 && note <= 97, // 97 is Note-Off in S3M
         _ => note > 0 && note <= 96,
     }
 }
