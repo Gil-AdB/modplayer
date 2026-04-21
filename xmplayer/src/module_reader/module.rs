@@ -99,6 +99,13 @@
             instruments,
             use_amiga: true,
             song_message: "".to_string(),
+            initial_channel_volume: [64; 64],
+            initial_channel_panning: [32; 64],
+            global_volume:           64,
+            master_volume:           128,
+            mixing_volume:           128,
+            old_effects: false,
+            compatible_g: false,
         })
     }
 
@@ -248,6 +255,8 @@
             panning: 128,
             relative_note: 0,
             name,
+            global_volume: 64,
+            surround: false,
             is_ping_pong: false,
             original_loop_end: 0,
             data: vec![],
@@ -263,12 +272,16 @@
 
         instruments.push(Instrument::new());
 
-        for instrument_idx in 1..instrument_count +1 {
+        for instrument_idx in 1..instrument_count + 1 {
             let mut instrument = Instrument::new();
             let sample = read_sample(file)?;
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
+            
+            // Map all notes to sample 0 for classic MOD/STM behavior
+            instrument.sample_indexes = (0..120).map(|i| (i as u8, 0)).collect();
+            
             instruments.push(instrument);
         }
         Ok(instruments)

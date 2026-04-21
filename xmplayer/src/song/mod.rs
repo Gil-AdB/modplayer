@@ -1,23 +1,54 @@
-use std::cmp::min;
-use rustfft::{FftPlanner, Fft, num_complex::Complex};
-use std::sync::Arc;
-
+use crate::channel_state::{ChannelState, Voice};
+use crate::channel_state::channel_state::{Note, Panning, Volume};
+use crate::instrument::{LoopType, Instrument};
+use crate::module_reader::{is_note_valid, Patterns, SongData, SongType};
+use crate::tables::{PANNING_TAB, AudioTables};
+use shared_sync_primitives::TripleBufferWriter;
 use serde::Serialize;
+use std::cmp::min;
+use std::collections::HashMap;
+use std::num::Wrapping;
+use std::sync::Arc;
 use std::sync::mpsc::Receiver;
+use rustfft::{Fft, FftPlanner, num_complex::Complex};
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use crate::channel_state::{ChannelState, Voice};
-use crate::channel_state::channel_state::{EnvelopeState, Note, PortaToNoteState, TremoloState, VibratoState, WaveControl, Panning, clamp, VibratoEnvelopeState};
-use crate::instrument::{LoopType, Instrument};
-use crate::module_reader::{SongData, SongType, is_note_valid, Patterns};
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
-use crate::tables::{PANNING_TAB, AudioTables};
-use shared_sync_primitives::TripleBufferWriter;
-use std::collections::HashMap;
-use std::num::Wrapping;
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+use std::arch::wasm32::*;
+
+#[cfg(all(target_arch = "x86_64", target_feature = "sse"))]
+use std::arch::x86_64::*;
+
+// Global Gain Constant (from master)
+pub const MASTER_GAIN: f32 = 0.5;
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct BPM {
+    pub bpm: u32,
+    pub tick_duration_in_ms: f32,
+    pub tick_duration_in_frames: usize,
+}
+
+impl BPM {
+    pub fn new(bpm: u32, rate: f32) -> Self {
+        let mut b = Self {
+            bpm: 0,
+            tick_duration_in_ms: 0.0,
+            tick_duration_in_frames: 0,
+        };
+        b.update(bpm, rate);
+        b
+    }
+
+    pub fn update(&mut self, bpm: u32, rate: f32) {
+        if bpm == 0 { return; }
+        self.bpm = bpm;
+        self.tick_duration_in_ms = 2500.0 / self.bpm as f32;
+        self.tick_duration_in_frames = (self.tick_duration_in_ms / 1000.0 * rate) as usize;
+    }
+}
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use core::arch::wasm32::*;
@@ -109,7 +140,6 @@ fn lerp_simd(lo: [f32; 4], hi: [f32; 4], t: [f32; 4]) -> [f32; 4] {
             let vlo = v128_load(lo.as_ptr() as *const v128);
             let vhi = v128_load(hi.as_ptr() as *const v128);
             let vt  = v128_load(t.as_ptr() as *const v128);
-            
             let diff = f32x4_sub(vhi, vlo);
             let res  = f32x4_add(vlo, f32x4_mul(diff, vt));
             
@@ -265,32 +295,8 @@ fn cubic_simd(p0: [f32; 4], p1: [f32; 4], p2: [f32; 4], p3: [f32; 4], t: [f32; 4
 }
 
 
-struct BPM {
-    pub bpm:                    u32,
-    tick_duration_in_ms:        f32,
-    tick_duration_in_frames:    usize,
 
-}
-
-impl BPM {
-    fn new(bpm: u32, rate: f32) -> BPM {
-        let mut ret = BPM{
-            bpm: 0,
-            tick_duration_in_ms: 0.0,
-            tick_duration_in_frames: 0
-        };
-        ret.update(bpm, rate);
-        ret
-    }
-    fn update(&mut self, bpm: u32, rate: f32) {
-        if bpm > 999 || bpm < 1 {return};
-        self.bpm = bpm;
-        self.tick_duration_in_ms = 2500.0 / self.bpm as f32;
-        self.tick_duration_in_frames = (self.tick_duration_in_ms / 1000.0 * rate) as usize;
-    }
-}
-
-struct PatternChange {
+pub struct PatternChange {
     pattern_break:  bool,
     pattern_jump:   bool,
     is_loop:        bool,
@@ -314,18 +320,28 @@ impl PatternChange {
         *self = Self::new();
     }
 
-    fn set_break(&mut self, first_tick: bool, param:u8) {
-        if !first_tick {return;}
+    fn set_break(&mut self, song_type: SongType, first_tick: bool, param: u8) {
+        if !first_tick { return; }
         self.pattern_break = true;
-        self.row = param;
-        if self.row > 63 {self.row = 0;}
+        if song_type == SongType::MOD || song_type == SongType::XM {
+            // MOD and XM use BCD for Pattern Break
+            self.row = (param >> 4) * 10 + (param & 0x0F);
+        } else {
+            // IT, S3M use Hex
+            self.row = param;
+        }
     }
 
-    fn set_jump(&mut self, first_tick: bool, param:u8) {
-        if !first_tick {return;}
+    fn set_jump(&mut self, first_tick: bool, param: u8) {
+        if !first_tick { return; }
         self.pattern_jump = true;
         self.pattern = param;
-        self.row = 0;
+        // Jump usually stays on same row unless Break is also present,
+        // but often trackers treat Jump as "Jump to Pattern X, row 0"
+        // and if both are present, Break wins for the row.
+        if !self.pattern_break {
+            self.row = 0;
+        }
     }
 }
 
@@ -344,28 +360,44 @@ pub fn fill<T>(arr: &mut [T], value: T)
 
 
 
-struct GlobalVolume {
-    volume:                     u32,
-    last_volume_slide:          u8,
+pub struct GlobalVolume {
+    pub volume:            u32,
+    pub(crate) last_volume_slide: u8,
+    pub(crate) song_type:         Option<SongType>,
 }
 
 impl GlobalVolume {
-    pub fn new() -> Self {
-        GlobalVolume { volume: 64, last_volume_slide: 0 }
+    pub(crate) fn new(volume: u32, song_type: SongType) -> GlobalVolume {
+        GlobalVolume {
+            volume,
+            last_volume_slide: 0,
+            song_type:         Some(song_type),
+        }
     }
 
-    fn volume_slide(&mut self, first_tick: bool, param: u8) {
+    pub(crate) fn get_volume_f32(&self) -> f32 {
+        match self.song_type {
+            Some(SongType::IT) | Some(SongType::S3M) => self.volume as f32 / 128.0,
+            _ => self.volume as f32 / 64.0,
+        }
+    }
+
+    pub(crate) fn volume_slide(&mut self, first_tick: bool, param: u8) {
         if first_tick {
-            if param != 0 {
-                self.last_volume_slide = param;
+            let up = (param >> 4) as i32;
+            let down = (param & 0xf) as i32;
+            if up == 0xf && down != 0 {
+                self.volume_slide_inner(down as i8);
+            } else if down == 0xf && up != 0 {
+                self.volume_slide_inner(-(up as i8));
             }
         } else {
-            let up = self.last_volume_slide >> 4;
-            let down = self.last_volume_slide & 0xf;
-            if up != 0 {
-                self.handle_volume_slide(first_tick, up as i8);
-            } else if down != 0 {
-                self.handle_volume_slide(first_tick, - (down as i8));
+            let up = (param >> 4) as i32;
+            let down = (param & 0xf) as i32;
+            if up != 0 && up != 0xf && down == 0 {
+                self.volume_slide_inner(up as i8);
+            } else if down != 0 && down != 0xf && up == 0 {
+                self.volume_slide_inner(-(down as i8));
             }
         }
     }
@@ -380,13 +412,15 @@ impl GlobalVolume {
 
     fn volume_slide_inner(&mut self, volume: i8) {
         let mut new_volume = self.volume as i32  + volume as i32;
-        new_volume = if new_volume < 0 {0} else if volume > 64 { 64 } else { new_volume };
+        let max_vol = if self.song_type == Some(SongType::IT) { 128 } else { 64 };
+        new_volume = if new_volume < 0 {0} else if new_volume > max_vol { max_vol } else { new_volume };
         self.volume = new_volume as u32;
     }
 
     fn set_volume(&mut self, first_tick: bool, volume: u8) {
         if first_tick {
-            self.volume = if volume <= 0x40 { volume } else { 0x40 } as u32;
+            let max_vol = if self.song_type == Some(SongType::IT) { 128 } else { 64 };
+            self.volume = (volume as u32).min(max_vol as u32);
         }
     }
 
@@ -512,6 +546,7 @@ pub struct PlayData {
     pub channel_status:                     Vec<ChannelStatus>,
     pub filter:                             FilterType,
     pub song_message:                       String,
+    pub virtual_channels:                   usize,
     pub visualizer_enabled:                 bool,
     pub scopes_enabled:                     bool,
     pub visualizer_mode:                    u32,
@@ -521,6 +556,7 @@ pub struct PlayData {
     pub theme_id:                           u32,
     pub view_mode:                          u32,
     pub user_data:                          HashMap<String, UserData>,
+    pub song_type:                          SongType,
 }
 
 impl Default for PlayData {
@@ -542,6 +578,7 @@ impl Default for PlayData {
             channel_status: vec![],
             filter: FilterType::Sinc,
             song_message: "".to_string(),
+            virtual_channels: 0,
             visualizer_enabled: true,
             scopes_enabled: true,
             visualizer_mode: 0,
@@ -550,7 +587,8 @@ impl Default for PlayData {
             display_fps: 0.0,
             theme_id: 0,
             view_mode: 0,
-            user_data: Default::default()
+            user_data: Default::default(),
+            song_type: SongType::XM,
         }
     }
 }
@@ -561,10 +599,11 @@ enum BufferState {
     NextTick,
 }
 
-struct TickState {
+pub struct TickState {
     state:                  BufferState,
     current_buf_position:   usize,
     current_tick_position:  usize,
+    row_delay:              usize,
 }
 
 pub enum CallbackState {
@@ -665,55 +704,87 @@ pub enum UserData {
 
 // const BUFFER_SIZE: usize = 4096;
 pub struct Song {
-    name:                       String,
-    song_position:              usize,
-    row:                        usize,
-    tick:                       u32,
-    rate:                       f32,
-    original_rate:              f32,
-    speed:                      u32,
-    global_volume:              GlobalVolume,
-    song_data:                  SongData,
-    channels:                   Vec<ChannelState>,
-    pattern_change:             PatternChange,
-    total_duration_ms:          f32,
-    bpm:                        BPM,
-    loop_pattern:               bool,
-    pause:                      bool,
-    filter:                     FilterType,
-    display:                    bool,
-    frequency_tables:           Box<AudioTables>,
-    is_fast_forwarding:         bool,
-    is_calculating_duration:    bool,
-    triple_buffer_writer:       TripleBufferWriter<PlayData>,
-    pub master_samples:         [f32; 8192],
-    pub master_samples_pos:     usize,
-    pub visual_latency:         isize,
-    tick_state:                 TickState,
-    pub visualizer_enabled:     bool,
-    pub visualizer_mode:        u32,
-    pub master_spectrum:        Vec<f32>,
-    pub master_oscilloscope:    Vec<f32>,
-    pub theme_id:               u32,
-    pub view_mode:              u32,
-    pub display_count:          u32,
-    pub total_samples:          u64,
-    pub last_fps_sample:        u64,
-    #[allow(dead_code)]
-    song_message:               String,
-    user_data:                  HashMap<String, UserData>,
+    pub name:                       String,
+    pub song_position:              usize,
+    pub row:                        usize,
+    pub tick:                       u32,
+    pub rate:                       f32,
+    pub original_rate:              f32,
+    pub speed:                      u32,
+    pub global_volume:              GlobalVolume,
+    pub song_data:                  SongData,
+    pub channels:                   Vec<ChannelState>,
+    pub voices:                     Vec<Voice>,
+    pub pattern_change:             PatternChange,
+    pub total_duration_ms:          f32,
+    pub bpm:                        BPM,
+    pub loop_pattern:               bool,
+    pub pause:                      bool,
+    pub filter:                     FilterType,
+    pub display:                    bool,
+    pub frequency_tables:           Box<AudioTables>,
+    pub is_fast_forwarding:         bool,
+    pub is_calculating_duration:    bool,
+    pub triple_buffer_writer:       TripleBufferWriter<PlayData>,
+    pub master_samples:             [f32; 8192],
+    pub master_samples_pos:         usize,
+    pub visual_latency:             isize,
+    pub tick_state:                 TickState,
+    pub song_message:               String,
+    pub user_data:                  HashMap<String, UserData>,
+    pub(crate) old_effects:         bool,
+    pub(crate) compatible_g:        bool,
+    pub(crate) master_volume:       u8,
+    pub(crate) mixing_volume:       u8,
+    pub visualizer_enabled:         bool,
+    pub visualizer_mode:            u32,
+    pub master_spectrum:            Vec<f32>,
+    pub master_oscilloscope:        Vec<f32>,
+    pub theme_id:                   u32,
+    pub view_mode:                  u32,
+    pub display_count:              u32,
+    pub total_samples:              u64,
+    pub last_fps_sample:            u64,
     pub last_display_update_sample: u64,
-    pub fps:                    f32,
+    pub fps:                        f32,
     #[cfg(not(target_arch = "wasm32"))]
-    pub last_fps_time:          Instant,
-    fft_planner:                FftPlanner<f32>,
-    pub spectral_peaks:         Vec<f32>,
-    pub hann_window:              Vec<f32>,
-    pub cached_fft:             Option<Arc<dyn Fft<f32>>>,
-    pub bin_map:                Vec<(usize, usize)>,
+    pub last_fps_time:              Instant,
+    fft_planner:                    FftPlanner<f32>,
+    pub spectral_peaks:             Vec<f32>,
+    pub hann_window:                Vec<f32>,
+    pub cached_fft:                 Option<Arc<dyn Fft<f32>>>,
+    pub bin_map:                    Vec<(usize, usize)>,
+    pub stopped:                    bool,
 }
 
 impl Song {
+    fn apply_it_action(voices: &mut [Voice], voice_idx: usize, action: u8, instrument: &Instrument) {
+        let voice = &mut voices[voice_idx];
+        match action {
+            0 => { // Cut
+                voice.on = false;
+                voice.volume.output_volume = 0.0;
+            }
+            1 => { // Continue
+                // Do nothing
+            }
+            2 => { // Note Off
+                if instrument.volume_envelope.on {
+                    voice.sustained = false;
+                } else {
+                    // IT: If no volume envelope is active, Note Off = Cut
+                    voice.on = false;
+                    voice.volume.output_volume = 0.0;
+                }
+            }
+            3 => { // Note Fade
+                voice.sustained = false;
+                voice.volume.fadeout_speed = (instrument.volume_fadeout as i32) << 6;
+            }
+            _ => {}
+        }
+    }
+
     // fn get_buffer(&mut self) -> Vec<f32> {
     //     let mut result: Vec<f32> = vec![];
     //     result.reserve_exact(BUFFER_SIZE);
@@ -733,6 +804,30 @@ impl Song {
 
     pub fn new(song_data: &SongData, triple_buffer_writer: TripleBufferWriter<PlayData>, sample_rate: f32) -> Self {
         let use_amiga = if song_data.use_amiga {AudioTables::calc_tables_amiga()} else {AudioTables::calc_tables_linear()};
+        let mut channels = Vec::with_capacity(song_data.channel_count as usize);
+        for i in 0..song_data.channel_count as usize {
+            let mut channel = ChannelState::new();
+            if i < 64 {
+                let p = song_data.initial_channel_panning[i];
+                if p == 100 {
+                    channel.panning.panning = 128; // Surround -> Center for now, but flagged
+                } else {
+                    channel.panning.panning = (p as i16 * 4).min(255) as u8;
+                }
+                channel.volume.set_volume(song_data.initial_channel_volume[i] as i32);
+                channel.channel_volume = song_data.initial_channel_volume[i];
+            }
+            channels.push(channel);
+        }
+
+        let mut voices = Vec::with_capacity(256);
+        let channel_count = if song_data.channel_count == 0 { 1 } else { song_data.channel_count as usize };
+        for i in 0..256 {
+            let mut v = Voice::new();
+            v.channel_idx = i % channel_count;
+            voices.push(v);
+        }
+
         let mut result = Self {
             name: song_data.name.clone(),
             song_position: 0,
@@ -743,56 +838,13 @@ impl Song {
             speed: song_data.tempo as u32,
             total_duration_ms: 0.0,
             bpm: BPM::new(song_data.bpm as u32, sample_rate as f32),
-            global_volume: GlobalVolume::new(),
-            song_message: "".to_string(),
+            global_volume: GlobalVolume::new(song_data.global_volume as u32, song_data.song_type),
+            song_message: song_data.song_message.clone(),
             song_data: song_data.clone(),
-            channels: vec![ChannelState {
-                // instrument: &song_data.instruments[0],
-                // sample: &song_data.instruments[0].samples[0],
-                voice: Voice::new(),
-                note: Note::new(),
-                frequency: 0.0,
-                // du: 0.0,
-                // volume: Volume::new(),
-                // sample_position: 0.0,
-                // loop_started: false,
-                // ping: true,
-                volume_envelope_state: EnvelopeState::new(),
-                panning_envelope_state: EnvelopeState::new(),
-                // sustained: false,
-                vibrato_envelope_state: VibratoEnvelopeState::new(),
-                vibrato_state: VibratoState::new(),
-                tremolo_state: TremoloState::new(),
-                frequency_shift: 0.0,
-                period_shift: 0,
-                on: false,
-                last_porta_up: 0,
-                last_porta_down: 0,
-                last_fine_porta_up: 0,
-                last_fine_porta_down: 0,
-                last_volume_slide: 0,
-                last_fine_volume_slide_up: 0,
-                last_fine_volume_slide_down: 0,
-                porta_to_note: PortaToNoteState::new(),
-                last_sample_offset: 0,
-                last_panning_speed: 0,
-                panning: Panning::new(),
-                force_off: false,
-                glissando: false,
-                // last_sample: 0,
-                // last_sample_pos: 0.0,
-                vibrato_control: 0,
-                tremolo_control: 0,
-                tremor: 0,
-                tremor_count: 0,
-                multi_retrig_count: 0,
-                multi_retrig_volume: 0,
-                last_played_note: 0,
-                last_samples: [0.0; 512],
-                last_samples_pos: 0,
-                loop_row: 0,
-                loop_count: 0,
-            }; song_data.channel_count as usize],
+            channels,
+            voices,
+            old_effects: song_data.old_effects,
+            compatible_g: song_data.compatible_g,
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
@@ -809,8 +861,12 @@ impl Song {
             tick_state: TickState {
                 state: BufferState::Start,
                 current_buf_position: 0,
-                current_tick_position: 0
+                current_tick_position: 0,
+                row_delay: 0,
             },
+            user_data: HashMap::new(),
+            master_volume: song_data.master_volume,
+            mixing_volume: song_data.mixing_volume,
             visualizer_enabled: true,
             theme_id: 2, 
             view_mode: 0,
@@ -823,13 +879,13 @@ impl Song {
             last_fps_sample: 0,
             #[cfg(not(target_arch = "wasm32"))]
             last_fps_time: Instant::now(),
-            user_data: HashMap::new(),
             last_display_update_sample: 0,
             fft_planner: FftPlanner::new(),
             spectral_peaks: vec![0.0; 128],
             hann_window: (0..2048).map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / 2047.0).cos())).collect(),
             cached_fft: None,
             bin_map: vec![],
+            stopped: false,
         };
         result.cached_fft = Some(result.fft_planner.plan_fft_forward(2048));
         result.recalculate_bin_map();
@@ -873,64 +929,33 @@ impl Song {
         duration
     }
 
+
     pub fn reset(&mut self) {
         self.song_position = 0;
         self.row = 0;
         self.tick = 0;
-        self.speed = self.song_data.tempo as u32;
-        self.bpm = BPM::new(self.song_data.bpm as u32, self.rate);
-        self.global_volume = GlobalVolume::new();
-        self.pattern_change = PatternChange::new();
         self.total_samples = 0;
         self.last_fps_sample = 0;
         self.last_display_update_sample = 0;
+        self.pattern_change.reset();
+        self.global_volume.volume = self.song_data.global_volume as u32;
+        self.speed = self.song_data.tempo as u32;
+        self.bpm.update(self.song_data.bpm as u32, self.rate);
         
+        for ch in self.channels.iter_mut() {
+            ch.voice_idx = None;
+            ch.on = false;
+        }
+        for v in self.voices.iter_mut() {
+            v.on = false;
+        }
+
         self.tick_state = TickState {
             state: BufferState::Start,
             current_buf_position: 0,
-            current_tick_position: 0
+            current_tick_position: 0,
+            row_delay: 0,
         };
-
-        // Reset all channels to blank slate
-        for ch in self.channels.iter_mut() {
-            *ch = ChannelState {
-                voice: Voice::new(),
-                note: Note::new(),
-                frequency: 0.0,
-                volume_envelope_state: EnvelopeState::new(),
-                panning_envelope_state: EnvelopeState::new(),
-                vibrato_envelope_state: VibratoEnvelopeState::new(),
-                vibrato_state: VibratoState::new(),
-                tremolo_state: TremoloState::new(),
-                frequency_shift: 0.0,
-                period_shift: 0,
-                on: false,
-                last_porta_up: 0,
-                last_porta_down: 0,
-                last_fine_porta_up: 0,
-                last_fine_porta_down: 0,
-                last_volume_slide: 0,
-                last_fine_volume_slide_up: 0,
-                last_fine_volume_slide_down: 0,
-                porta_to_note: PortaToNoteState::new(),
-                last_sample_offset: 0,
-                last_panning_speed: 0,
-                panning: Panning::new(),
-                force_off: false, // Keep force_off or reset? We should preserve muting state if it was requested
-                glissando: false,
-                vibrato_control: 0,
-                tremolo_control: 0,
-                tremor: 0,
-                tremor_count: 0,
-                multi_retrig_count: 0,
-                multi_retrig_volume: 0,
-                last_played_note: 0,
-                last_samples: [0.0; 512],
-                last_samples_pos: 0,
-                loop_row: 0,
-                loop_count: 0,
-            };
-        }
     }
 
     pub fn fast_forward_until<F>(&mut self, mut condition: F) 
@@ -1011,6 +1036,7 @@ impl Song {
         let mut play_data = self.triple_buffer_writer.acquire_buffer();
         
         play_data.name                      = self.name.clone();
+        play_data.song_type                 = self.song_data.song_type;
         play_data.total_duration_ms         = self.total_duration_ms;
         play_data.current_duration_ms       = (self.total_samples as f32 / self.rate) * 1000.0;
         play_data.global_volume             = self.global_volume.volume;
@@ -1030,20 +1056,24 @@ impl Song {
         play_data.speed                     = self.speed;
         play_data.song_message              = self.song_data.song_message.clone();
 
-        // --- INSTANT UI FEEDBACK (Always update user-controllable state) ---
+        // --- INSTANT UI FEEDBACK ---
         play_data.theme_id         = self.theme_id;
         play_data.view_mode        = self.view_mode;
         play_data.user_data        = self.user_data.clone();
+        play_data.visualizer_mode  = self.visualizer_mode;
+        play_data.filter           = self.filter;
 
-        play_data.scopes_enabled            = match self.user_data.get("scopes_enabled") {
-            Some(UserData::USize(v)) => *v % 2 != 0,
-            _ => true
-        };
-        play_data.visualizer_mode           = self.visualizer_mode;
-        play_data.filter                    = self.filter;
-        play_data.user_data                 = self.user_data.clone();
+        // IT virtual channel tracking
+        let active_voices = self.voices.iter().filter(|v| v.on).count();
+        let mut host_voices = 0;
+        for channel in &self.channels {
+            if let Some(v_idx) = channel.voice_idx {
+                if self.voices[v_idx].on { host_voices += 1; }
+            }
+        }
+        play_data.virtual_channels = active_voices.saturating_sub(host_voices);
 
-        // Optimized Channel Status (In-place update)
+        // Optimized Channel Status
         let num_channels = self.channels.len();
         while play_data.channel_status.len() < num_channels {
             play_data.channel_status.push(ChannelStatus::default());
@@ -1054,68 +1084,62 @@ impl Song {
             let channel = &mut self.channels[i];
             let status = &mut play_data.channel_status[i];
             
-            let instrument_name = if channel.voice.instrument < self.song_data.instruments.len() {
-                self.song_data.instruments[channel.voice.instrument].name.clone()
-            } else {
-                "".to_string()
-            };
-
-            // High-fidelity scope normalization
             let mut peak = 0.01f32;
-            for &s in channel.last_samples.iter() {
-                peak = peak.max(s.abs());
-            }
+            for &s in channel.last_samples.iter().take(512) { peak = peak.max(s.abs()); }
             let gain = if peak > 0.0001 { 0.5 / peak } else { 1.0 };
 
-            if status.oscilloscope.len() != 512 {
-                status.oscilloscope = vec![0.0; 512];
-            }
+            if status.oscilloscope.len() != 512 { status.oscilloscope = vec![0.0; 512]; }
             if channel.on {
-                for j in 0..512 {
-                    let idx = (channel.last_samples_pos + j) % 512;
-                    status.oscilloscope[j] = channel.last_samples[idx] * gain;
-                }
+                for j in 0..512 { status.oscilloscope[j] = channel.last_samples[j % 4096] * gain; }
             } else {
-                for j in 0..512 {
-                    status.oscilloscope[j] = 0.0;
-                }
-
+                status.oscilloscope.fill(0.0);
             }
 
-            status.volume             = channel.voice.volume.volume as f32;
-            status.envelope_volume    = channel.voice.volume.envelope_vol as f32;
-            status.global_volume      = channel.voice.volume.global_vol as i32 as f32;
-            status.fadeout_volume     = channel.voice.volume.fadeout_vol as f32;
+            status.volume             = channel.volume.get_volume() as f32;
             status.on                 = channel.on;
             status.force_off          = channel.force_off;
-            status.frequency          = channel.voice.frequency;
-            if channel.frequency > 0.0 && channel.voice.frequency > 0.0 {
-                status.pitch_shift = (channel.voice.frequency / channel.frequency).log2() * 12.0;
-            } else {
-                status.pitch_shift = 0.0;
-            }
-
-            status.instrument         = channel.voice.instrument;
-            status.sample             = channel.voice.sample;
-            let mut sample_position = channel.voice.sample_position;
-            if channel.voice.instrument < self.song_data.instruments.len() {
-                let inst = &self.song_data.instruments[channel.voice.instrument];
-                if channel.voice.sample < inst.samples.len() {
-                    let sample = &inst.samples[channel.voice.sample];
-                    if sample.is_ping_pong && sample_position >= sample.original_loop_end as f32 {
-                        let over = sample_position - sample.original_loop_end as f32;
-                        sample_position = (sample.original_loop_end as f32 - 1.0) - over;
-                    }
-                }
-            }
-            status.sample_position    = sample_position;
+            status.frequency          = channel.frequency;
+            status.instrument         = channel.last_instrument;
+            status.sample             = channel.last_sample;
             status.note               = channel.note.to_string();
             status.period             = channel.note.period;
             status.final_panning      = channel.panning.final_panning;
-            status.instrument_name    = instrument_name;
+
+            // Link to active voice for dynamic visualization
+            if let Some(v_idx) = channel.voice_idx {
+                let voice = &self.voices[v_idx];
+                if voice.on {
+                    status.envelope_volume = voice.volume.envelope_vol as f32 / 16384.0;
+                    status.fadeout_volume  = voice.volume.fadeout_vol as f32 / 65536.0;
+                    status.global_volume   = self.global_volume.get_volume_f32();
+                    status.pitch_shift     = voice.frequency;
+                    
+                    let inst_idx = voice.instrument;
+                    let sample_idx = voice.sample;
+                    if inst_idx < self.song_data.instruments.len() {
+                        let inst = &self.song_data.instruments[inst_idx];
+                        if sample_idx < inst.samples.len() {
+                            let sample = &inst.samples[sample_idx];
+                            if sample.length > 0 {
+                                status.sample_position = voice.sample_position / sample.length as f32;
+                            }
+                        }
+                    }
+                } else {
+                    status.envelope_volume = 1.0;
+                    status.fadeout_volume  = 1.0;
+                    status.pitch_shift     = 1.0;
+                    status.sample_position = 0.0;
+                }
+            } else {
+                status.envelope_volume = 1.0;
+                status.fadeout_volume  = 1.0;
+                status.pitch_shift     = 1.0;
+                status.sample_position = 0.0;
+            }
         }
 
-        // Always update Visualizers (Scopes/FFT)
+        // FPS Update
         self.display_count += 1;
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -1135,80 +1159,43 @@ impl Song {
                  self.last_fps_sample = self.total_samples;
              }
         }
+        play_data.display_fps = self.fps;
 
-        // High-Fidelity Master Visualizer Data with Latency Compensation
-        if play_data.master_oscilloscope.len() != 512 {
-            play_data.master_oscilloscope = vec![0.0; 512];
-        }
-        
-        // Calculate the history offset. 
+        // High-Fidelity Master Visualizer Data with Latency Compensation (Master branch style)
+        if play_data.master_oscilloscope.len() != 512 { play_data.master_oscilloscope = vec![0.0; 512]; }
         let history_len = 8192;
         let start_offset = (self.master_samples_pos as isize - self.visual_latency).rem_euclid(history_len as isize) as usize;
-
         for i in 0..512 {
             let idx = (start_offset + i) % history_len;
             play_data.master_oscilloscope[i] = self.master_samples[idx];
         }
         
-        // Master FFT (Optimized with persistent planner and robust indexing)
-        let fft = self.cached_fft.as_ref().unwrap();
-        let mut fft_input_buffer = vec![0.0f32; 2048];
-        let base_offset = (start_offset as isize - 512).rem_euclid(history_len as isize) as usize;
-        for i in 0..2048 {
-            let idx = (base_offset + i) % history_len; 
-            fft_input_buffer[i] = self.master_samples[idx] * self.hann_window[i];
-
-        }
-        
-        let mut fft_buffer: Vec<Complex<f32>> = fft_input_buffer.iter()
-            .map(|&s| Complex::new(s, 0.0))
-            .collect();
-        fft.process(&mut fft_buffer);
-
-        if play_data.master_spectrum.len() != 128 {
-            play_data.master_spectrum = vec![0.0; 128];
-        }
-
-        let decay = if cfg!(target_arch = "wasm32") { 0.88f32 } else { 0.92f32 };
-
-        let min_f = 20.0f32;
-        let max_f = 20000.0f32;
-        let log_min_f = min_f.ln();
-        let log_max_f = max_f.ln();
-
-        for j in 0..128 {
-            let f_start = (log_min_f + (j as f32 / 128.0) * (log_max_f - log_min_f)).exp();
-            let f_end   = (log_min_f + ((j as f32 + 1.0) / 128.0) * (log_max_f - log_min_f)).exp();
+        // Master FFT (Optimized with persistent planner)
+        if let Some(fft) = self.cached_fft.as_ref() {
+            let mut fft_input_buffer = vec![0.0f32; 2048];
+            let base_offset = (start_offset as isize - 512).rem_euclid(history_len as isize) as usize;
+            for i in 0..2048 {
+                let idx = (base_offset + i) % history_len; 
+                fft_input_buffer[i] = self.master_samples[idx] * self.hann_window[i];
+            }
             
-            let b_start = f_start * 2048.0 / self.rate;
-            let b_end   = f_end   * 2048.0 / self.rate;
-            let b_center = (b_start + b_end) * 0.5;
+            let mut fft_buffer: Vec<Complex<f32>> = fft_input_buffer.iter().map(|&s| Complex::new(s, 0.0)).collect();
+            fft.process(&mut fft_buffer);
 
-            let mut magnitude = 0.0f32;
+            if play_data.master_spectrum.len() != 128 { play_data.master_spectrum = vec![0.0; 128]; }
+            let decay = if cfg!(target_arch = "wasm32") { 0.88f32 } else { 0.92f32 };
 
-            if b_end - b_start <= 1.0 {
-                let i = b_center.floor() as usize;
-                let i = i.clamp(1, 1022);
-                let t = b_center - i as f32;
-                let m0 = fft_buffer[i].norm() / 20.0;
-                let m1 = fft_buffer[i + 1].norm() / 20.0;
-                magnitude = m0 * (1.0 - t.clamp(0.0, 1.0)) + m1 * t.clamp(0.0, 1.0);
-            } else {
-                let i_s = b_start.floor() as usize;
-                let i_e = b_end.ceil() as usize;
+            for j in 0..128 {
+                let (i_s, i_e) = self.bin_map[j];
+                let mut magnitude = 0.0f32;
                 for i in i_s..i_e {
-                    let i_clamped = i.clamp(1, 1023);
-                    let m = fft_buffer[i_clamped].norm() / 20.0;
+                    let m = fft_buffer[i.min(1023)].norm() / 20.0;
                     if m > magnitude { magnitude = m; }
                 }
+                self.spectral_peaks[j] = magnitude.max(self.spectral_peaks[j] * decay);
+                play_data.master_spectrum[j] = self.spectral_peaks[j];
             }
-
-            self.spectral_peaks[j] = magnitude.max(self.spectral_peaks[j] * decay);
-            play_data.master_spectrum[j] = self.spectral_peaks[j];
-
         }
-
-        play_data.display_fps = self.fps;
     }
     // Song::display(&play_data, 0);
 
@@ -1359,18 +1346,18 @@ impl Song {
                         }
                     }
                     PlaybackCmd::ModifyUserDataAddISize(key, value) => {
-                        let entry = self.user_data.entry(key).or_insert(UserData::ISize(0));
-                        if let UserData::ISize(x) = entry {
-                            let res = (Wrapping(*x) + Wrapping(value)).0;
-                            *entry = UserData::ISize(res);
-                        }
+                        self.user_data.entry(key).and_modify(|data| {
+                            if let UserData::ISize(x) = data {
+                                *x = x.saturating_add(value);
+                            }
+                        });
                     }
                     PlaybackCmd::ModifyUserDataSubISize(key, value) => {
-                        let entry = self.user_data.entry(key).or_insert(UserData::ISize(0));
-                        if let UserData::ISize(x) = entry {
-                            let res = (Wrapping(*x) - Wrapping(value)).0;
-                            *entry = UserData::ISize(res);
-                        }
+                        self.user_data.entry(key).and_modify(|data| {
+                            if let UserData::ISize(x) = data {
+                                *x = x.saturating_sub(value);
+                            }
+                        });
                     }
                     PlaybackCmd::SpeedUp => {
                         self.rate /= 1.1;
@@ -1391,7 +1378,7 @@ impl Song {
                         self.view_mode = mode;
                     }
                     PlaybackCmd::CycleTheme => {
-                        self.theme_id = (self.theme_id + 1) % 5;
+                        self.theme_id = (self.theme_id + 1) % 6;
 
                     }
                     PlaybackCmd::ToggleScopes => {
@@ -1423,13 +1410,18 @@ impl Song {
         return true;
     }
 
-    fn next_tick(&mut self) -> bool {
+    pub(crate) fn next_tick(&mut self) -> bool {
         if self.song_position >= self.song_data.song_length as usize {
             return false;
         }
 
         self.tick += 1;
-        if self.tick >= self.speed {
+        
+        let speed = self.speed * (self.tick_state.row_delay as u32 + 1);
+
+        if self.tick >= speed {
+            self.tick_state.row_delay = 0;
+            
             // Handle Pattern Delay (EEx)
             if self.pattern_change.pattern_delay > 0 {
                 self.pattern_change.pattern_delay -= 1;
@@ -1456,7 +1448,6 @@ impl Song {
                     self.next_pattern();
                 }
             }
-            // if self.song_position >= self.song_data.song_length as usize { self.song_position = self.song_data.restart_position as usize; }
             if self.song_position >= self.song_data.song_length as usize { return false; }
             self.tick = 0;
             self.pattern_change.reset();
@@ -1470,12 +1461,9 @@ impl Song {
         }
     }
 
-    fn process_tick(&mut self) {
-        let instruments = &self.song_data.instruments;
 
-        if self.song_position as usize >= self.song_data.pattern_order.len() {
-            panic!("{} {}", self.song_position, self.song_data.song_length);
-        }
+
+    pub fn process_tick(&mut self) {
         let patterns = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
         let row = &patterns.rows[self.row];
         let first_tick = self.tick == 0;
@@ -1484,531 +1472,669 @@ impl Song {
         // Skip all expensive effect processing and only handle flow control.
         if self.is_calculating_duration {
             for pattern in &row.channels {
-                match pattern.effect {
-                    0xB => { self.pattern_change.set_jump(first_tick, pattern.effect_param); }
-                    0xD => { self.pattern_change.set_break(first_tick, pattern.get_x() * 10 + pattern.get_y()); }
-                    0xF => { 
-                        if first_tick && pattern.effect_param > 0 {
-                            if pattern.effect_param <= 0x1f { self.speed = pattern.effect_param as u32; }
-                            else { self.bpm.update(pattern.effect_param as u32, self.rate); }
-                        }
-                    }
-                    0xE => {
-                        match pattern.get_x() {
-                            0x6 => { 
-                                // Pattern Loop (E6x)
-                                let param = pattern.get_y();
-                                if first_tick {
-                                    if param != 0 {
-                                        // duration calculation handles this via visited_rows.
-                                        // But we can still flag it for potential use.
-                                        self.pattern_change.is_loop = true;
-                                        // We don't have access to channel.loop_row here easily
-                                        // in the fast path, so we'll rely on visited_rows to stop.
-                                    }
+                match self.song_data.song_type {
+                    SongType::IT | SongType::S3M => {
+                        match pattern.effect {
+                            0x02 => { self.pattern_change.set_jump(first_tick, pattern.effect_param); } // B: Jump
+                            0x03 => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); } // C: Break
+                            0x01 | 0x14 => { // A/T Speed/BPM
+                                if first_tick && pattern.effect_param > 0 {
+                                    if pattern.effect_param <= 32 { self.speed = pattern.effect_param as u32; }
+                                    else { self.bpm.update(pattern.effect_param as u32, self.rate); }
                                 }
                             }
-                            0xE => { 
-                                // Pattern Delay (EEx)
-                                if first_tick {
-                                    self.pattern_change.pattern_delay = pattern.get_y();
-                                }
+                            0x13 => { // S
+                                let x = pattern.get_x();
+                                let y = pattern.get_y();
+                                if x == 0x6 && first_tick && y != 0 { self.pattern_change.is_loop = true; }
+                                else if x == 0xE && first_tick { self.pattern_change.pattern_delay = y; }
                             }
                             _ => {}
                         }
                     }
-                    _ => {}
+                    _ => { // XM / MOD
+                        match pattern.effect {
+                            0x0B => { self.pattern_change.set_jump(first_tick, pattern.effect_param); } // B: Jump
+                            0x0D => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); } // D: Break
+                            0x0F => { // F: Speed/BPM (XM/MOD) or A/T (S3M)
+                                if first_tick {
+                                    if pattern.effect_param > 0 {
+                                        if pattern.effect_param <= 32 { self.speed = pattern.effect_param as u32; }
+                                        else { self.bpm.update(pattern.effect_param as u32, self.rate); }
+                                    } else if self.song_data.song_type == SongType::S3M {
+                                        // S3M A00/T00 memory is handled by doing nothing (preserving last value)
+                                    }
+                                }
+                            }
+                            0x0E => { // E
+                                let x = pattern.get_x();
+                                let y = pattern.get_y();
+                                if x == 0x6 && first_tick && y != 0 { self.pattern_change.is_loop = true; }
+                                else if x == 0xE && first_tick { self.pattern_change.pattern_delay = y; }
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
             return;
         }
 
-        let mut missing = String::new();
-        for (i, pattern) in row.channels.iter().enumerate() {
+        let instruments = &self.song_data.instruments;
+
+        // 1. Process channels (Note trigger and Effects)
+        for i in 0..self.channels.len() {
+            let pattern = &row.channels[i];
             let channel = &mut self.channels[i];
-            let note_delay_first_tick = if pattern.is_note_delay() { self.tick == pattern.get_y() as u32 } else {first_tick};
 
-            if !channel.voice.sustained {
-                if channel.voice.volume.fadeout_vol - channel.voice.volume.fadeout_speed * 2 < 0 {
-                    channel.voice.volume.fadeout_vol = 0;
-                } else {
-                    channel.voice.volume.fadeout_vol -= channel.voice.volume.fadeout_speed * 2;
-                }
+            // Lazy cleanup: if the voice we were tracking was stolen by another channel, detach it now.
+            // Note: In multi-voice trackers (IT/S3M), a channel may have multiple active voices.
+            // We no longer perform aggressive 'force detach' logic here to prevent flickering.
+            // channel.voice_idx is still used to track the 'main' controllable voice.
+
+            let note_delay_first_tick = if pattern.is_note_delay(self.song_data.song_type) { self.tick == pattern.get_y() as u32 } else { first_tick };
+
+            if pattern.is_porta_to_note(self.song_data.song_type) && first_tick && is_note_valid(pattern.note, self.song_data.song_type) {
+                channel.porta_to_note.target_note.period = channel.note.note_to_period(pattern.note, 0, self.frequency_tables.as_ref());
             }
 
-            if first_tick && pattern.is_porta_to_note() && pattern.instrument != 0 {
-                let sample = self.song_data.get_sample(&channel);
-                channel.voice.volume.retrig(sample.volume as i32);
-                channel.reset_envelopes(instruments);
-            }
-
-            let note = if !is_note_valid(pattern.note) && pattern.is_note_delay() && !first_tick {channel.last_played_note} else {pattern.note};
-
-            // if note_delay_first_tick && note == 97 && !pattern.is_porta_to_note() { // note off
-            //     channel.key_off(pattern.is_note_delay());
-            // }
-
-            if !pattern.is_porta_to_note() &&
-                ((pattern.is_note_delay() && self.tick == pattern.get_y() as u32) ||
-                    (!pattern.is_note_delay() && first_tick)) { // new row, set instruments
-
-                let mut reset_envelope = false;
-                if pattern.instrument != 0 {
-                    let instrument = if pattern.instrument < instruments.len() as u8 {pattern.instrument as usize} else {0};
-                    channel.voice.instrument = instrument;
-                    if is_note_valid(note) {
-                        channel.voice.sample = instruments[instrument].sample_indexes[(note - 1)  as usize] as usize;
-                        channel.last_played_note = note;
-                    }
-
-                    // channel.volume.retrig(channel.sample.volume as i32);
-                    reset_envelope = true;
-
-                    channel.panning.panning = self.song_data.get_sample(channel).panning;
+            if !pattern.is_porta_to_note(self.song_data.song_type) &&
+                ((pattern.is_note_delay(self.song_data.song_type) && self.tick == pattern.get_y() as u32) ||
+                 (!pattern.is_note_delay(self.song_data.song_type) && first_tick)) {
+                
+                let note = pattern.note;
+                let mut inst_idx = channel.last_instrument;
+                if pattern.instrument != 255 && pattern.instrument != 0 {
+                    inst_idx = if (pattern.instrument as usize) < instruments.len() { pattern.instrument as usize } else { 0 };
+                    channel.last_instrument = inst_idx;
                 }
 
+                if is_note_valid(note, self.song_data.song_type) {
+                    println!("DEBUG: Note Trigger detected: note={}, inst={}", note, pattern.instrument);
+                    // IT Duplicate Check (DCT/DCA)
+                    if let SongType::IT = self.song_data.song_type {
+                        if inst_idx != 0 {
+                            let new_inst = &instruments[inst_idx];
+                            let mut dca_applied = false;
 
-                if note == 97 { // note off
-                    if !channel.key_off(instruments, pattern.is_note_delay()) {
-                        // continue;
-                    }
-                }
+                            // Check all active voices for duplicates on this host channel
+                            for vi in 0..self.voices.len() {
+                                let v = &mut self.voices[vi];
+                                if !v.on || v.channel_idx != i { continue; }
 
-                channel.frequency_shift = 0.0;
-                channel.period_shift = 0;
+                                match new_inst.dct {
+                                    1 => { // Note match
+                                        if v.last_played_note == note {
+                                            Self::apply_it_action(&mut self.voices, vi, new_inst.dca, new_inst);
+                                            dca_applied = true;
+                                        }
+                                    }
+                                    2 => { // Sample match
+                                        let sample_idx = if (note as usize - 1) < new_inst.sample_indexes.len() {
+                                            new_inst.sample_indexes[note as usize - 1].1
+                                        } else { 0 };
+                                        
+                                        if sample_idx > 0 && v.sample == (sample_idx - 1) as usize && v.instrument == inst_idx {
+                                            Self::apply_it_action(&mut self.voices, vi, new_inst.dca, new_inst);
+                                            dca_applied = true;
+                                        }
+                                    }
+                                    3 => { // Instrument match
+                                        if v.instrument == inst_idx {
+                                            Self::apply_it_action(&mut self.voices, vi, new_inst.dca, new_inst);
+                                            dca_applied = true;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
 
-                // let mut reset_envelope = false;
-                if reset_envelope {
-                    channel.voice.volume.retrig(self.song_data.get_sample(channel).volume as i32);
-                    channel.reset_envelopes(instruments);
-                }
-
-                if pattern.is_note_delay() {
-                    channel.reset_envelopes(instruments);
-                }
-
-                channel.trigger_note(instruments, note, self.rate, &self.frequency_tables);
-            }
-
-            // handle vibrato
-            if !first_tick && pattern.has_vibrato() { // vibrate
-                channel.frequency_shift = channel.vibrato_state.get_frequency_shift(WaveControl::from(channel.vibrato_control)) as f32;
-                channel.update_frequency(self.rate, false, &self.frequency_tables);
-            }
-
-            // handle tremolo (not really need to do it here, but oh, well)
-            if !first_tick && pattern.has_tremolo() { // tremolate
-                channel.voice.volume.volume_shift = channel.tremolo_state.get_volume_shift(WaveControl::from(channel.tremolo_control));
-            }
-
-            match pattern.volume {
-                0x10..=0x50 => { channel.set_volume(note_delay_first_tick, pattern.volume - 0x10); }       // set volume
-                0x60..=0x6f => { channel.volume_slide(note_delay_first_tick, -(pattern.get_volume_param() as i8)); }       // Volume slide down
-                0x70..=0x7f => { channel.volume_slide(note_delay_first_tick, pattern.get_volume_param() as i8); }    // Volume slide up
-                0x80..=0x8f => { channel.fine_volume_slide(note_delay_first_tick, -(pattern.get_volume_param() as i8)); }   // Fine volume slide down
-                0x90..=0x9f => { channel.fine_volume_slide(note_delay_first_tick, pattern.get_volume_param() as i8); } // Fine volume slide up
-                0xa0..=0xaf => { channel.vibrato_state.set_speed((pattern.get_volume_param() * 4) as i8); } // Set vibrato speed (*4 is probably because S3M did this in order to support finer vibrato)
-                0xb0..=0xbf => { channel.vibrato(first_tick, 0,pattern.get_volume_param()) } // Vibrato
-                0xc0..=0xcf => { channel.panning.set_panning((pattern.get_volume_param() as i32) * 16);}// Set panning
-                0xd0..=0xdf => { // Panning slide left
-                    let pan = channel.panning.panning as i16 - pattern.get_volume_param() as i16;
-                    if pattern.get_volume_param() == 0 || pan < 0 {
-                        channel.panning.set_panning(0); // FT2 bug: param 0 = pan gets set to 0
-                    } else {
-                        channel.panning.set_panning(pan as i32);
-                    }
-                }
-                0xe0..=0xef => { // Panning slide right
-                    let pan = channel.panning.panning as i16 + pattern.get_volume_param() as i16;
-                    if pan > 255 {
-                        channel.panning.set_panning(255);
-                    } else {
-                        channel.panning.set_panning(pan as i32);
-                    }
-                }
-                0xf0..=0xff => {channel.porta_to_note(instruments, first_tick, pattern.volume & 0xf, pattern.note, self.rate, &self.frequency_tables); }// Tone porta
-
-                _ => {}
-            }
-
-
-            // handle effects
-            match pattern.effect {
-                0x0 => {  // Arpeggio
-                    if first_tick {
-                        channel.period_shift = 0;
-                    }
-                    if pattern.effect_param != 0 {
-                        channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y());
-                        channel.update_frequency(self.rate, true, &self.frequency_tables);
-                    } else if self.tick != 0 {
-                        // Reset frequency shift if arpeggio was active but row has no param (and not on tick 0)
-                        // Actually ST3/XM memory handling should handle persistent params.
-                        // But we must ensure period_shift is applied or reset.
-                        channel.update_frequency(self.rate, true, &self.frequency_tables);
-                    }
-                }
-                0x1 => { channel.porta_up(first_tick, pattern.effect_param, self.rate, &self.frequency_tables); } // Porta up
-                0x2 => { channel.porta_down(first_tick, pattern.effect_param, self.rate, &self.frequency_tables); } // Porta down
-                0x3 => { channel.porta_to_note(instruments, first_tick, pattern.effect_param, pattern.note, self.rate, &self.frequency_tables); } // Porta to note
-                0x4 => { channel.vibrato(first_tick, pattern.get_x() * 4, pattern.get_y()); } // vibrato
-                0x5 => { // porta to note + volume slide
-                    channel.porta_to_note(instruments, first_tick, 0, 0, self.rate, &self.frequency_tables);
-                    channel.volume_slide_main(first_tick, pattern.effect_param);
-                }
-                0x6 => { // vibrato + volume slide
-                    channel.vibrato(first_tick, 0, 0);
-                    channel.volume_slide_main(first_tick, pattern.effect_param);
-                }
-                0x7 => {
-                    channel.tremolo(first_tick, pattern.get_x() * 4, pattern.get_y());
-                }
-                0x8 => { // panning
-                    channel.panning.set_panning(pattern.effect_param as i32);
-                }
-                0x9 => { // sample offset
-                    if first_tick && is_note_valid(channel.last_played_note) {
-                        if pattern.effect_param != 0 {
-                            channel.last_sample_offset = pattern.effect_param as u32 * 256;
-                        }
-                        let mut offset = channel.last_sample_offset;
-                        let sample = self.song_data.get_sample(channel);
-                        // sample.length / loop_start / loop_end include the 4-sample sinc prefix.
-                        // Subtract 4 to get the logical (original) coordinates.
-                        let orig_length    = sample.length.saturating_sub(4);
-                        let orig_loop_start = sample.loop_start.saturating_sub(4);
-                        let orig_loop_end   = sample.loop_end.saturating_sub(4);
-                        let is_looped = sample.loop_type != crate::instrument::LoopType::NoLoop
-                            && orig_loop_end > orig_loop_start;
-
-                        let is_s3m = matches!(self.song_data.song_type, SongType::S3M | SongType::STM);
-
-                        if is_s3m && is_looped && offset >= orig_loop_end {
-                            // S3M loop wrap-around: offset folds back into the loop region
-                            let loop_len = orig_loop_end - orig_loop_start;
-                            offset = (offset - orig_loop_start) % loop_len + orig_loop_start;
-                            channel.voice.sample_position = offset as f32 + 4.0;
-                        } else if offset >= orig_length {
-                            // Offset past end: silence the channel (FT2/ST3 compat - stop, not key-off)
-                            channel.on = false;
-                            channel.voice.volume.set_volume(0);
-                        } else {
-                            // +4.0 skips the sinc prefix padding
-                            channel.voice.sample_position = offset as f32 + 4.0;
-                        }
-                    }
-                }
-                0xA => {
-                    channel.volume_slide_main(note_delay_first_tick, pattern.effect_param);
-                }
-                0xB => { // Pattern Jump
-                    self.pattern_change.set_jump(first_tick, pattern.effect_param);
-                }
-                0xC => { channel.set_volume(note_delay_first_tick, pattern.effect_param); } // set volume
-                0xD => { // Pattern Break
-                    self.pattern_change.set_break(first_tick, pattern.get_x() * 10 + pattern.get_y());
-                }
-                0xE => {} // handled separately
-                0xF => { // set speed
-                    if first_tick && pattern.effect_param > 0 {
-                        if pattern.effect_param <= 0x1f {
-                            self.speed = pattern.effect_param as u32;
-                        } else {
-                            self.bpm.update(pattern.effect_param as u32, self.rate);
-                        }
-                    }
-                }
-                0x10 => { // set global volume
-                    self.global_volume.set_volume(note_delay_first_tick, pattern.effect_param);
-                }
-                0x11 => { // global volume slide
-                    self.global_volume.volume_slide(note_delay_first_tick, pattern.effect_param);
-                }
-                0x14 => { // key off
-                    if self.tick == pattern.effect_param as u32 {
-                        channel.key_off(instruments, pattern.is_note_delay());
-                    }
-                }
-                0x15 => { // set envelope position
-                    let instrument = self.song_data.get_instrument(channel);
-                    if instrument.volume_envelope.on { channel.volume_envelope_state.set_position(&instrument.volume_envelope, pattern.effect_param);}
-                    // FT2 bug - only set panning position if volume sustain is set
-                    if instrument.volume_envelope.sustain { channel.panning_envelope_state.set_position(&instrument.panning_envelope, pattern.effect_param);}
-                }
-                0x19 => {
-                    channel.panning_slide(first_tick, pattern.effect_param);
-                }
-                0x1b => {
-                    channel.multi_retrig(instruments, first_tick, self.tick, pattern.effect_param, note, self.rate, &self.frequency_tables);
-                }
-                0x1d => {
-                    channel.tremor(self.tick, pattern.effect_param);
-                }
-                _ => {missing.push_str(format!("channel: {}, eff: {:x},", i, pattern.effect).as_ref());}
-            }
-
-            if pattern.effect == 0xe {
-                match pattern.get_x() {
-                    0x1 => { channel.fine_porta_up(first_tick, pattern.get_y(), self.rate, &self.frequency_tables); } // Porta up
-                    0x2 => { channel.fine_porta_down(first_tick, pattern.get_y(), self.rate, &self.frequency_tables); } // Porta down
-                    0x3 => { channel.glissando = pattern.get_y() == 1; }
-                    0x4 => { channel.vibrato_control = pattern.get_y();}
-                    0x6 => { // Pattern Loop
-                        let param = pattern.get_y();
-                        if first_tick {
-                            if param == 0 {
-                                channel.loop_row = self.row as u8;
-                            } else {
-                                if channel.loop_count == 0 {
-                                    channel.loop_count = param;
-                                    self.pattern_change.is_loop = true;
-                                    self.pattern_change.row = channel.loop_row;
-                                } else {
-                                    channel.loop_count -= 1;
-                                    if channel.loop_count > 0 {
-                                        self.pattern_change.is_loop = true;
-                                        self.pattern_change.row = channel.loop_row;
+                            // If no DCT matched, apply NNA to current voice if it exists
+                            if !dca_applied {
+                                if let Some(v_idx) = channel.voice_idx {
+                                    if self.voices[v_idx].on {
+                                        Self::apply_it_action(&mut self.voices, v_idx, new_inst.nna, new_inst);
                                     }
                                 }
                             }
                         }
-                    }
-                    0x7 => { channel.tremolo_control = pattern.get_y();}
-                    0x8 => { channel.panning.set_panning((pattern.get_y() * 17) as i32);}
-                    0x9 => { channel.retrig_note(instruments, first_tick, self.tick, pattern.get_y(), pattern.note, self.rate, &self.frequency_tables);}
-                    0xa => { channel.fine_volume_slide_up(note_delay_first_tick, pattern.get_y());} // volume slide up
-                    0xb => { channel.fine_volume_slide_down(note_delay_first_tick, pattern.get_y());} // volume slide up
-                    0xc => { channel.set_volume(self.tick == pattern.get_y() as u32, 0); }
-                    0xd => {} // handled elsewhere
-                    0xe => { // Pattern Delay
-                        if first_tick {
-                            self.pattern_change.pattern_delay = pattern.get_y();
+                    } else if let Some(old_v_idx) = channel.voice_idx {
+                        // Standard XM/S3M/MOD NNA (Cut/Off/Fade)
+                        if self.voices[old_v_idx].instrument < instruments.len() && is_note_valid(note, self.song_data.song_type) {
+                            let instrument_ref = &instruments[self.voices[old_v_idx].instrument];
+                            match instrument_ref.nna {
+                                0 => { self.voices[old_v_idx].on = false; }
+                                1 => { self.voices[old_v_idx].key_off(instruments, pattern.is_note_delay(self.song_data.song_type)); }
+                                2 => {
+                                    self.voices[old_v_idx].sustained = false;
+                                    self.voices[old_v_idx].volume.fadeout_speed = (instrument_ref.volume_fadeout as i32) << 6;
+                                }
+                                _ => { self.voices[old_v_idx].key_off(instruments, pattern.is_note_delay(self.song_data.song_type)); }
+                            }
                         }
                     }
-                    _ => {missing.push_str(format!("channel_state: {}, eff: 0xe{:x},", i, pattern.get_x()).as_ref());}
+
+                    // Start a new voice
+                    let note_idx = (note - 1) as usize;
+                    let mut trigger_voice = false;
+                    let mut final_sample_idx = 0;
+                    let mut mapped_note = note;
+
+                    if inst_idx != 0 && inst_idx < instruments.len() {
+                        let instrument = &instruments[inst_idx];
+                        let mut mapping_found = false;
+
+                        if note_idx < instrument.sample_indexes.len() {
+                            let it_mapping = instrument.sample_indexes[note_idx];
+                            let sample_idx = it_mapping.1 as usize;
+                            
+                            if sample_idx > 0 {
+                                final_sample_idx = sample_idx - 1;
+                                if final_sample_idx < instrument.samples.len() {
+                                    trigger_voice = true;
+                                    mapping_found = true;
+                                    if let SongType::IT = self.song_data.song_type {
+                                        mapped_note = it_mapping.0 + 1;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if !mapping_found && !instrument.samples.is_empty() {
+                            // FALLBACK: Default to first sample if no mapping exists (XM/MOD/S3M)
+                            final_sample_idx = 0;
+                            trigger_voice = true;
+                        }
+                    }
+
+                    if trigger_voice && (self.song_data.song_type != SongType::S3M || note < 97) {
+                        let sample_len = instruments[inst_idx].samples[final_sample_idx].length;
+                        let data_len = instruments[inst_idx].samples[final_sample_idx].data.len();
+                        // Find free voice or steal quietest
+                        let mut v_idx = 0;
+                        let mut found = false;
+                        for vi in 0..self.voices.len() {
+                            if !self.voices[vi].on { v_idx = vi; found = true; break; }
+                        }
+                        if !found {
+                            let mut min_vol = 1_000_000.0f32;
+                            for vi in 0..self.voices.len() {
+                                if self.voices[vi].volume.output_volume < min_vol {
+                                    min_vol = self.voices[vi].volume.output_volume;
+                                    v_idx = vi;
+                                }
+                            }
+                        }
+                        
+                        let mut clone_voice = None;
+                        if (self.song_data.song_type == SongType::IT || self.song_data.song_type == SongType::S3M) && pattern.instrument == 0 {
+                            if let Some(old_idx) = channel.voice_idx {
+                                clone_voice = Some(self.voices[old_idx].clone());
+                            }
+                        }
+                        
+                        let voice = &mut self.voices[v_idx];
+                        voice.on = true;
+                        voice.channel_idx = i;
+                        voice.instrument = inst_idx;
+                        voice.sample = final_sample_idx;
+                        voice.last_played_note = mapped_note;
+                        
+                        if let Some(old_voice) = clone_voice {
+                            voice.volume = old_voice.volume;
+                            voice.panning = old_voice.panning;
+                            voice.volume_envelope_state = old_voice.volume_envelope_state;
+                            voice.panning_envelope_state = old_voice.panning_envelope_state;
+                            voice.pitch_envelope_state = old_voice.pitch_envelope_state;
+                            voice.vibrato_state = old_voice.vibrato_state;
+                            voice.tremolo_state = old_voice.tremolo_state;
+                            voice.instrument_global_volume = instruments[inst_idx].global_volume;
+                            voice.sample_global_volume = old_voice.sample_global_volume;
+                            voice.sample_position = 0.0;
+                            voice.loop_started = false;
+                            voice.ping = true;
+                        } else {
+                            voice.trigger_note(instruments);
+                            let sample_ref = &instruments[inst_idx].samples[final_sample_idx];
+                            voice.volume.retrig(sample_ref.volume as i32);
+                            voice.panning.panning = sample_ref.panning;
+                        }
+
+                        channel.voice_idx = Some(v_idx);
+                        channel.last_played_note = note;
+                        channel.on = true;
+                        
+                        let voice = &mut self.voices[v_idx];
+                        let sample_ref = &instruments[inst_idx].samples[final_sample_idx];
+                        voice.surround = sample_ref.surround;
+                        let real_note = (mapped_note as i16 + sample_ref.relative_note as i16) as u8;
+                        channel.note.set_note(real_note, sample_ref.finetune, mapped_note, self.frequency_tables.as_ref());
+                        channel.update_frequency_voice(voice, self.rate, false, self.frequency_tables.as_ref());
+                    }
+                }
+
+                if note == 97 { // Note Off
+                    if let Some(v_idx) = channel.voice_idx {
+                        self.voices[v_idx].key_off(instruments, pattern.is_note_delay(self.song_data.song_type));
+                    }
+                } else if note == 121 { // Note Cut
+                    if let Some(v_idx) = channel.voice_idx {
+                        self.voices[v_idx].on = false;
+                        self.voices[v_idx].volume.output_volume = 0.0;
+                    }
+                } else if note == 122 { // Note Fade
+                    if let Some(v_idx) = channel.voice_idx {
+                        self.voices[v_idx].sustained = false;
+                        let inst_ref = &instruments[self.voices[v_idx].instrument];
+                        self.voices[v_idx].volume.fadeout_speed = (inst_ref.volume_fadeout as i32) << 6;
+                    }
                 }
             }
 
-            let instrument = self.song_data.get_instrument(channel);
+            // Effects logic
+            let mut voice_ptr: *mut Voice = std::ptr::null_mut();
+            if let Some(v_idx) = channel.voice_idx {
+                if self.voices[v_idx].channel_idx == i {
+                    voice_ptr = &mut self.voices[v_idx];
+                }
+            }
+                
+            if !first_tick && pattern.has_vibrato(self.song_data.song_type) {
+                unsafe { if !voice_ptr.is_null() { channel.vibrato(Some(&mut *voice_ptr), first_tick, pattern.get_vibrato_speed(), pattern.get_vibrato_depth(), self.old_effects, self.frequency_tables.as_ref()); } }
+            }
 
-            let envelope_volume = channel.volume_envelope_state.handle(&instrument.volume_envelope, channel.voice.sustained, 64, false);
+            match self.song_data.song_type {
+                SongType::IT | SongType::S3M => {
+                    if pattern.volume != 255 {
+                        match pattern.volume {
+                            0..=64 => { unsafe { channel.set_volume(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.volume); } }
+                            65..=74 => { unsafe { channel.fine_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, (pattern.volume - 65) as i8); } }
+                            75..=84 => { unsafe { channel.fine_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, -((pattern.volume - 75) as i8)); } }
+                            85..=94 => { unsafe { channel.volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, (pattern.volume - 85) as i8); } }
+                            95..=104 => { unsafe { channel.volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, -((pattern.volume - 95) as i8)); } }
+                            105..=114 => { channel.porta_up(self.song_data.song_type, first_tick, (pattern.volume - 105) << 2); }
+                            115..=124 => { channel.porta_down(self.song_data.song_type, first_tick, (pattern.volume - 115) << 2); }
+                            128..=192 => { unsafe { if !voice_ptr.is_null() { (*voice_ptr).panning.set_panning(((pattern.volume - 128) << 2) as i32); } } } 
+                            193..=202 => { channel.porta_up(self.song_data.song_type, first_tick, pattern.volume - 192); }
+                            203..=212 => { channel.porta_down(self.song_data.song_type, first_tick, pattern.volume - 202); }
+                            _ => {}
+                        }
+                    }
 
-            let mut envelope_panning = channel.panning_envelope_state.handle(&instrument.panning_envelope, channel.voice.sustained, 32, true);
-            // let scale = 0.9;
-            envelope_panning = clamp(envelope_panning, 0, 64 * 256);
+                    match pattern.effect {
+                        0x01 => { 
+                            if first_tick && pattern.effect_param > 0 { 
+                                if pattern.effect_param < 32 { self.speed = pattern.effect_param as u32; }
+                                else { self.bpm.update(pattern.effect_param as u32, self.rate); }
+                            } 
+                        }
+                        0x02 => { self.pattern_change.set_jump(first_tick, pattern.effect_param); }
+                        0x03 => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); }
+                        0x04 => { 
+                            unsafe { channel.it_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.effect_param); }
+                        }
+                        0x05 => { 
+                            let param = if !self.compatible_g && pattern.effect_param == 0 { channel.last_it_slide_speed } else { pattern.effect_param };
+                            if !self.compatible_g && pattern.effect_param != 0 { channel.last_it_slide_speed = pattern.effect_param; }
+                            channel.porta_down(self.song_data.song_type, first_tick, param); 
+                        }
+                        0x06 => { 
+                            let param = if !self.compatible_g && pattern.effect_param == 0 { channel.last_it_slide_speed } else { pattern.effect_param };
+                            if !self.compatible_g && pattern.effect_param != 0 { channel.last_it_slide_speed = pattern.effect_param; }
+                            channel.porta_up(self.song_data.song_type, first_tick, param); 
+                        }
+                        0x07 => { 
+                            let param = if !self.compatible_g && pattern.effect_param == 0 { channel.last_it_slide_speed } else { pattern.effect_param };
+                            if !self.compatible_g && pattern.effect_param != 0 { channel.last_it_slide_speed = pattern.effect_param; }
+                            unsafe { channel.porta_to_note(self.song_data.song_type, if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, param, self.compatible_g, self.frequency_tables.as_ref()); }
+                        }
+                        0x08 => { unsafe { channel.vibrato(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, pattern.get_x(), pattern.get_y(), self.old_effects, self.frequency_tables.as_ref()); } }
+                        0x0A => { channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y()); }
+                        0x0B => { 
+                            unsafe { channel.vibrato(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, 0, 0, self.old_effects, self.frequency_tables.as_ref()); }
+                            unsafe { channel.it_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.effect_param); }
+                        }
+                        0x0C => { 
+                            unsafe { channel.porta_to_note(self.song_data.song_type, if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, 0, self.compatible_g, self.frequency_tables.as_ref()); }
+                            unsafe { channel.it_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.effect_param); }
+                        }
+                        0x0F => {
+                            if first_tick && is_note_valid(channel.last_played_note, self.song_data.song_type) {
+                                if pattern.effect_param != 0 { channel.last_sample_offset = (pattern.effect_param as u32) << 8; }
+                                unsafe { if !voice_ptr.is_null() {
+                                    let v = &mut *voice_ptr;
+                                    let offset = channel.last_sample_offset;
+                                    let sample_ref = &self.song_data.instruments[v.instrument].samples[v.sample];
+                                    let orig_length = sample_ref.length.saturating_sub(4);
+                                    if offset >= orig_length { v.on = false; } else { v.sample_position = offset as f32 + 4.0; }
+                                }}
+                            }
+                        }
+                        0x11 => { unsafe { channel.it_retrig(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, instruments, self.tick, pattern.effect_param); } }
+                        0x14 => { if first_tick && pattern.effect_param > 0 { self.bpm.update(pattern.effect_param as u32, self.rate); } }
+                        0x16 => { self.global_volume.set_volume(note_delay_first_tick, pattern.effect_param); }
+                        0x17 => { self.global_volume.volume_slide(note_delay_first_tick, pattern.effect_param); }
+                        0x18 => { if first_tick { unsafe { if !voice_ptr.is_null() { (*voice_ptr).panning.set_panning((pattern.effect_param as i32 * 4).min(255)); } } } }
+                        0x13 => {
+                            let x = pattern.get_x();
+                            match x {
+                                0x08 => { if first_tick { unsafe { if !voice_ptr.is_null() { (*voice_ptr).panning.set_panning((pattern.get_y() << 4) as i32); } } } }
+                                0x0C => { if self.tick == pattern.get_y() as u32 { channel.on = false; unsafe { if !voice_ptr.is_null() { (*voice_ptr).on = false; } } } }
+                                0x0E => { if first_tick { self.tick_state.row_delay = pattern.get_y() as usize; } }
+                                _ => {}
+                            }
+                        }
+                        0x0D => { if first_tick { channel.channel_volume = pattern.effect_param.min(64); } }
+                        0x0E => { channel.channel_volume_slide(note_delay_first_tick, pattern.effect_param); }
+                        0x10 => { unsafe { channel.panning_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.effect_param); } }
+                        0x1A => {
+                            unsafe { if !voice_ptr.is_null() {
+                                if pattern.effect_param < 0x80 { (*voice_ptr).filter_cutoff = pattern.effect_param; }
+                                else if (0x80..=0x8F).contains(&pattern.effect_param) { (*voice_ptr).filter_resonance = (pattern.effect_param & 0x0F) << 3; }
+                            }}
+                        }
+                        _ => {}
+                    }
+                }
+                _ => { // XM / MOD
+                    match pattern.volume {
+                        0x10..=0x50 => { unsafe { channel.set_volume(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.volume - 0x10); } }
+                        0x60..=0x6f => { unsafe { channel.volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, -(pattern.get_volume_param() as i8)); } }
+                        0x70..=0x7f => { unsafe { channel.volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.get_volume_param() as i8); } }
+                        0x80..=0x8f => { unsafe { channel.fine_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, -(pattern.get_volume_param() as i8)); } }
+                        0x90..=0x9f => { unsafe { channel.fine_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.get_volume_param() as i8); } }
+                        0xa0..=0xaf => { unsafe { channel.vibrato(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, 0, pattern.get_volume_param(), self.old_effects, self.frequency_tables.as_ref()); } }
+                        0xb0..=0xbf => { unsafe { channel.vibrato(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, pattern.get_volume_param(), 0, self.old_effects, self.frequency_tables.as_ref()); } }
+                        0xd0..=0xdf => { unsafe { channel.panning_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.get_volume_param() << 4); } }
+                        0xe0..=0xef => { unsafe { channel.panning_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.get_volume_param()); } }
+                        0xf0..=0xff => { unsafe { channel.porta_to_note(self.song_data.song_type, if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.get_volume_param(), self.compatible_g, self.frequency_tables.as_ref()); } }
+                        _ => {}
+                    }
 
+                    match pattern.effect {
+                        0x0 => { channel.arpeggio(self.tick, pattern.get_x(), pattern.get_y()); }
+                        0x1 => { channel.porta_up(self.song_data.song_type, first_tick, pattern.effect_param); }
+                        0x2 => { channel.porta_down(self.song_data.song_type, first_tick, pattern.effect_param); }
+                        0x3 => { unsafe { channel.porta_to_note(self.song_data.song_type, if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, pattern.effect_param, self.compatible_g, self.frequency_tables.as_ref()); } }
+                        0x4 => { unsafe { channel.vibrato(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, pattern.get_x(), pattern.get_y(), self.old_effects, self.frequency_tables.as_ref()); } }
+                        0x5 => { 
+                            unsafe { channel.porta_to_note(self.song_data.song_type, if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, 0, self.compatible_g, self.frequency_tables.as_ref()); }
+                            unsafe { channel.volume_slide_main(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, pattern.effect_param); }
+                        }
+                        0x6 => { 
+                            unsafe { channel.vibrato(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, 0, 0, self.old_effects, self.frequency_tables.as_ref()); }
+                            unsafe { channel.volume_slide_main(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, pattern.effect_param); }
+                        }
+                        0x7 => { unsafe { channel.tremolo(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, pattern.get_x(), pattern.get_y()); } }
+                        0x8 => { unsafe { if !voice_ptr.is_null() { (*voice_ptr).panning.set_panning(pattern.effect_param as i32); } } }
+                        0x9 => {
+                            if first_tick && is_note_valid(channel.last_played_note, self.song_data.song_type) {
+                                if pattern.effect_param != 0 { channel.last_sample_offset = (pattern.effect_param as u32) << 8; }
+                                unsafe { if !voice_ptr.is_null() {
+                                    let v = &mut *voice_ptr;
+                                    let offset = channel.last_sample_offset;
+                                    let sample_ref = &self.song_data.instruments[v.instrument].samples[v.sample];
+                                    if offset >= sample_ref.length.saturating_sub(4) { v.on = false; } else { v.sample_position = offset as f32 + 4.0; }
+                                }}
+                            }
+                        }
+                        0xA => { unsafe { channel.volume_slide_main(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, note_delay_first_tick, pattern.effect_param); } }
+                        0xB => { self.pattern_change.set_jump(first_tick, pattern.effect_param); }
+                        0xD => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); }
+                        0x0F => {
+                            if first_tick {
+                                if pattern.effect_param != 0 {
+                                    if pattern.effect_param < 32 { self.speed = pattern.effect_param as u32; }
+                                    else { self.bpm.update(pattern.effect_param as u32, self.rate); }
+                                }
+                            }
+                        }
+                        0x10 => { self.global_volume.set_volume(note_delay_first_tick, pattern.effect_param); }
+                        0x11 => { self.global_volume.volume_slide(first_tick, pattern.effect_param); }
+                        0xE => {
+                            let sub = pattern.get_x();
+                            let p = pattern.get_y();
+                            match sub {
+                                0x1 => { channel.fine_porta_up(self.song_data.song_type, first_tick, p); }
+                                0x2 => { channel.fine_porta_down(self.song_data.song_type, first_tick, p); }
+                                0x3 => { channel.glissando = p == 1; }
+                                0x4 => { channel.vibrato_control = p; }
+                                0x7 => { channel.tremolo_control = p; }
+                                0x9 => { unsafe { channel.retrig_note(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, instruments, first_tick, self.tick, p); } }
+                                0xA => { unsafe { channel.fine_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, p as i8); } }
+                                0xB => { unsafe { channel.fine_volume_slide(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, first_tick, -(p as i8)); } }
+                                0xC => { if self.tick == p as u32 { unsafe { if !voice_ptr.is_null() { (*voice_ptr).on = false; } } } }
+                                _ => {}
+                            }
+                        }
+                        0x1B => { unsafe { channel.multi_retrig(if voice_ptr.is_null() { None } else { Some(&mut *voice_ptr) }, instruments, first_tick, self.tick, pattern.effect_param); } }
+                        0x1D => { channel.tremor(self.tick, pattern.effect_param); }
+                        _ => {}
+                    }
+                }
+            }
+                
+            if !first_tick && pattern.effect != 0x0 && pattern.effect != 0x0A {
+                channel.period_shift = 0;
+            }
 
-            channel.panning.update_envelope_panning(envelope_panning);
-            // FinalVol = (FadeOutVol/65536)*(EnvelopeVol/64)*(GlobalVol/64)*(Vol/64)*Scale;
-            channel.update_frequency(self.rate, channel.glissando, &self.frequency_tables);
-
-            let global_volume = self.global_volume.volume as f32 / 64.0 ;
-            channel.voice.volume.envelope_vol = envelope_volume as i32;
-            channel.voice.volume.global_vol = self.global_volume.volume as i32;
-            channel.voice.volume.output_volume = (channel.voice.volume.fadeout_vol as f32 / 65536.0) * (envelope_volume as f32 / 16384.0) * (channel.voice.volume.get_volume() as f32 / 64.0) * global_volume;
-            
+            let mut channel_active = false;
+            for v in &self.voices {
+                if v.on && v.channel_idx == i {
+                    channel_active = true;
+                    break;
+                }
+            }
+            channel.on = channel_active;
         }
-//            row
+
+        // 2. Process all active voices (Envelopes and Final Volume)
+        // IT uses 0..128, others use 0..64
+        // IT uses 0..128, others use 0..64
+        let global_divisor = if self.song_data.song_type == SongType::IT { 128.0 } else { 64.0 };
+        let global_vol_f32 = self.global_volume.volume as f32 / global_divisor;
+        for (v_idx, voice) in self.voices.iter_mut().enumerate() {
+            if !voice.on { continue; }
+            let channel_vol_f32 = self.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            voice.update_envelopes(instruments, self.rate);
+            voice.update_output_volume(global_vol_f32, channel_vol_f32, 1.0);
+            
+            let is_host_voice = self.channels[voice.channel_idx].voice_idx == Some(v_idx);
+            
+            if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
+                voice.on = false;
+            } else if !is_host_voice && voice.volume.output_volume < 0.00001 {
+                voice.on = false;
+            }
+        }
     }
-
-    // fn channel_borrow_mut<'b>(&'b mut self, i: usize) -> &'b mut ChannelState<'a> {
-    //     let channels = &mut (self.channels);
-    //     let (_, r) = channels.split_at_mut(i);
-    //     r[0].borrow_mut()
-    // }
-
-    // fn porta_inner(frequncy_shift: i8, channel_state: &mut ChannelData) {
-    //     channel_state.frequency_shift += frequency_shift;
-    // }
 
     fn lerp(pos: f32, p1: f32, p2: f32) -> f32 {
-
         let t = pos.fract();
-
-        return (1.0 - t) * p1 + t * p2;
+        (1.0 - t) * p1 + t * p2
     }
-
 
     fn output_channels(&mut self, current_buf_position: usize, buf: &mut impl BufferAdapter, ticks_to_generate: usize) {
         if self.is_fast_forwarding {
             return;
         }
 
+        let master_gain = (self.master_volume as f32 / 128.0) * (self.mixing_volume as f32 / 128.0) * MASTER_GAIN;
+        let frequency_tables = self.frequency_tables.as_ref();
+        let song_type = self.song_data.song_type;
+
+        // Clear per-channel last_samples for this buffer block
         for channel in &mut self.channels {
-            if !channel.on || channel.force_off {
-                continue;
-            }
+            channel.last_samples.fill(0.0);
+        }
 
-            let sample = self.song_data.get_sample(channel);
+        for v_idx in 0..self.voices.len() {
+            let voice = &mut self.voices[v_idx];
+            if !voice.on { continue; }
+            
+            let final_master_gain = if song_type == SongType::IT || song_type == SongType::S3M || song_type == SongType::XM { master_gain } else { MASTER_GAIN };
+            let sample = &self.song_data.instruments[voice.instrument].samples[voice.sample];
 
-            let vol_right = PANNING_TAB[      channel.panning.final_panning as usize] as f32 / 65536.0;
-            let vol_left  = PANNING_TAB[256 - channel.panning.final_panning as usize] as f32 / 65536.0;
+            let vol_right = (PANNING_TAB[      voice.panning.final_panning as usize] as f32 / 65536.0) * final_master_gain;
+            let vol_left  = (PANNING_TAB[256 - voice.panning.final_panning as usize] as f32 / 65536.0) * final_master_gain;
             
             let mut i = 0;
-            
-            // Fast Path: 4-sample SIMD Block
-            while i + 4 <= ticks_to_generate {
-                let pos = channel.voice.sample_position;
-                let du = channel.voice.du;
-                
-                // Check if any of the 4 samples will cross a loop or end boundary
-                // We also check channel.on in case the scalar loop turned it off (not possible here but good for safety)
-                if pos + (4.0 * du) >= sample.length as f32 || 
-                   (sample.loop_type != LoopType::NoLoop && pos + (4.0 * du) >= sample.loop_end as f32) {
-                    break;
-                }
+            let filter_active = voice.filter_cutoff < 127;
 
-                let mut out_samples = [0.0f32; 4];
-                
-                match self.filter {
-                    FilterType::Linear => {
-                        let mut lo = [0.0f32; 4];
-                        let mut hi = [0.0f32; 4];
-                        let mut t  = [0.0f32; 4];
-                        
-                        for j in 0..4 {
-                            let p = pos + (j as f32 * du);
-                            let idx = p as usize;
-                            lo[j] = sample.data[idx];
-                            hi[j] = sample.data[idx+1];
-                            t[j]  = p.fract();
-                        }
-                        out_samples = lerp_simd(lo, hi, t);
-                    },
-                    FilterType::Cubic => {
-                        let mut p0 = [0.0f32; 4];
-                        let mut p1 = [0.0f32; 4];
-                        let mut p2 = [0.0f32; 4];
-                        let mut p3 = [0.0f32; 4];
-                        let mut t  = [0.0f32; 4];
-                        
-                        for j in 0..4 {
-                            let p = pos + (j as f32 * du);
-                            let idx = p as usize;
-                            p0[j] = sample.data[idx-1];
-                            p1[j] = sample.data[idx];
-                            p2[j] = sample.data[idx+1];
-                            p3[j] = sample.data[idx+2];
-                            t[j]  = p.fract();
-                        }
-                        out_samples = cubic_simd(p0, p1, p2, p3, t);
-                    },
-                    FilterType::Sinc => {
-                        for j in 0..4 {
-                            let p = pos + (j as f32 * du);
-                            let idx = p as usize;
-                            let phase = (p.fract() * 512.0) as usize;
-                            let table = &self.frequency_tables.resampling.sinc_table[phase];
-                            out_samples[j] = sinc_dot_product(&sample.data[idx - 3..], table);
-                        }
-                    },
-                    FilterType::None => {
-                        for j in 0..4 {
-                            let p = pos + (j as f32 * du);
-                            out_samples[j] = sample.data[p as usize];
+            let channel_volume = self.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let global_volume  = self.global_volume.get_volume_f32();
+            
+            voice.update_output_volume(global_volume, channel_volume, 1.0);
+
+
+            // Paths 1: SIMD-optimized resampling for clean voices (Master branch style)
+            if !filter_active && i + 4 <= ticks_to_generate {
+                let mut pos = voice.sample_position;
+                let du = voice.du;
+
+                while voice.on && i + 4 <= ticks_to_generate {
+                    // Check if the next 4 samples will drift out of bounds
+                    if pos as u32 >= sample.length || pos + (4.0 * du) >= sample.length as f32 ||
+                       (sample.loop_type != LoopType::NoLoop && pos + (4.0 * du) >= sample.loop_end as f32) {
+                        break;
+                    }
+
+                    let mut out_samples = [0.0f32; 4];
+                    match self.filter {
+                        FilterType::Linear => {
+                            let mut lo = [0.0f32; 4]; let mut hi = [0.0f32; 4]; let mut t = [0.0f32; 4];
+                            for j in 0..4 {
+                                let p = pos + (j as f32 * du);
+                                let idx = p as usize;
+                                lo[j] = sample.data[idx];
+                                hi[j] = sample.data[idx+1];
+                                t[j]  = p.fract();
+                            }
+                            out_samples = lerp_simd(lo, hi, t);
+                        },
+                        FilterType::Cubic => {
+                            let mut p0 = [0.0f32; 4]; let mut p1 = [0.0f32; 4]; let mut p2 = [0.0f32; 4]; let mut p3 = [0.0f32; 4]; let mut t = [0.0f32; 4];
+                            for j in 0..4 {
+                                let p = pos + (j as f32 * du);
+                                let idx = p as usize;
+                                p0[j] = sample.data[idx.saturating_sub(1)];
+                                p1[j] = sample.data[idx];
+                                p2[j] = sample.data[idx+1];
+                                p3[j] = sample.data[if idx+2 < sample.data.len() { idx+2 } else { idx+1 }];
+                                t[j]  = p.fract();
+                            }
+                            out_samples = cubic_simd(p0, p1, p2, p3, t);
+                        },
+                        FilterType::Sinc => {
+                            for j in 0..4 {
+                                let p = pos + (j as f32 * du);
+                                let idx = p as usize;
+                                let phase = (p.fract() * 512.0) as usize;
+                                let table = &frequency_tables.resampling.sinc_table[phase];
+                                out_samples[j] = sinc_dot_product(&sample.data[idx.saturating_sub(3)..], table);
+                            }
+                        },
+                        FilterType::None => {
+                            for j in 0..4 { out_samples[j] = sample.data[(pos + (j as f32 * du)) as usize]; }
                         }
                     }
+
+                    let output_vol = voice.volume.output_volume;
+                    let mut left_samples  = [0.0f32; 4];
+                    let mut right_samples = [0.0f32; 4];
+                    
+                    let channel_idx = voice.channel_idx;
+                    for j in 0..4 {
+                        let final_sample = out_samples[j] * output_vol;
+                        left_samples[j] = final_sample * vol_left;
+                        right_samples[j] = final_sample * vol_right;
+                        
+                        // Record for UI
+                        self.channels[channel_idx].last_samples[(i + j) % 4096] += final_sample;
+                        let m_idx = (self.master_samples_pos + i + j) % 8192;
+                        self.master_samples[m_idx] += (left_samples[j] + right_samples[j]) / (2.0 * MASTER_GAIN);
+                    }
+                    
+                    buf.mix_samples(0, &left_samples, current_buf_position + i);
+                    buf.mix_samples(1, &right_samples, current_buf_position + i);
+                    pos += 4.0 * du;
+                    i += 4;
                 }
-
-                // Volume and Panning
-                let mut left_samples  = [0.0f32; 4];
-                let mut right_samples = [0.0f32; 4];
-                
-                let output_vol = channel.voice.volume.output_volume / 4.0;
-                
-                for j in 0..4 {
-                    let final_sample = out_samples[j] * output_vol;
-                    
-                    channel.last_samples[channel.last_samples_pos] = final_sample;
-                    channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
-                    
-                    left_samples[j]  = final_sample * vol_left;
-                    right_samples[j] = final_sample * vol_right;
-                    
-                    self.master_samples[self.master_samples_pos] = (left_samples[j] + right_samples[j]) / 2.0;
-                    self.master_samples_pos = (self.master_samples_pos + 1) % 8192;
-                }
-
-                buf.mix_samples(0, &left_samples,  current_buf_position + i);
-                buf.mix_samples(1, &right_samples, current_buf_position + i);
-
-                channel.voice.sample_position += 4.0 * du;
-                i += 4;
+                voice.sample_position = pos;
             }
 
-            // Path 2: Scalar Fallback
+            // Path 2: Scalar resampling (Legacy / Filtered / Boundary cases)
             while i < ticks_to_generate {
-
-                if channel.voice.sample_position as u32 >= sample.length {
-                    channel.on = false;
+                if voice.sample_position as u32 >= sample.length {
+                    voice.on = false;
                     break;
                 }
 
-                let out_sample: f32 = match self.filter {
+                let pos = voice.sample_position;
+                let idx = pos as usize;
+                
+                let mut out_sample = match self.filter {
                     FilterType::Linear => {
-                        let pos = channel.voice.sample_position as usize;
-                        Self::lerp(channel.voice.sample_position, sample.data[pos], sample.data[pos+1])
+                        let next = if idx + 1 < sample.data.len() { sample.data[idx+1] } else { 0.0 };
+                        Self::lerp(pos, sample.data[idx], next)
                     },
                     FilterType::Cubic => {
-                        let pos = channel.voice.sample_position as usize;
-                        channel.voice.spline_data.p0 = sample.data[pos-1];
-                        channel.voice.spline_data.p1 = sample.data[pos];
-                        channel.voice.spline_data.p2 = sample.data[pos+1];
-                        channel.voice.spline_data.p3 = sample.data[pos+2];
-                        
-                        channel.voice.spline_data.interpolate(channel.voice.sample_position.fract())
+                        voice.spline_data.p0 = sample.data[idx.saturating_sub(1)];
+                        voice.spline_data.p1 = sample.data[idx];
+                        voice.spline_data.p2 = sample.data[(idx + 1).min(sample.data.len() - 1)];
+                        voice.spline_data.p3 = sample.data[(idx + 2).min(sample.data.len() - 1)];
+                        voice.spline_data.interpolate(pos.fract())
                     },
                     FilterType::Sinc => {
-                        let pos = channel.voice.sample_position as usize;
-                        let phase = (channel.voice.sample_position.fract() * 512.0) as usize;
-                        let table = &self.frequency_tables.resampling.sinc_table[phase];
-                        sinc_dot_product(&sample.data[pos - 3..], table)
-
+                        let phase = (pos.fract() * 512.0) as usize;
+                        let table = &frequency_tables.resampling.sinc_table[phase];
+                        sinc_dot_product(&sample.data[idx.saturating_sub(3)..], table)
                     },
-                    FilterType::None => {
-                        sample.data[channel.voice.sample_position as usize]
-                    }
+                    FilterType::None => sample.data[idx]
                 };
 
-                let final_sample = out_sample / 4.0 * channel.voice.volume.output_volume;
-                
-                channel.last_samples[channel.last_samples_pos] = final_sample;
-                channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
+                if voice.filter_cutoff < 127 {
+                    let band = voice.filter_state.history[1];
+                    let low = voice.filter_state.history[0];
+                    let new_band = band + voice.filter_state.a * (out_sample - low - voice.filter_state.b * band);
+                    let new_low = low + voice.filter_state.a * new_band;
+                    voice.filter_state.history[0] = new_low;
+                    voice.filter_state.history[1] = new_band;
+                    out_sample = new_low;
+                }
 
+                let final_sample = out_sample * voice.volume.output_volume;
                 let l = final_sample * vol_left;
                 let r = final_sample * vol_right;
 
-
-                self.master_samples[self.master_samples_pos] = (l + r) / 2.0;
-
-                self.master_samples_pos = (self.master_samples_pos + 1) % 8192;
+                self.channels[voice.channel_idx].last_samples[i % 4096] += final_sample;
+                let m_idx = (self.master_samples_pos + i) % 8192;
+                self.master_samples[m_idx] += (l + r) / (2.0 * MASTER_GAIN);
 
                 buf.mix_sample(0, l, current_buf_position + i);
                 buf.mix_sample(1, r, current_buf_position + i);
 
-                channel.voice.sample_position += channel.voice.du;
-
-                if channel.voice.sample_position as u32 >= sample.length ||
-                    (sample.loop_type != LoopType::NoLoop && channel.voice.sample_position >= sample.loop_end as f32) {
-                    channel.voice.loop_started = true;
-                    match sample.loop_type {
-                        LoopType::NoLoop => {
-                            channel.on = false;
-                            channel.voice.volume.set_volume(0);
-                            break;
-                        }
-                        LoopType::ForwardLoop | LoopType::PingPongLoop => {
-                            channel.voice.sample_position = (channel.voice.sample_position - sample.loop_end as f32) + sample.loop_start as f32;
-                        }
-                    }
+                voice.sample_position += voice.du;
+                if voice.sample_position as u32 >= sample.length || (sample.loop_type != LoopType::NoLoop && voice.sample_position >= sample.loop_end as f32) {
+                    if sample.loop_type == LoopType::NoLoop { voice.on = false; break; }
+                    else { voice.sample_position = (voice.sample_position - sample.loop_end as f32) + sample.loop_start as f32; }
                 }
-
-                if channel.voice.loop_started && channel.voice.sample_position < sample.loop_start as f32 {
-                    channel.voice.sample_position = sample.loop_start as f32 + (sample.loop_start as f32 - channel.voice.sample_position) as f32;
-                }
-                
                 i += 1;
             }
+        }
+
+        // Finalize visualizer pointers and clear master samples for next block
+        let next_pos = (self.master_samples_pos + ticks_to_generate) % 8192;
+        // Optimization: only clear the part we just advanced over
+        let mut p = next_pos;
+        for _ in 0..ticks_to_generate {
+            self.master_samples[p] = 0.0;
+            p = (p + 1) % 8192;
+        }
+        self.master_samples_pos = next_pos;
+
+        for channel in &mut self.channels {
+            channel.last_samples_pos = 0; // Fixed per-tick base for unmerged branch simplicity
         }
     }
 }

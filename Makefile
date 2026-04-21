@@ -34,8 +34,9 @@ wasm:
 	@echo ""
 	@echo "WASM package built in modplayer-wasm/pkg/"
 
-# Build WASM and start dev server
-wasm-dev: wasm
+# Build WASM and start dev server with debug symbols
+wasm-dev:
+	wasm-pack build modplayer-wasm --target bundler --dev
 	cd modplayer-wasm/www && npm install && npm start
 
 # Run tests

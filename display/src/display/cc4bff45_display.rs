@@ -82,8 +82,8 @@ impl Display {
         let view_mode = ViewMode::from(view_mode_raw);
         
         let theme_id = match play_data.user_data.get("theme_id") {
-            Some(UserData::USize(v)) => (*v % 6) as u32,
-            _ => theme_id % 6
+            Some(UserData::USize(v)) => (*v % 5) as u32,
+            _ => theme_id % 5
         };
         let theme = Self::get_theme(theme_id);
 
@@ -339,50 +339,6 @@ impl Display {
                     pat_eff_fg: RGB { r: 247, g: 118, b: 142 },
                 }
             },
-            5 => { // Oceanic (Deep Atlantic / Teal) - PREMIUM
-                Theme {
-                    meter_colors: [
-                        RGB { r: 0, g: 32, b: 64 }, RGB { r: 0, g: 48, b: 80 }, RGB { r: 0, g: 64, b: 96 },
-                        RGB { r: 0, g: 80, b: 112 }, RGB { r: 0, g: 100, b: 130 }, RGB { r: 0, g: 120, b: 150 },
-                        RGB { r: 20, g: 140, b: 170 }, RGB { r: 40, g: 160, b: 190 }, RGB { r: 60, g: 180, b: 210 },
-                        RGB { r: 80, g: 200, b: 230 }, RGB { r: 100, g: 220, b: 250 }, RGB { r: 120, g: 240, b: 255 },
-                        RGB { r: 140, g: 255, b: 240 }, RGB { r: 120, g: 240, b: 210 }, RGB { r: 100, g: 220, b: 180 },
-                        RGB { r: 80, g: 200, b: 150 }, RGB { r: 60, g: 180, b: 120 }, RGB { r: 40, g: 160, b: 90 },
-                        RGB { r: 20, g: 140, b: 60 }, RGB { r: 0, g: 120, b: 30 }, RGB { r: 0, g: 100, b: 20 },
-                        RGB { r: 0, g: 80, b: 10 }, RGB { r: 0, g: 60, b: 5 }, RGB { r: 0, g: 50, b: 0 },
-                    ],
-                    freq_colors: [
-                        RGB { r: 10, g: 30, b: 80 }, RGB { r: 20, g: 50, b: 110 }, RGB { r: 30, g: 70, b: 140 },
-                        RGB { r: 40, g: 90, b: 170 }, RGB { r: 50, g: 110, b: 200 }, RGB { r: 60, g: 130, b: 230 },
-                        RGB { r: 0, g: 180, b: 255 }, RGB { r: 0, g: 200, b: 255 }, RGB { r: 0, g: 220, b: 255 },
-                        RGB { r: 0, g: 240, b: 255 }, RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 },
-                        RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 },
-                        RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 },
-                        RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 },
-                        RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 }, RGB { r: 0, g: 255, b: 255 },
-                    ],
-                    header_bg: RGB { r: 10, g: 20, b: 50 },
-                    header_fg: RGB { r: 0, g: 255, b: 255 },
-                    accent_fg: RGB { r: 0, g: 255, b: 255 },
-                    table_hdr_bg: RGB { r: 15, g: 25, b: 60 },
-                    table_hdr_fg: RGB { r: 0, g: 255, b: 255 },
-                    row_bg_odd: RGB { r: 10, g: 17, b: 40 },
-                    row_bg_even: RGB { r: 5, g: 10, b: 30 },
-                    col_on: RGB { r: 0, g: 255, b: 200 },
-                    col_off: RGB { r: 60, g: 90, b: 120 },
-                    col_inst: RGB { r: 0, g: 255, b: 150 },
-                    col_freq: RGB { r: 0, g: 220, b: 255 },
-                    col_note: RGB { r: 255, g: 255, b: 255 },
-                    col_period: RGB { r: 100, g: 200, b: 255 },
-                    col_sep: RGB { r: 30, g: 50, b: 90 },
-                    pat_row_bg: RGB { r: 5, g: 10, b: 30 },
-                    pat_curr_bg: RGB { r: 20, g: 45, b: 110 },
-                    pat_note_fg: RGB { r: 0, g: 255, b: 255 },
-                    pat_inst_fg: RGB { r: 0, g: 255, b: 150 },
-                    pat_vol_fg: RGB { r: 100, g: 200, b: 255 },
-                    pat_eff_fg: RGB { r: 200, g: 255, b: 255 },
-                }
-            },
             _ => { // Classic Pro (Refined)
                 Theme {
                     meter_colors: [
@@ -624,24 +580,8 @@ impl Display {
                             format!("{}{}", xmplayer::pattern::Pattern::NOTES[((p.note - 1) % 12) as usize], (p.note - 1) / 12)
                         };
                         let inst = if p.instrument == 0 { "..".to_string() } else { format!("{:02X}", p.instrument) };
-                        let vol = if p.volume == 0 || p.volume == 255 { "..".to_string() } else { format!("{:02X}", p.volume) };
-                        let effect = if p.effect == 0 && p.effect_param == 0 { 
-                            "...".to_string() 
-                        } else { 
-                            match play_data.song_type {
-                                xmplayer::module_reader::SongType::IT | xmplayer::module_reader::SongType::S3M => {
-                                    let label = if p.effect > 0 && p.effect <= 26 {
-                                        ((b'A' + p.effect - 1) as char).to_string()
-                                    } else {
-                                        format!("{:01X}", p.effect)
-                                    };
-                                    format!("{}{:02X}", label, p.effect_param)
-                                }
-                                _ => {
-                                    format!("{:01X}{:02X}", p.effect, p.effect_param)
-                                }
-                            }
-                        };
+                        let vol = if p.volume == 0 { "..".to_string() } else { format!("{:02X}", p.volume) };
+                        let effect = if p.effect == 0 && p.effect_param == 0 { "...".to_string() } else { format!("{:01X}{:02X}", p.effect, p.effect_param) };
                         
                         let is_muted = actual_ch < play_data.channel_status.len()
                             && play_data.channel_status[actual_ch].force_off;
