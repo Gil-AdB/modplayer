@@ -8,8 +8,6 @@ edition = "2024"
 name = "modplayer"
 crate-type = ["staticlib"]
 
-[target.'cfg(target_arch = "wasm32")']
-build = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]

@@ -14,14 +14,19 @@ pub enum State {
     StateDirty
 }
 
-const READER: u32       = 0x03;
-const WRITER: u32       = 0x0C;
-const WRITER_SHIFT: u32 = 2;
-const READY: u32        = 0x30;
-const READY_SHIFT: u32  = 4;
-const DIRTY: u32        = 0x40;
+const READER_MASK: u32   = 0x03;
+const WRITER_MASK: u32   = 0x0C;
+const WRITER_SHIFT: u32  = 2;
+const READY_MASK: u32    = 0x30;
+const READY_SHIFT: u32   = 4;
+const DIRTY_BIT: u32     = 0x40;
 
-
+/// State bitfield structure (AtomicU32):
+/// [6]:   Dirty bit (1 if new data is available in the READY slot)
+/// [4-5]: Index of the buffer that was most recently written and is READY for reading.
+/// [2-3]: Index of the buffer currently owned by the WRITER.
+/// [0-1]: Index of the buffer currently owned by the READER.
+const INITIAL_STATE: u32 = (2 << READY_SHIFT) | (1 << WRITER_SHIFT) | 0; // 0x24: Ready=2, Writer=1, Reader=0
 
 /// A lock-free triple buffer for single-producer, single-consumer state sharing.
 /// 
@@ -35,6 +40,7 @@ pub struct TripleBuffer<T> {
     // 4-5: ready index (most recently written)
     // 6:   dirty bit (new data available)
     indexes: AtomicU32,
+    sem: Option<Semaphore>,
 }
 
 unsafe impl<T: Send> Send for TripleBuffer<T> {}
@@ -47,12 +53,12 @@ pub struct TripleBufferReader<T> {
 impl<T> TripleBufferReader<T> where T: Clone + Default {
     /// Reads the current state from the buffer.
     /// Returns a reference to the data and its state (Dirty or NoChange).
-    pub fn read(&mut self) -> (&T, State) {
+    pub fn get_read_buffer(&self) -> (&T, State) {
         let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
-            if !TripleBuffer::<T>::get_dirty(current_indexes) {
-                let idx = TripleBuffer::<T>::get_reader(current_indexes) as usize;
+            if !TripleBuffer::<T>::is_dirty(current_indexes) {
+                let idx = TripleBuffer::<T>::get_reader_idx(current_indexes) as usize;
                 return (tb.get_buffer_ref(idx), State::StateNoChange)
             }
             
@@ -66,8 +72,25 @@ impl<T> TripleBufferReader<T> where T: Clone + Default {
                 continue;
             }
 
-            let idx = TripleBuffer::<T>::get_reader(new_indexes) as usize;
+            let idx = TripleBuffer::<T>::get_reader_idx(new_indexes) as usize;
             return (tb.get_buffer_ref(idx), State::StateDirty);
+        }
+    }
+}
+
+impl<T> TripleBufferReader<T> {
+    /// Blocks the current thread until new data is available in the buffer.
+    pub fn wait(&self) {
+        if let Some(sem) = &self.triple_buffer.sem {
+            sem.wait();
+        }
+    }
+
+    /// Wakes up the blocking reader thread without producing new data.
+    /// Useful for graceful shutdown.
+    pub fn wake_reader(&self) {
+        if let Some(sem) = &self.triple_buffer.sem {
+            sem.signal();
         }
     }
 }
@@ -76,33 +99,80 @@ pub struct TripleBufferWriter<T> {
     triple_buffer: Arc<TripleBuffer<T>>
 }
 
+/// Guard that grants mutable access to the writer buffer.
+/// When dropped, it automatically publishes the buffer to the reader.
+pub struct TripleBufferWriteGuard<'a, T> where T: Clone + Default {
+    writer: &'a TripleBufferWriter<T>,
+    buffer: &'a mut T,
+}
+
+impl<'a, T> Deref for TripleBufferWriteGuard<'a, T> where T: Clone + Default {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.buffer
+    }
+}
+
+impl<'a, T> DerefMut for TripleBufferWriteGuard<'a, T> where T: Clone + Default {
+    fn deref_mut(&mut self) -> &mut T {
+        self.buffer
+    }
+}
+
+impl<'a, T> Drop for TripleBufferWriteGuard<'a, T> where T: Clone + Default {
+    fn drop(&mut self) {
+        self.writer.publish();
+    }
+}
+
 impl<T> TripleBufferWriter<T> where T: Clone + Default {
-    /// Commits the previously written buffer to the reader and provides a mutable reference
-    /// to the next available buffer for writing.
-    pub fn write(&mut self) -> &mut T {
+    /// Acquires a mutable reference to the writer buffer.
+    /// The returned guard will publish the changes on drop.
+    pub fn acquire_buffer(&self) -> TripleBufferWriteGuard<'_, T> {
+        let indexes = self.triple_buffer.indexes.load(Acquire);
+        let writer_idx = TripleBuffer::<T>::get_writer_idx(indexes) as usize;
+        
+        // Since we hold the TripleBufferWriter handle (which is intended for a single producer),
+        // and the TripleBuffer logic ensures the writer_idx buffer is exclusive, this is safe.
+        let buffer = unsafe { &mut (*self.triple_buffer.buffer.get())[writer_idx] };
+        
+        TripleBufferWriteGuard {
+            buffer,
+            writer: self,
+        }
+    }
+
+    /// Internal method to publish the current writer buffer by swapping it with the READY slot.
+    fn publish(&self) {
         let tb = &*self.triple_buffer;
         loop {
             let current_indexes = tb.indexes.load(Acquire);
-            
-            // Swap ready and writer bits to publish the previously written buffer
             let new_indexes = TripleBuffer::<T>::swap_ready_and_writer(current_indexes);
             
-            // Attempt to update the atomic state
             if tb.indexes.compare_exchange_weak(current_indexes, new_indexes, Release, Relaxed).is_ok() {
-                // Success! Return the NEW writer buffer.
-                let new_writer_idx = TripleBuffer::<T>::get_writer(new_indexes) as usize;
-                return tb.get_buffer_mut(new_writer_idx);
+                if let Some(sem) = &tb.sem {
+                    sem.signal();
+                }
+                break;
             }
         }
     }
 }
 
-impl<T> TripleBuffer<T> where T: Clone + Default {
-    /// Creates a new TripleBuffer.
-    pub fn new() -> Box<Self> {
+impl<T> TripleBuffer<T> {
+    pub fn new() -> Box<Self> where T: Clone + Default {
         Box::new(TripleBuffer {
             buffer: UnsafeCell::new(array_init(|_| T::default())),
-            indexes: AtomicU32::new(0x24) // Initial state: reader=0, writer=1, ready=2, dirty=0
+            indexes: AtomicU32::new(INITIAL_STATE),
+            sem: None
+        })
+    }
+
+    pub fn new_with_signal() -> Box<Self> where T: Clone + Default {
+        Box::new(TripleBuffer {
+            buffer: UnsafeCell::new(array_init(|_| T::default())),
+            indexes: AtomicU32::new(INITIAL_STATE),
+            sem: Some(Semaphore::new(0))
         })
     }
 
@@ -119,40 +189,36 @@ impl<T> TripleBuffer<T> where T: Clone + Default {
         )
     }
 
-    fn get_reader(indexes: u32) -> u32 {
-        indexes & READER
+    fn get_reader_idx(indexes: u32) -> u32 {
+        indexes & READER_MASK
     }
 
-    fn get_writer(indexes: u32) -> u32 {
-        (indexes & WRITER) >> WRITER_SHIFT
+    fn get_writer_idx(indexes: u32) -> u32 {
+        (indexes & WRITER_MASK) >> WRITER_SHIFT
     }
 
-    fn get_ready(indexes: u32) -> u32 {
-        (indexes & READY) >> READY_SHIFT
+    fn get_ready_idx(indexes: u32) -> u32 {
+        (indexes & READY_MASK) >> READY_SHIFT
     }
 
-    fn get_dirty(indexes: u32) -> bool {
-        (indexes & DIRTY) == DIRTY
+    fn is_dirty(indexes: u32) -> bool {
+        (indexes & DIRTY_BIT) == DIRTY_BIT
     }
 
     fn swap_ready_and_writer(indexes: u32) -> u32 {
-        let new_ready = Self::get_writer(indexes);
-        let new_writer = Self::get_ready(indexes);
-        indexes & !(READY | WRITER) | (new_writer << WRITER_SHIFT) | (new_ready << READY_SHIFT) | DIRTY
+        let new_ready = Self::get_writer_idx(indexes);
+        let new_writer = Self::get_ready_idx(indexes);
+        indexes & !(READY_MASK | WRITER_MASK) | (new_writer << WRITER_SHIFT) | (new_ready << READY_SHIFT) | DIRTY_BIT
     }
 
     fn swap_ready_and_reader(indexes: u32) -> u32 {
-        let new_ready = Self::get_reader(indexes);
-        let new_reader = Self::get_ready(indexes);
-        indexes & !(READER | READY | DIRTY) | (new_ready << READY_SHIFT) | new_reader
+        let new_ready = Self::get_reader_idx(indexes);
+        let new_reader = Self::get_ready_idx(indexes);
+        indexes & !(READER_MASK | READY_MASK | DIRTY_BIT) | (new_ready << READY_SHIFT) | new_reader
     }
 
     fn get_buffer_ref(&self, idx: usize) -> &T {
         unsafe { &(*self.buffer.get())[idx] }
-    }
-
-    fn get_buffer_mut(&self, idx: usize) -> &mut T {
-        unsafe { &mut (*self.buffer.get())[idx] }
     }
 }
 
@@ -216,6 +282,10 @@ struct SharedQueue<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
     stopped:     AtomicBool,
 }
 
+impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS> {
+    const _CAPACITY_CHECK: () = assert!(NUM_CHUNKS >= 2, "NUM_CHUNKS must be at least 2 for a circular buffer with leave-one-empty logic.");
+}
+
 unsafe impl<T: Send, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Send for SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS> {}
 unsafe impl<T: Sync, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Sync for SharedQueue<T, CHUNK_SIZE, NUM_CHUNKS> {}
 
@@ -234,7 +304,7 @@ unsafe impl<T: Send, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Send for 
 unsafe impl<T: Sync, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Sync for Consumer<T, CHUNK_SIZE, NUM_CHUNKS> {}
 
 pub struct ProducerGuard<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
-    producer: &'a mut Producer<T, CHUNK_SIZE, NUM_CHUNKS>,
+    producer: &'a Producer<T, CHUNK_SIZE, NUM_CHUNKS>,
 }
 
 impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Deref for ProducerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
@@ -246,7 +316,7 @@ impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Deref for Producer
 
 impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> DerefMut for ProducerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
     fn deref_mut(&mut self) -> &mut [T] {
-        self.producer.get_buffer_mut()
+        unsafe { self.producer.get_buffer_mut() }
     }
 }
 
@@ -257,7 +327,7 @@ impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Drop for ProducerG
 }
 
 pub struct ConsumerGuard<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> {
-    consumer: &'a mut Consumer<T, CHUNK_SIZE, NUM_CHUNKS>,
+    consumer: &'a Consumer<T, CHUNK_SIZE, NUM_CHUNKS>,
 }
 
 impl<'a, T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Deref for ConsumerGuard<'a, T, CHUNK_SIZE, NUM_CHUNKS> {
@@ -283,7 +353,7 @@ where T: Default + Copy {
     pub fn new() -> (Producer<T, CHUNK_SIZE, NUM_CHUNKS>, Consumer<T, CHUNK_SIZE, NUM_CHUNKS>) {
         let q = Arc::new(SharedQueue {
             full_count:  Semaphore::new(0),
-            empty_count: Semaphore::new(NUM_CHUNKS),
+            empty_count: Semaphore::new(NUM_CHUNKS - 1),
             buf:         UnsafeCell::new([[T::default(); CHUNK_SIZE]; NUM_CHUNKS]),
             front:       AtomicUsize::new(0),
             back:        AtomicUsize::new(0),
@@ -309,24 +379,17 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
         }
     }
 
-    /// Allows the producer to fill a buffer. 
-    /// The callback `f` will receive a mutable slice to the buffer.
     /// Allows the producer to fill multiple buffers. 
     /// This method will block and wait for empty slots until the closure `f` returns `false`.
+    /// The callback `f` receives a mutable slice to the current buffer.
     pub fn produce<F: FnMut(&mut [T]) -> bool>(&self, mut f: F) -> bool {
         loop {
-            self.empty_count.wait();
-            if self.stopped.load(Acquire) {
-                self.empty_count.signal(); // Persist stop signal for other potential producers
+            if !self.wait_for_write() {
                 return false;
             }
 
-            let front = self.front.load(Acquire);
-            let my_buf = unsafe { &mut (*self.buf.get())[front % NUM_CHUNKS] };
-            let result = f(my_buf);
-            
-            self.front.store(front + 1, Release);
-            self.full_count.signal();
+            let result = f(self.next_write_buffer());
+            self.commit_write();
 
             if !result {
                 return true;
@@ -337,26 +400,17 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
     /// Allows the consumer to process exactly one buffer.
     /// Returns true if a buffer was processed, false if the queue is stopped and empty.
     pub fn consume<F: FnMut(&[T])>(&self, mut f: F) -> bool {
-        self.full_count.wait();
-
-        let back = self.back.load(Acquire);
-        let front = self.front.load(Acquire);
-        
-        // front == back uniquely means empty with monotonic indices
-        if self.stopped.load(Acquire) && front == back {
-            self.full_count.signal(); // Persist stop signal for subsequent calls
+        if !self.wait_for_read() {
             return false;
         }
 
-        let my_buf = unsafe { &(*self.buf.get())[back % NUM_CHUNKS] };
-        f(my_buf);
-        self.back.store(back + 1, Release);
-        self.empty_count.signal();
+        f(self.next_read_buffer());
+        self.commit_read();
 
         true
     }
 
-    pub(crate) fn wait_for_write(&self) -> bool {
+    fn wait_for_write(&self) -> bool {
         self.empty_count.wait();
         if self.stopped.load(Acquire) {
             self.empty_count.signal();
@@ -365,18 +419,18 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
         true
     }
 
-    pub(crate) fn get_write_buffer(&self) -> &mut [T] {
+    fn next_write_buffer(&self) -> &mut [T] {
         let front = self.front.load(Acquire);
-        unsafe { &mut (*self.buf.get())[front % NUM_CHUNKS] }
+        unsafe { &mut (*self.buf.get())[front] }
     }
 
-    pub(crate) fn commit_write(&self) {
+    fn commit_write(&self) {
         let front = self.front.load(Acquire);
-        self.front.store(front + 1, Release);
+        self.front.store((front + 1) % NUM_CHUNKS, Release);
         self.full_count.signal();
     }
 
-    pub(crate) fn wait_for_read(&self) -> bool {
+    fn wait_for_read(&self) -> bool {
         self.full_count.wait();
         let back = self.back.load(Acquire);
         let front = self.front.load(Acquire);
@@ -387,14 +441,14 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> SharedQueue<T, CHUNK_S
         true
     }
 
-    pub(crate) fn get_read_buffer(&self) -> &[T] {
+    fn next_read_buffer(&self) -> &[T] {
         let back = self.back.load(Acquire);
-        unsafe { &(*self.buf.get())[back % NUM_CHUNKS] }
+        unsafe { &(*self.buf.get())[back] }
     }
 
-    pub(crate) fn commit_read(&self) {
+    fn commit_read(&self) {
         let back = self.back.load(Acquire);
-        self.back.store(back + 1, Release);
+        self.back.store((back + 1) % NUM_CHUNKS, Release);
         self.empty_count.signal();
     }
 }
@@ -404,7 +458,7 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE
         self.q.produce(f)
     }
 
-    pub fn get_write_buffer(&mut self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+    pub fn acquire_buffer(&self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
         if self.q.wait_for_write() {
             Some(ProducerGuard { producer: self })
         } else {
@@ -412,15 +466,29 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Producer<T, CHUNK_SIZE
         }
     }
 
-    pub(crate) fn get_buffer(&self) -> &[T] {
-        self.q.get_write_buffer()
+    pub fn try_acquire_buffer(&self) -> Option<ProducerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+        if self.q.empty_count.try_wait() {
+            if self.q.stopped.load(Acquire) {
+                self.q.empty_count.signal();
+                None
+            } else {
+                Some(ProducerGuard { producer: self })
+            }
+        } else {
+            None
+        }
     }
 
-    pub(crate) fn get_buffer_mut(&mut self) -> &mut [T] {
-        self.q.get_write_buffer()
+    fn get_buffer(&self) -> &[T] {
+        self.q.next_write_buffer()
     }
 
-    pub(crate) fn commit(&self) {
+    /// SAFETY: Caller must ensure exclusive access to the current producer slot.
+    unsafe fn get_buffer_mut(&self) -> &mut [T] {
+        self.q.next_write_buffer()
+    }
+
+    fn commit(&self) {
         self.q.commit_write();
     }
 
@@ -434,7 +502,7 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Consumer<T, CHUNK_SIZE
         self.q.consume(f)
     }
 
-    pub fn get_read_buffer(&mut self) -> Option<ConsumerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
+    pub fn acquire_buffer(&self) -> Option<ConsumerGuard<'_, T, CHUNK_SIZE, NUM_CHUNKS>> {
         if self.q.wait_for_read() {
             Some(ConsumerGuard { consumer: self })
         } else {
@@ -442,11 +510,11 @@ impl<T, const CHUNK_SIZE: usize, const NUM_CHUNKS: usize> Consumer<T, CHUNK_SIZE
         }
     }
 
-    pub(crate) fn get_buffer(&self) -> &[T] {
-        self.q.get_read_buffer()
+    fn get_buffer(&self) -> &[T] {
+        self.q.next_read_buffer()
     }
 
-    pub(crate) fn commit(&self) {
+    fn commit(&self) {
         self.q.commit_read();
     }
 
@@ -462,41 +530,46 @@ mod tests {
 
     #[test]
     fn test_triple_buffer_basic() {
-        let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
+        let (reader, writer) = TripleBuffer::<u32>::new().split();
         
         // Initial state
-        let (val, state) = reader.read();
+        let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 0);
         assert_eq!(state, State::StateNoChange);
 
         // Update state
         {
-            let w_val = writer.write(); // Swaps initial empty buffer to reader, writer gets new buffer
+            let mut w_val = writer.acquire_buffer(); 
             *w_val = 42;
-            writer.write(); // Swaps buffer with 42 to reader
-        }
+        } // publishes the buffer containing 42 on drop
 
         // Reader should see dirty state
-        let (val, state) = reader.read();
+        let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 42);
         assert_eq!(state, State::StateDirty);
 
         // Reader should see no change now
-        let (val, state) = reader.read();
+        let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 42);
         assert_eq!(state, State::StateNoChange);
     }
 
     #[test]
     fn test_triple_buffer_multiple_writes() {
-        let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
+        let (reader, writer) = TripleBuffer::<u32>::new().split();
 
         // Write twice
-        *writer.write() = 1;
-        *writer.write() = 2; // This publishes 1 and makes writer point to a new buffer
-        writer.write();      // This publishes 2
+        {
+            let mut w = writer.acquire_buffer();
+            *w = 1;
+        } // publishes 1
+        
+        {
+            let mut w = writer.acquire_buffer();
+            *w = 2;
+        } // publishes 2
 
-        let (val, state) = reader.read();
+        let (val, state) = reader.get_read_buffer();
         assert_eq!(*val, 2);
         assert_eq!(state, State::StateDirty);
     }
@@ -506,7 +579,7 @@ mod tests {
         use std::thread;
         use std::sync::Barrier;
 
-        let (mut reader, mut writer) = TripleBuffer::<u32>::new().split();
+        let (reader, writer) = TripleBuffer::<u32>::new().split();
         let barrier = Arc::new(Barrier::new(2));
         let b1 = barrier.clone();
         let b2 = barrier.clone();
@@ -514,20 +587,21 @@ mod tests {
         let writer_thread = thread::spawn(move || {
             b1.wait();
             for i in 1..=1000 {
-                let w = writer.write();
+                let mut w = writer.acquire_buffer();
                 *w = i;
             }
-            writer.write(); // Flush the last value
         });
 
         let reader_thread = thread::spawn(move || {
             b2.wait();
-            let mut last_val = 0;
-            while last_val < 1000 {
-                let (val, state) = reader.read();
+            let mut last_val: Option<u32> = None;
+            while last_val.unwrap_or(0) < 1000 {
+                let (val, state) = reader.get_read_buffer();
                 if state == State::StateDirty {
-                    assert!(*val > last_val, "Read value {} not greater than last {}", *val, last_val);
-                    last_val = *val;
+                    if let Some(lv) = last_val {
+                        assert!(*val > lv, "Read value {} not greater than last {}", *val, lv);
+                    }
+                    last_val = Some(*val);
                 }
             }
         });
@@ -620,11 +694,10 @@ mod tests {
     #[test]
     fn test_triple_buffer_panic_safety() {
         use std::thread;
-        let (mut _reader, mut writer) = TripleBuffer::<u32>::new().split();
+        let (_reader, writer) = TripleBuffer::<u32>::new().split();
         
         let _ = thread::spawn(move || {
-            let w = writer.write();
-            *w = 100;
+            let _w = writer.acquire_buffer();
         }).join();
 
         // The writer guard should have been dropped during stack unwinding
@@ -697,5 +770,41 @@ mod tests {
         // Multiple calls to produce should all return false and not hang
         assert_eq!(prod.produce(|_| true), false);
         assert_eq!(prod.produce(|_| true), false);
+    }
+
+    #[test]
+    fn test_pcq_non_power_of_two() {
+        // Use 3 buffers (not a power of two)
+        let (prod, cons) = ProducerConsumerQueue::<u32, 1, 3>::new();
+        
+        // Fill 2 buffers (capacity is NUM-1 = 2)
+        prod.produce(|buf| { buf[0] = 1; false });
+        prod.produce(|buf| { buf[0] = 2; false });
+        
+        let mut val = 0;
+        cons.consume(|buf| { val = buf[0]; });
+        assert_eq!(val, 1);
+        cons.consume(|buf| { val = buf[0]; });
+        assert_eq!(val, 2);
+        
+        // Verify we can continue using it after wraparound
+        prod.produce(|buf| { buf[0] = 3; false });
+        cons.consume(|buf| { val = buf[0]; });
+        assert_eq!(val, 3);
+    }
+
+    #[test]
+    fn test_pcq_raii() {
+        let (prod, cons) = ProducerConsumerQueue::<u32, 1, 2>::new();
+        
+        {
+            let mut w = prod.acquire_buffer().unwrap();
+            w[0] = 42;
+        } // commit occurs here
+        
+        {
+            let r = cons.acquire_buffer().unwrap();
+            assert_eq!(r[0], 42);
+        } // commit occurs here
     }
 }

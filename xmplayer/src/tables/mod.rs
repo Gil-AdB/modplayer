@@ -329,15 +329,55 @@ pub enum TableType {
     AmigaFrequency
 }
 
+#[repr(align(32))]
+pub struct ResamplingTables {
+    pub sinc_table: [[f32; 8]; 512],
+}
+
+impl ResamplingTables {
+    pub fn new() -> Self {
+        let mut sinc_table = [[0.0f32; 8]; 512];
+        for phase in 0..512 {
+            let f = phase as f32 / 512.0;
+            let mut sum = 0.0;
+            for i in 0..8 {
+                let x = (i as f32 - 3.0) - f;
+                let w = Self::lanczos(x, 4.0);
+                sinc_table[phase][i] = w;
+                sum += w;
+            }
+            // Normalize to prevent volume shifts
+            if sum != 0.0 {
+                for i in 0..8 {
+                    sinc_table[phase][i] /= sum;
+                }
+            }
+        }
+        Self { sinc_table }
+    }
+
+    fn lanczos(x: f32, a: f32) -> f32 {
+        if x == 0.0 { return 1.0; }
+        if x.abs() >= a { return 0.0; }
+        let pix = x * std::f32::consts::PI;
+        (pix.sin() / pix) * ((pix / a).sin() / (pix / a))
+    }
+}
+
 pub struct AudioTables {
     pub periods:            Vec<u16>,//[u16; 1936],
     pub d_period2hz_tab:    Vec<f64>,//[f64; 65536],
+    pub resampling:         ResamplingTables,
 }
 
 impl AudioTables {
     pub(crate) fn calc_tables_linear() -> Box<AudioTables> // taken directly from ft2clone
     {
-        let mut result = Box::new(Self { periods: LINEAR_PERIODS.to_vec(), d_period2hz_tab: vec!(0.0f64; 65536) });
+        let mut result = Box::new(Self { 
+            periods: LINEAR_PERIODS.to_vec(), 
+            d_period2hz_tab: vec!(0.0f64; 65536),
+            resampling: ResamplingTables::new(),
+        });
         result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
         // linear periods
         for i in 1..65536 {
@@ -353,7 +393,11 @@ impl AudioTables {
 
     pub(crate) fn calc_tables_amiga() -> Box<AudioTables> // taken directly from ft2clone
     {
-        let mut result = Box::new(Self { periods: AMIGA_PERIODS.to_vec(), d_period2hz_tab: vec!(0.0f64; 65536) });
+        let mut result = Box::new(Self { 
+            periods: AMIGA_PERIODS.to_vec(), 
+            d_period2hz_tab: vec!(0.0f64; 65536),
+            resampling: ResamplingTables::new(),
+        });
         result.d_period2hz_tab[0] = 0.0; // in FT2, a period of 0 yields 0Hz
         // Amiga periods
         for i in 1..65536 {

@@ -78,9 +78,7 @@
         let _flags = file.read_u16()?;
 
         let _cwtv = file.read_u16()?;
-
         let _signed_samples = file.read_u16()?;
-
 
         let signature = file.read_string(4);
 
@@ -508,6 +506,8 @@
                 name: sample_name.clone().to_string(),
                 global_volume: 64,
                 surround: false,
+                is_ping_pong: false,
+                original_loop_end: 0,
                 data: vec![]
             };
             sample.read_s3m_sample_data(file, sample_ptr)?;

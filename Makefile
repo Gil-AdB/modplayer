@@ -9,24 +9,28 @@
 #   make clean     - Clean all build artifacts
 #   make all       - Build everything (native + lib + wasm)
 
-.PHONY: build lib wasm wasm-dev test clean all check
+# Deployment
+PUBLISH_REPO = https://github.com/Gil-AdB/rust-modplayer
+PUBLISH_DIR = .publish
+
+.PHONY: build lib wasm wasm-dev test clean all check publish
 
 # Default target
 all: build lib wasm
 
 # Build native binary
 build:
-	cargo build --release -p modplayer-bin
+	CMAKE_POLICY_VERSION_MINIMUM=3.5 PATH=$(PATH):/usr/local/bin:/opt/homebrew/bin cargo build --release -p modplayer-bin
 
 # Build C static library (used by Revival project)
 lib:
-	cargo build --release -p modplayer-lib
+	CMAKE_POLICY_VERSION_MINIMUM=3.5 PATH=$(PATH):/usr/local/bin:/opt/homebrew/bin cargo build --release -p modplayer-lib
 	@echo ""
 	@echo "Static library built: target/release/libmodplayer.a"
 
 # Build WASM package
 wasm:
-	wasm-pack build modplayer-wasm --target bundler --release
+	CMAKE_POLICY_VERSION_MINIMUM=3.5 PATH=$(PATH):/usr/local/bin:/opt/homebrew/bin wasm-pack build modplayer-wasm --target bundler --release
 	@echo ""
 	@echo "WASM package built in modplayer-wasm/pkg/"
 
@@ -47,3 +51,24 @@ clean:
 	rm -rf modplayer-wasm/pkg
 	rm -rf modplayer-wasm/www/dist
 	rm -rf modplayer-wasm/www/node_modules
+	rm -rf $(PUBLISH_DIR)
+
+# Publish to the production repo
+publish: wasm
+	@if [ ! -d "$(PUBLISH_DIR)" ]; then \
+		echo "Cloning deployment repository..."; \
+		git clone $(PUBLISH_REPO) $(PUBLISH_DIR); \
+	else \
+		echo "Updating deployment repository..."; \
+		cd $(PUBLISH_DIR) && git pull; \
+	fi
+	@echo "Building production bundles..."
+	cd modplayer-wasm/www && npm run build
+	@echo "Syncing files to $(PUBLISH_DIR)..."
+	find $(PUBLISH_DIR) -mindepth 1 -maxdepth 1 -not -name ".git" -not -name "README.md" -not -name "LICENSE" -exec rm -rf {} +
+	cp -r modplayer-wasm/www/dist/* $(PUBLISH_DIR)/
+	cd $(PUBLISH_DIR) && git add -A
+	@echo "----------------------------------------------------------"
+	@echo "SUCCESS: Build is staged in $(PUBLISH_DIR)"
+	@echo "Run 'cd $(PUBLISH_DIR) && git commit -m \"Update\" && git push' to deploy."
+	@echo "----------------------------------------------------------"

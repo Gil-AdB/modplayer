@@ -13,11 +13,17 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let mut patterns: Vec<Patterns> = vec![];
 
         for _ in 0..pattern_count {
-            let _length = file.read_u16()?;
+            let length = file.read_u16()?;
             let row_count = file.read_u16()?;
             let _reserved = file.read_u32()?;
             
             let mut rows = vec![Row { channels: vec![Pattern::new(); channel_count] }; row_count as usize];
+            
+            if length == 0 {
+                patterns.push(Patterns { rows });
+                continue;
+            }
+
             let mut last_mask = [0u8; 64];
             let mut last_note = [0u8; 64];
             let mut last_instr = [0u8; 64];
@@ -91,13 +97,12 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let mut result = [EnvelopePoint::new(); 25];
 
         for point in &mut result {
+            point.value = file.read_i8().unwrap() as u16;
             point.frame = file.read_u16().unwrap();
-            point.value = file.read_u16().unwrap();
         }
         result
     }
 
-    #[allow(dead_code)]
     fn read_samples<R: Read + Seek>(file: &mut R, sample_ptrs: &Vec<u32>) -> SimpleResult<Vec<Sample>> {
         let mut samples: Vec<Sample> = vec![];
         samples.reserve_exact(sample_ptrs.len());
@@ -156,6 +161,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 relative_note,
                 name: name.trim().to_string(),
                 global_volume: sample_global_volume,
+                is_ping_pong: false,
+                original_loop_end: 0,
                 data: vec![],
             };
 
@@ -165,9 +172,6 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 
                 if (flags & 8) == 8 { // Compressed
                     if bitness == 8 {
-                        // IT compression blocks are not easily size-predictable without reading headers.
-                        // For simplicity, we'll read the whole block-based structure.
-                        // Actually, ITTECH says each block has a 16-bit length.
                         let mut decompressed_data = vec![0i8; length as usize];
                         let mut decomp_pos = 0usize;
                         while decomp_pos < length as usize {
@@ -195,42 +199,18 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 } else { // Uncompressed
                     if bitness == 8 {
                         let mut data = file.read_i8_vec(length as usize)?;
-                        
-                        // Handle Unsigned to Signed conversion if bit 0 is NOT set
                         if (convert & 1) == 0 {
-                            for x in &mut data {
-                                *x = (Wrapping(*x as u8) + Wrapping(128u8)).0 as i8;
-                            }
+                            for x in &mut data { *x = (Wrapping(*x as u8) + Wrapping(128u8)).0 as i8; }
                         }
-                        
-                        // Handle Delta decoding if bit 2 is set
-                        if (convert & 4) == 4 {
-                            data = Sample::unpack_i8(data);
-                        }
-                        
+                        if (convert & 4) == 4 { data = Sample::unpack_i8(data); }
                         sample.data = Sample::upsamplei16(Sample::upsamplei8(data));
                     } else {
                         let mut data = file.read_i16_vec(length as usize)?;
-                        
-                        // Handle Big Endian to Little Endian if bit 1 is set
-                        if (convert & 2) == 2 {
-                            for x in &mut data {
-                                *x = x.swap_bytes();
-                            }
-                        }
-                        
-                        // Handle Unsigned to Signed conversion if bit 0 is NOT set
+                        if (convert & 2) == 2 { for x in &mut data { *x = x.swap_bytes(); } }
                         if (convert & 1) == 0 {
-                            for x in &mut data {
-                                *x = (Wrapping(*x as u16) + Wrapping(32768u16)).0 as i16;
-                            }
+                            for x in &mut data { *x = (Wrapping(*x as u16) + Wrapping(32768u16)).0 as i16; }
                         }
-                        
-                        // Handle Delta decoding if bit 2 is set
-                        if (convert & 4) == 4 {
-                            data = Sample::unpack_i16(data);
-                        }
-                        
+                        if (convert & 4) == 4 { data = Sample::unpack_i16(data); }
                         sample.data = Sample::upsamplei16(data);
                     }
                 }
@@ -240,7 +220,6 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             sample.setup_loops_and_padding();
             samples.push(sample);
         }
-
         Ok(samples)
     }
 
@@ -381,6 +360,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let message_length = file.read_u16()?;
         let message_offset = file.read_u32()?;
         let _ = file.read_u32()?;
+        
         let mut initial_channel_panning = [32u8; 64];
         let mut initial_channel_volume = [64u8; 64];
         let panning_bytes = file.read_bytes(64)?;
@@ -399,7 +379,6 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         for i in 0..64 {
             let v = volume_bytes[i];
             if v <= 64 {
-                // Only overwrite if not already muted by panning table
                 if initial_channel_volume[i] != 0 || v == 0 {
                     initial_channel_volume[i] = v;
                 }
@@ -413,7 +392,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let sample_ptrs = file.read_u32_vec(sample_count as usize)?;
         let pattern_ptrs = file.read_u32_vec(pattern_count as usize)?;
 
-        let mut samples = read_samples(file, &sample_ptrs)?;
+        let samples = read_samples(file, &sample_ptrs)?;
         let mut instruments = read_instruments(file, &instrument_ptrs)?;
 
         let mut patterns: Vec<Patterns> = vec![];
@@ -426,21 +405,17 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             }
         }
 
-        // Assign samples to instruments based on keyboard mapping if instruments are used
         if (flags & 4) == 4 {
             for instrument in instruments.iter_mut().skip(1) {
-                instrument.samples = samples.clone(); // In IT, samples are shared across instruments.
+                instrument.samples = samples.clone(); 
             }
         } else {
-            // "Only Samples" mode. We need to create dummy instruments pointing to each sample.
-            // IT sample numbers are 1-based.
             instruments = vec![crate::instrument::Instrument::new()]; // null instrument
-            for (i, sample) in samples.iter().enumerate() {
+            for sample in samples {
                 let mut inst = crate::instrument::Instrument::new();
                 inst.name = sample.name.clone();
-                // Map all 120 notes to this sample (which will be at index 0 in this dummy instrument's samples list)
                 for note_idx in 0..120 {
-                    inst.sample_indexes[note_idx] = (note_idx as u8 + 1, 1u8); // sample_num 1 means index 0
+                    inst.sample_indexes[note_idx] = (note_idx as u8 + 1, 1u8); 
                 }
                 inst.samples = vec![sample.clone()];
                 instruments.push(inst);

@@ -3,9 +3,11 @@ resolver = "2"
 members = ["xmplayer", "display", "modplayer-bin", "modplayer-wasm", "modplayer-lib", "shared-sync-primitives", "binary-reader-io"]
 
 [profile.release]
-debug = true
+opt-level = "z"
 lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
 
-# uncomment for termux
-#[patch.crates-io]
-#termios = { path = "vendor/termios-0.2.2" }
+[profile.release.package.xmplayer]
+opt-level = 3

@@ -6,4 +6,8 @@ edition = "2024"
 
 [dependencies]
 xmplayer = {path="../xmplayer"}
+wasm-bindgen = { version = "0.2.100", optional = true }
+
+[features]
+wasm = ["wasm-bindgen"]
 
