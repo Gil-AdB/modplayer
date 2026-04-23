@@ -440,6 +440,33 @@ impl ChannelState {
         }
     }
 
+    pub(crate) fn tremor(&mut self, tick: u32, param: u8) {
+        if tick == 0 {
+            if param != 0 {
+                self.tremor = param;
+            }
+        }
+
+        let mut tremor_sign = self.tremor_count & 0x80;
+        let mut tremor_data = (self.tremor_count & 0x7F) as i8;
+
+        tremor_data -= 1;
+        if tremor_data < 0
+        {
+            if tremor_sign == 0x80
+            {
+                tremor_sign = 0x00;
+                tremor_data = (self.tremor & 0xf) as i8;
+            } else {
+                tremor_sign = 0x80;
+                tremor_data = (self.tremor >> 4) as i8;
+            }
+        }
+
+        self.tremor_count = tremor_sign | tremor_data as u32;
+        self.on = tremor_sign == 0x80;
+    }
+
     pub(crate) fn porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
         if song_type == SongType::IT {
             if amount >= 0xF0 { // Extra Fine

@@ -1,6 +1,7 @@
 use crate::song::{GlobalVolume, BPM, PatternChange, Song};
 use crate::module_reader::{SongData, SongType, is_note_valid};
 use crate::channel_state::{ChannelState, Voice};
+use crate::channel_state::channel_state::clamp;
 use crate::tables::AudioTables;
 use crate::instrument::Instrument;
 use std::borrow::Borrow;
@@ -85,7 +86,31 @@ impl ModuleBackend for ItBackend {
             let note_delay_first_tick = if pattern.is_note_delay(r.song_data.song_type) { *r.tick == pattern.get_y() as u32 } else {first_tick};
 
             if pattern.is_porta_to_note(r.song_data.song_type) && first_tick && is_note_valid(pattern.note, r.song_data.song_type) {
-                channel.porta_to_note.target_note.period = channel.note.note_to_period(pattern.note, 0, r.frequency_tables);
+                let note = pattern.note;
+                let mut inst_idx = channel.last_instrument;
+                if pattern.instrument != 0 {
+                    inst_idx = if (pattern.instrument as usize) < instruments.len() { pattern.instrument as usize } else { 0 };
+                }
+                
+                let mut final_sample_idx = 0;
+                let mut mapped_note = note;
+                
+                if inst_idx != 0 && (note as usize - 1) < instruments[inst_idx].sample_indexes.len() {
+                    let it_mapping = instruments[inst_idx].sample_indexes[note as usize - 1];
+                    mapped_note = it_mapping.0 + 1;
+                    let sample_idx = it_mapping.1 as usize;
+                    if sample_idx > 0 {
+                        final_sample_idx = sample_idx - 1;
+                    }
+                }
+                
+                if inst_idx != 0 && final_sample_idx < instruments[inst_idx].samples.len() {
+                    let sample = &instruments[inst_idx].samples[final_sample_idx];
+                    let real_note = clamp(mapped_note as i16 + sample.relative_note as i16, 0, 119) as u8;
+                    channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
+                } else {
+                    channel.porta_to_note.target_note.period = channel.note.note_to_period(pattern.note, 0, r.frequency_tables);
+                }
             }
 
             if !pattern.is_porta_to_note(r.song_data.song_type) &&
@@ -392,7 +417,26 @@ impl ModuleBackend for XmBackend {
             let note_delay_first_tick = first_tick;
 
             if pattern.is_porta_to_note(r.song_data.song_type) && first_tick && is_note_valid(pattern.note, r.song_data.song_type) {
-                channel.porta_to_note.target_note.period = channel.note.note_to_period(pattern.note, 0, r.frequency_tables);
+                let note = pattern.note;
+                let mut inst_idx = channel.last_instrument;
+                if pattern.instrument != 0 {
+                    inst_idx = if (pattern.instrument as usize) < instruments.len() { pattern.instrument as usize } else { 0 };
+                }
+                
+                let mut final_sample_idx = 0;
+                
+                if inst_idx != 0 && (note as usize - 1) < instruments[inst_idx].sample_indexes.len() {
+                    let it_mapping = instruments[inst_idx].sample_indexes[note as usize - 1];
+                    final_sample_idx = it_mapping.1 as usize;
+                }
+                
+                if inst_idx != 0 && final_sample_idx < instruments[inst_idx].samples.len() {
+                    let sample = &instruments[inst_idx].samples[final_sample_idx];
+                    let real_note = clamp(note as i16 + sample.relative_note as i16, 0, 119) as u8;
+                    channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
+                } else {
+                    channel.porta_to_note.target_note.period = channel.note.note_to_period(pattern.note, 0, r.frequency_tables);
+                }
             }
 
             if !pattern.is_porta_to_note(r.song_data.song_type) && first_tick {
@@ -555,6 +599,21 @@ impl ModuleBackend for XmBackend {
                 }
                 0x10 => { r.global_volume.set_volume(note_delay_first_tick, pattern.effect_param); }
                 0x11 => { r.global_volume.volume_slide(first_tick, pattern.effect_param); }
+                0x14 => { if first_tick { r.bpm.update(pattern.effect_param as u32, r.rate); } } // T: Set Tempo
+                0x16 => { r.global_volume.set_volume(note_delay_first_tick, pattern.effect_param); } // V: Set Global Vol
+                0x17 => { r.global_volume.volume_slide(note_delay_first_tick, pattern.effect_param); } // W: Global Volume Slide
+                0x18 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((pattern.effect_param as i32 * 4).min(255)); } } } // X: Set Panning
+                0x1D => { channel.tremor(*r.tick, pattern.effect_param); } // I: Tremor
+                0x1E => { channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param); } // D: Volume Slide (S3M/IT style)
+                0x1F => { // K: Vibrato + Volume Slide (S3M/IT style)
+                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.frequency_tables);
+                    channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
+                }
+                0x20 => { // L: Porta Note + Volume Slide (S3M/IT style)
+                    channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, 0, r.compatible_g, r.frequency_tables);
+                    channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
+                }
+                0x21 => { channel.it_retrig(voice_ref.as_deref_mut(), &r.song_data.instruments, *r.tick, pattern.effect_param); } // Q: Multi Retrig (S3M/IT style)
                 0xE => {
                     let subcommand = pattern.get_x();
                     let param = pattern.get_y();

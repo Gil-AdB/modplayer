@@ -21,6 +21,7 @@ use std::num::Wrapping;
 use std::borrow::Borrow;
 
 pub(crate) mod backend;
+pub mod test_dump;
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use core::arch::wasm32::*;
@@ -1063,10 +1064,12 @@ impl Song {
             let mut final_panning = 128;
             let mut instrument_name = "".to_string();
             let mut voice_frequency = 0.0;
+            let mut voice_on = false;
 
             if let Some(v_idx) = channel.voice_idx {
                 if self.voices[v_idx].channel_idx == i {
                     let v = &self.voices[v_idx];
+                    voice_on = v.on;
                     instrument_idx = v.instrument;
                     sample_idx = v.sample;
                     volume = v.volume.volume;
@@ -1104,7 +1107,7 @@ impl Song {
             if status.oscilloscope.len() != 512 {
                 status.oscilloscope = vec![0.0; 512];
             }
-            if channel.on {
+            if channel.on && voice_on {
                 for j in 0..512 {
                     let idx = (channel.last_samples_pos + j) % 512;
                     status.oscilloscope[j] = channel.last_samples[idx] * gain;
@@ -1119,7 +1122,7 @@ impl Song {
             status.envelope_volume    = envelope_vol as f32;
             status.global_volume      = global_vol as f32;
             status.fadeout_volume     = fadeout_vol as f32;
-            status.on                 = channel.on;
+            status.on                 = channel.on && voice_on;
             status.force_off          = channel.force_off;
             status.frequency          = voice_frequency;
             if channel.frequency > 0.0 && voice_frequency > 0.0 {
