@@ -33,6 +33,7 @@ pub enum FrequencyType {
     AMIGA,
     LINEAR
 }
+
 pub(crate) fn is_note_valid(note: u8, song_type: SongType) -> bool {
     match song_type {
         SongType::IT => note > 0 && note <= 120,
@@ -116,6 +117,44 @@ pub struct SongData {
     pub                     compatible_g:            bool,
 }
 
+impl Default for SongData {
+    fn default() -> Self {
+        Self {
+            id: "".to_string(),
+            name: "".to_string(),
+            song_type: SongType::XM,
+            tracker_name: "".to_string(),
+            song_length: 0,
+            restart_position: 0,
+            channel_count: 0,
+            patterns: vec![],
+            instrument_count: 0,
+            frequency_type: FrequencyType::LINEAR,
+            tempo: 0,
+            bpm: 0,
+            pattern_order: vec![],
+            instruments: vec![],
+            use_amiga: false,
+            song_message: "".to_string(),
+            initial_channel_volume: [64; 64],
+            initial_channel_panning: [128; 64],
+            global_volume: 128,
+            master_volume: 128,
+            mixing_volume: 128,
+            old_effects: false,
+            compatible_g: false,
+        }
+    }
+}
+
+impl Default for SongType {
+    fn default() -> Self { SongType::XM }
+}
+
+impl Default for FrequencyType {
+    fn default() -> Self { FrequencyType::LINEAR }
+}
+
 impl SongData {
     pub(crate) fn get_sample(&self, voice: &Voice) -> &Sample {
         &self.instruments[voice.instrument].samples[voice.sample]
@@ -165,7 +204,7 @@ pub fn open_module(data: &[u8]) -> SimpleResult<SongData> {
 
 
 pub fn print_module(handle: &SongHandle, patterns: impl Iterator<Item = String>) {
-    let _data = &handle.get().song_data;
+    let _data = &handle.song_data;
 
     for pattern in patterns {
         match pattern.parse::<usize>() {

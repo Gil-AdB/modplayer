@@ -1,7 +1,5 @@
-#[macro_use]
 mod console;
 mod leak;
-mod display;
 
 use std::cmp::max;
 use wasm_bindgen::prelude::*;
@@ -14,8 +12,7 @@ use std::sync::Mutex;
 
 use std::ffi::c_void;
 use xmplayer::instrument::Instrument;
-use display::Display;
-use display::ViewPort;
+use display::{Display, display::TargetPlatform};
 use xmplayer::module_reader::{open_module, Patterns};
 use shared_sync_primitives::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;
@@ -110,11 +107,12 @@ pub struct SongJs {
     order:                              Vec<u8>,
     scroll_offset:                      isize,
     scroll_offset_x:                    isize,
-    panning_display_mode:               u32,
+    grid:                               display::grid::Grid,
+    downsampled_scopes:                 Vec<f32>,
 }
 
 use js_sys::{Array, JsString};
-use crate::display::RGB;
+use display::RGB;
 
 #[wasm_bindgen(module = "/export.js")]
 extern "C" {
@@ -135,6 +133,9 @@ impl SongJs {
         let patterns = song.get_patterns();
         let order = song.get_order();
 
+        let width = 200;
+        let height = 50;
+
         Self {
             song,
             triple_buffer_reader: Arc::new(Mutex::new(triple_buffer_reader)),
@@ -149,31 +150,95 @@ impl SongJs {
             order,
             scroll_offset: 0,
             scroll_offset_x: 0,
-            panning_display_mode: 1,
+            grid: display::grid::Grid::new(width, height),
+            downsampled_scopes: vec![0.0f32; 64 * 128], // Support up to 64 channels
         }
     }
 
     pub fn toggle_panning(&mut self) {
-        self.panning_display_mode = (self.panning_display_mode + 1) % 2;
     }
 
-    pub fn display(&mut self, view_mode: u32, theme_id: u32) -> js_sys::Uint8Array {
-        let mut tbr = self.triple_buffer_reader.lock().unwrap();
-        let (play_data, _state) = tbr.read();
+    pub fn display(&mut self, view_mode: u32, theme_id: u32) {
+        let tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, _state) = tbr.get_read_buffer();
         
-        let view_port = ViewPort {
-            x1: self.scroll_offset_x,
-            y1: self.scroll_offset,
-            width: 200,
-            height: 50
-        };
-
-        let screen = Display::display(play_data, &self.instruments, &self.patterns, &self.order, view_port, view_mode, theme_id, self.scroll_offset, self.panning_display_mode);
+        // Copy dimensions to avoid borrow conflicts in Display::render
+        let width = self.grid.width;
+        let height = self.grid.height;
+        
+        Display::render(&mut self.grid, play_data, &self.instruments, &self.patterns, &self.order, width, height, view_mode, theme_id, self.scroll_offset_x, self.scroll_offset, TargetPlatform::WASM);
         
         self.song_row = play_data.row;
         self.song_tick = play_data.tick;
-        
-        js_sys::Uint8Array::from(&screen.to_binary()[..])
+
+        // Perform 4x Downsampling (512 -> 128) for all channels
+        let num_channels = play_data.channel_status.len().min(64);
+        for ch in 0..num_channels {
+            let dst_offset = ch * 128;
+            if play_data.channel_status[ch].on {
+                let src = &play_data.channel_status[ch].oscilloscope;
+                for i in 0..128 {
+                    // Simple decimation (pick every 4th sample) - fast and sufficient for UI
+                    self.downsampled_scopes[dst_offset + i] = src[i * 4];
+                }
+            } else {
+                for i in 0..128 {
+                    self.downsampled_scopes[dst_offset + i] = 0.0;
+                }
+            }
+        }
+    }
+
+    pub fn get_grid_ptr(&self) -> *const u8 {
+        // Binary format is [c, fr, fg, fb, br, bg, bb] per cell
+        // We'll use a custom optimized binary representation
+        // Actually to_binary is okay, but we return its ptr
+        // Wait: we need to persist the binary Vec too if we want a stable pointer.
+        // Let's just return the pointer to the cells themselves if JS can handle it.
+        // The display::grid::Cell is [char, RGB, RGB].
+        // Let's just create a persisted binary buffer in SongJs.
+        self.grid.cells.as_ptr() as *const u8
+    }
+
+    pub fn get_grid_size(&self) -> usize {
+        self.grid.cells.len() * std::mem::size_of::<display::grid::Cell>()
+    }
+
+    pub fn get_scopes_ptr(&self) -> *const f32 {
+        self.downsampled_scopes.as_ptr()
+    }
+
+    pub fn get_scopes_len(&self) -> usize {
+        self.downsampled_scopes.len()
+    }
+
+    // Lightweight Metadata Getters
+    pub fn get_row(&self) -> usize { self.song_row }
+    pub fn get_tick(&self) -> u32 { self.song_tick }
+    
+    pub fn get_bpm(&self) -> u32 {
+        let tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, _) = tbr.get_read_buffer();
+        play_data.bpm
+    }
+
+    pub fn get_speed(&self) -> u32 {
+        let tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, _) = tbr.get_read_buffer();
+        play_data.speed
+    }
+
+    pub fn get_pos(&self) -> u32 {
+        let tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, _) = tbr.get_read_buffer();
+        play_data.song_position as u32
+    }
+
+    pub fn get_play_data(&self) -> JsValue {
+        // Kept for backward compatibility if needed, but deprecated
+        let tbr = self.triple_buffer_reader.lock().unwrap();
+        let (play_data, _state) = tbr.get_read_buffer();
+        serde_wasm_bindgen::to_value(play_data).unwrap()
     }
 
     pub fn scroll(&mut self, delta: isize) {
@@ -182,12 +247,6 @@ impl SongJs {
 
     pub fn scroll_x(&mut self, delta: isize) {
         self.scroll_offset_x = max(0, self.scroll_offset_x + delta);
-    }
-
-    pub fn get_play_data(&self) -> JsValue {
-        let mut tbr = self.triple_buffer_reader.lock().unwrap();
-        let (play_data, _state) = tbr.read();
-        serde_wasm_bindgen::to_value(play_data).unwrap()
     }
 
     pub fn get_channel_count(&self) -> usize {
@@ -253,6 +312,19 @@ impl SongJs {
                 }
                 " " => {
                     let _ = tx.send(PlaybackCmd::PauseToggle);
+                }
+                "F1" => { let _ = tx.send(PlaybackCmd::SetViewMode(0)); }
+                "F2" => { let _ = tx.send(PlaybackCmd::SetViewMode(1)); }
+                "F3" => { let _ = tx.send(PlaybackCmd::SetViewMode(2)); }
+                "F4" => { let _ = tx.send(PlaybackCmd::SetViewMode(3)); }
+                "T" => {
+                    let _ = tx.send(PlaybackCmd::CycleTheme);
+                }
+                "S" => {
+                    let _ = tx.send(PlaybackCmd::ToggleScopes);
+                }
+                "v" | "V" => {
+                    let _ = tx.send(PlaybackCmd::ToggleVisualizerMode);
                 }
                 "n" => {
                     let _ = tx.send(PlaybackCmd::Next);

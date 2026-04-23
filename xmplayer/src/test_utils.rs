@@ -1,7 +1,7 @@
 use crate::module_reader::{SongData, SongType, FrequencyType, Patterns};
 use crate::pattern::Pattern;
 use crate::instrument::{Instrument, Sample};
-use crate::song::{Song, PlayData, GlobalVolume};
+use crate::song::{Song, PlayData};
 use shared_sync_primitives::{TripleBuffer};
 
 pub struct MockSongBuilder {

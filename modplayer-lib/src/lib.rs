@@ -17,19 +17,7 @@ use xmplayer::song::{PlaybackCmd, CallbackState, InterleavedBufferAdaptar};
 use xmplayer::song_state::{SongState, SongHandle};
 use std::sync::{mpsc};
 use std::sync::mpsc::{Receiver, Sender};
-
-
 use std::ffi::{c_void, CStr};
-
-
-
-
-
-
-
-
-
-use std::sync::atomic::Ordering;
 use std::os::raw::c_char;
 use xmplayer::SimpleResult;
 
@@ -48,13 +36,12 @@ impl AudioCallback for AudioCB {
     type Channel = f32;
 
     fn callback(&mut self, out: &mut [f32]) {
-        let song_state = self.q.get_mut();
-        let mut song = song_state.song.lock().unwrap();
+        let mut song = self.q.get_song().lock().unwrap();
         let (_tx, mut rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
         let mut adaptar = InterleavedBufferAdaptar{buf: out};
 
         if let CallbackState::Complete = song.get_next_tick(&mut adaptar, &mut rx) {
-            song_state.stopped.store(true, Ordering::Release);
+            self.q.stop();
             // App::stop();
         }
     }
@@ -86,19 +73,19 @@ impl App {
     }
 
     pub(crate) fn start(&mut self) {
-        let h = self.song_handle.get_mut().start(|_data, _instruments| {});
+        let h = self.song_handle.start(|_data, _instruments, _patterns, _order| {});
         self.play_thread = h.0;
         self.display_thread = h.1;
         self.audio_output.start_audio_output();
     }
 
     pub(crate) fn set_order(&mut self, order: u32) {
-        self.song_handle.get_mut().set_order(order);
+        self.song_handle.set_order(order);
     }
 
     fn close_audio(&mut self) {
         self.audio_output.close();
-        self.song_handle.get_mut().close();
+        self.song_handle.close();
         if self.play_thread.is_some() {
             self.play_thread.take().map(std::thread::JoinHandle::join);
         }

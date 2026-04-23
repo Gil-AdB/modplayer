@@ -207,7 +207,7 @@ impl ModuleBackend for ItBackend {
                             voice.tremolo_state = old_voice.tremolo_state;
                             voice.instrument_global_volume = instruments[inst_idx].global_volume;
                             voice.sample_global_volume = old_voice.sample_global_volume;
-                            voice.sample_position = 0.0;
+                            voice.sample_position = 4.0;
                             voice.loop_started = false;
                             voice.ping = true;
                         } else {
@@ -471,7 +471,7 @@ impl ModuleBackend for XmBackend {
                             voice.tremolo_state = old_voice.tremolo_state;
                             voice.instrument_global_volume = instruments[inst_idx].global_volume;
                             voice.sample_global_volume = old_voice.sample_global_volume;
-                            voice.sample_position = 0.0;
+                            voice.sample_position = 4.0;
                             voice.loop_started = false;
                             voice.ping = true;
                         } else {

@@ -370,7 +370,7 @@ impl EnvelopeState {
 
 #[derive(Clone,Copy,Debug)]
 #[allow(dead_code)]
-pub struct VibratoEnvelopeState {
+pub(crate) struct VibratoEnvelopeState {
     pub vibrato_sweep:  u16,
     pub vibrato_amp:    u16,
     pub vibrato_pos:    u16,

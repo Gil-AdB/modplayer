@@ -37,6 +37,7 @@ body {
   gap: 20px;
   box-shadow: 0 40px 100px rgba(0, 0, 0, 0.5);
   max-width: 95vw;
+  height: 90vh;
 }
 
 .header {
@@ -62,7 +63,7 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.transport {
+.transport, .visual-controls {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -139,10 +140,18 @@ input[type="button"]:active {
 
 #terminal {
   width: 100% !important;
-  height: auto !important;
+  flex: 1;
+  min-height: 200px;
   border-radius: 8px;
   box-shadow: var(--glow-shadow);
   border: 1px solid rgba(0, 242, 254, 0.2);
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .github-link {
@@ -211,4 +220,42 @@ input[type="button"]:active {
   font-weight: 600;
   border: 1px solid rgba(0, 242, 254, 0.2);
   font-family: 'Share Tech Mono', monospace;
+}
+
+/* Mobile Responsive Adjustments */
+@media (max-width: 768px) {
+  .app-shell {
+    padding: 16px;
+    height: 100vh;
+    border-radius: 0;
+    max-width: 100vw;
+  }
+
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .controls-container {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    border-radius: 12px;
+  }
+
+  .shortcuts-grid {
+    display: none; /* Hide shortcuts on mobile to save space */
+  }
+
+  h1 {
+    font-size: 20px;
+  }
+
+  .visualizers-container {
+    flex-direction: column;
+  }
+
+  #oscilloscope, #spectrum {
+    height: 100px;
+  }
 }

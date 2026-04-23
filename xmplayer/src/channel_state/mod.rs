@@ -224,7 +224,7 @@ impl Voice {
     }
 
     pub(crate) fn trigger_note(&mut self, instruments: &Instruments) {
-        self.sample_position = 0.0;
+        self.sample_position = 4.0;
         self.loop_started = false;
         self.ping = true;
         self.sustained = true;
@@ -246,7 +246,6 @@ impl Voice {
     }
 }
 
-#[derive(Clone,Copy,Debug)]
 pub struct ChannelState {
     pub voice_idx:                      Option<usize>, // Which voice is currently "active" for this channel
     pub last_instrument:                usize,
@@ -279,8 +278,10 @@ pub struct ChannelState {
     pub(crate) last_played_note:               u8,
     pub(crate) last_it_slide_speed:            u8,
     pub(crate) last_it_vol_slide:              u8,
-    pub(crate) last_samples:                   [f32; 4096],
+    pub(crate) last_samples:                   [f32; 512], // Standardized to 512 for UI
     pub(crate) last_samples_pos:               usize,
+    pub(crate) loop_row:                       u8,
+    pub(crate) loop_count:                     u8,
 }
 
 impl ChannelState {
@@ -317,8 +318,47 @@ impl ChannelState {
             last_played_note: 0,
             last_it_slide_speed: 0,
             last_it_vol_slide: 0,
-            last_samples: [0.0; 4096],
+            last_samples: [0.0; 512],
             last_samples_pos: 0,
+            loop_row: 0,
+            loop_count: 0,
+        }
+    }
+
+    fn set_note(&mut self, note: u8, fine_tune: i8, original_note: u8, frequency_tables: &AudioTables) {
+        self.note.set_note(note, fine_tune, original_note, frequency_tables);
+        self.period_shift = 0;
+        self.frequency = self.note.frequency(self.period_shift, false, frequency_tables);
+    }
+
+    pub(crate) fn key_off(&mut self, _instruments: &Instruments, _is_note_delay: bool) -> bool {
+        // Channel-level note-off. Actual key-off logic for active voices is handled in the backend
+        // by calling Voice::key_off directly.
+        self.on = false;
+        true
+    }
+
+    pub(crate) fn update_frequency(&mut self, _rate: f32, _semitone: bool, _frequency_tables: &AudioTables) {
+        // Monolithic update_frequency is deprecated. Backends should call update_frequency_voice.
+    }
+
+    pub(crate) fn reset_envelopes(&mut self, _instruments: &Instruments) {
+        // Envelopes have been moved to Voice and are handled during note triggering/updates there.
+        // If we strictly need to reset something channel-level, do it here.
+    }
+
+
+    pub(crate) fn trigger_note(&mut self, instruments: &Instruments, note: u8, _rate: f32, frequency_tables: &AudioTables) {
+        if note >= 1 && note < 97 { // trigger note
+            // Channel-level note update. actual Voice triggering happens in the backend.
+            self.on = true;
+            self.period_shift = 0;
+            self.tremor_count = 0;
+
+            // Find sample index to get fine_tune for set_note
+            // Note: This is an XM-ism that might need generalization for IT.
+            // For now, keeping it basic for compilation.
+            self.set_note(note, 0, note, frequency_tables);
         }
     }
 

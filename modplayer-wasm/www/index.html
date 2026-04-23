@@ -3,7 +3,46 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ModPlayer - Advanced WASM Tracker</title>
+    <title>ModPlayer - WASM-based XM/MOD Tracker Player (Rust & WebAssembly)</title>
+    <meta name="description" content="A high-accuracy, low-latency module player for XM, MOD, S3M, and STM files, built with Rust and WebAssembly. Features a classic terminal UI and real-time visualizers.">
+    <meta name="keywords" content="XM player, MOD player, Tracker music, WebAssembly audio, Rust WASM, FastTracker II, Scream Tracker, Chip-tune player">
+    <link rel="canonical" href="https://gil-adb.github.io/rust-modplayer/">
+    <link rel="icon" type="image/png" href="favicon.png">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://gil-adb.github.io/rust-modplayer/">
+    <meta property="og:title" content="ModPlayer - Advanced WASM Tracker Player">
+    <meta property="og:description" content="Listen to classic tracker music (XM/MOD/S3M) in your browser with low-latency Rust-based audio and a terminal interface.">
+    <meta property="og:image" content="https://gil-adb.github.io/rust-modplayer/og-image.png">
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://gil-adb.github.io/rust-modplayer/">
+    <meta property="twitter:title" content="ModPlayer - Advanced WASM Tracker Player">
+    <meta property="twitter:description" content="High-accuracy module playback in the browser using Rust and WebAssembly.">
+    <meta property="twitter:image" content="https://gil-adb.github.io/rust-modplayer/og-image.png">
+
+    <!-- Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "ModPlayer",
+      "operatingSystem": "Web",
+      "applicationCategory": "MultimediaApplication",
+      "genre": "Audio",
+      "author": {
+        "@type": "Person",
+        "name": "Gil-Ad Ben Or"
+      },
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    }
+    </script>
 </head>
 <body>
     <div class="app-shell">
@@ -21,10 +60,14 @@
                     <input type="button" id="play" value="▶️" title="Play / Pause" />
                     <input type="button" id="next" value="⏭" class="control-btn" title="Next Pattern">
                 </div>
+                <div class="visual-controls">
+                    <input type="button" id="cycle-theme" value="🎨" title="Cycle Theme (Shift+T)" />
+                    <input type="button" id="cycle-visuals" value="📊" title="Cycle Visuals (Shift+V)" />
+                </div>
                 <div class="shortcuts-grid">
-                    <div class="shortcut-item"><span>Shift+O</span> Visualizer</div>
-                    <div class="shortcut-item"><span>Shift+P</span> Panning</div>
+                    <div class="shortcut-item"><span>Shift+V</span> Visuals</div>
                     <div class="shortcut-item"><span>Shift+T</span> Theme</div>
+                    <div class="shortcut-item"><span>Shift+S</span> Scopes</div>
                     <div class="shortcut-item"><span>F4</span> Help</div>
                 </div>
                 <a href="https://github.com/Diffuse2000/modplayer" target="_blank" class="github-link">GitHub</a>
