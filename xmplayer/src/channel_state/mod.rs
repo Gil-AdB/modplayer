@@ -1,4 +1,4 @@
-use crate::channel_state::channel_state::{clamp, EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState};
+use crate::channel_state::channel_state::{EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState};
 use crate::instrument::Instruments;
 use crate::tables::AudioTables;
 use crate::module_reader::SongType;
@@ -348,7 +348,7 @@ impl ChannelState {
     }
 
 
-    pub(crate) fn trigger_note(&mut self, instruments: &Instruments, note: u8, _rate: f32, frequency_tables: &AudioTables) {
+    pub(crate) fn trigger_note(&mut self, _instruments: &Instruments, note: u8, _rate: f32, frequency_tables: &AudioTables) {
         if note >= 1 && note < 97 { // trigger note
             // Channel-level note update. actual Voice triggering happens in the backend.
             self.on = true;
@@ -551,7 +551,7 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn porta_to_note(&mut self, song_type: SongType, voice: Option<&mut Voice>, first_tick: bool, speed: u8, compatible_g: bool, tables: &AudioTables) {
+    pub(crate) fn porta_to_note(&mut self, _song_type: SongType, voice: Option<&mut Voice>, first_tick: bool, speed: u8, _compatible_g: bool, tables: &AudioTables) {
         if first_tick {
             if speed != 0 {
                 self.porta_to_note.speed = (speed as u16) * 4;
@@ -620,20 +620,14 @@ impl ChannelState {
     }
 
     pub(crate) fn volume_slide_main(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
-        if first_tick {
-            if param != 0 {
-                self.last_volume_slide = param;
-            }
-        } else {
-            let up = (self.last_volume_slide >> 4) as i32;
-            let down = (self.last_volume_slide & 0xf) as i32;
-            if let Some(v) = voice {
-                if up != 0 {
-                    v.volume.set_volume(v.volume.volume as i32 + up);
-                } else {
-                    v.volume.set_volume(v.volume.volume as i32 - down);
-                }
-            }
+        if first_tick { return; }
+        let x = param >> 4;
+        let y = param & 0x0F;
+
+        if x != 0 {
+            self.volume_slide(voice, first_tick, x as i8);
+        } else if y != 0 {
+            self.volume_slide(voice, first_tick, -(y as i8));
         }
     }
 

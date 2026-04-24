@@ -1,6 +1,7 @@
 use crate::song::Song;
+use serde::Serialize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct VoiceDump {
     pub is_on: bool,
     pub channel_idx: usize,
@@ -14,20 +15,28 @@ pub struct VoiceDump {
     pub sustained: bool,
     pub volume_envelope_pos: u16,
     pub panning_envelope_pos: u16,
+    pub effect: u8,
+    pub effect_param: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TickDump {
     pub song_position: usize,
     pub row: usize,
     pub tick: u32,
+    pub speed: u32,
+    pub bpm: u32,
     pub voices: Vec<VoiceDump>,
+    pub active_voices: usize,
+    pub active_channels: usize,
+    pub global_volume: u32,
 }
 
 impl TickDump {
     pub fn to_string(&self) -> String {
         let mut out = String::new();
-        out.push_str(&format!("[Order {:03} | Row {:03} | Tick {:03}]\n", self.song_position, self.row, self.tick));
+        out.push_str(&format!("[Order {:03} | Row {:03} | Tick {:03}] (Voices: {} / Channels: {}) (Speed: {} / BPM: {} / GVol: {})\n", 
+            self.song_position, self.row, self.tick, self.active_voices, self.active_channels, self.speed, self.bpm, self.global_volume));
         
         let mut sorted_voices = self.voices.clone();
         sorted_voices.sort_by_key(|v| v.channel_idx);
@@ -37,7 +46,7 @@ impl TickDump {
                 continue;
             }
             out.push_str(&format!(
-                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03}\n",
+                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | Eff {:02x} {:02x}\n",
                 v.channel_idx,
                 v.instrument,
                 v.sample,
@@ -48,7 +57,9 @@ impl TickDump {
                 v.final_panning,
                 if v.sustained { "Y" } else { "N" },
                 v.volume_envelope_pos,
-                v.panning_envelope_pos
+                v.panning_envelope_pos,
+                v.effect,
+                v.effect_param
             ));
         }
         out
@@ -58,6 +69,7 @@ impl TickDump {
 pub fn dump_tick(song: &Song) -> TickDump {
     let mut voices = Vec::new();
     for voice in &song.voices {
+        let pattern = &song.song_data.patterns[song.song_data.pattern_order[song.song_position] as usize].rows[song.row].channels[voice.channel_idx];
         voices.push(VoiceDump {
             is_on: voice.on,
             channel_idx: voice.channel_idx,
@@ -71,6 +83,8 @@ pub fn dump_tick(song: &Song) -> TickDump {
             sustained: voice.sustained,
             volume_envelope_pos: voice.volume_envelope_state.frame,
             panning_envelope_pos: voice.panning_envelope_state.frame,
+            effect: pattern.effect,
+            effect_param: pattern.effect_param,
         });
     }
 
@@ -78,6 +92,11 @@ pub fn dump_tick(song: &Song) -> TickDump {
         song_position: song.song_position,
         row: song.row,
         tick: song.tick,
+        speed: song.speed,
+        bpm: song.bpm.bpm,
+        active_voices: song.voices.iter().filter(|v| v.on).count(),
+        active_channels: song.channels.iter().filter(|c| c.voice_idx.is_some()).count(),
         voices,
+        global_volume: song.global_volume.volume,
     }
 }

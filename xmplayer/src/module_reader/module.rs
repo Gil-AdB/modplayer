@@ -82,6 +82,13 @@
         });
 
 
+        let mut initial_channel_panning = [128u8; 64];
+        if num_channels == 4 {
+            for i in 0..4 {
+                initial_channel_panning[i] = if i == 0 || i == 3 { 51 } else { 204 };
+            }
+        }
+
         Ok(SongData {
             id: id_str.trim().to_string(),
             name: name.trim().to_string(),
@@ -100,7 +107,7 @@
             use_amiga: true,
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
-            initial_channel_panning: [32; 64],
+            initial_channel_panning,
             global_volume:           64,
             master_volume:           128,
             mixing_volume:           128,

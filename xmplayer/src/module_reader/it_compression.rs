@@ -1,6 +1,5 @@
 use crate::{SimpleResult, SimpleError};
 use std::io::{Read, Cursor};
-use binary_reader_io::BinaryReader;
 
 pub(crate) struct ITDecompressor<'a> {
     reader: Cursor<&'a [u8]>,

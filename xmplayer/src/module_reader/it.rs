@@ -273,7 +273,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 let loop_start_point = file.read_u8()?;
                 let loop_end_point = file.read_u8()?;
                 let sustain_start_point = file.read_u8()?;
-                let sustain_end_point = file.read_u8()?;
+                let _sustain_end_point = file.read_u8()?;
                 
                 let mut points = [EnvelopePoint::new(); 25];
                 for i in 0..25 {
