@@ -13,7 +13,7 @@ fn generate_state_dump(path: &str, output_filename: &str, max_ticks: usize) {
 
     let mut output_file = File::create(output_filename).expect("Failed to create dump file");
 
-    let mut dummy_buffer = vec![0.0f32; 8192];
+    let mut dummy_buffer = vec![0.0f32; 1000000];
     
     let mut ticks = 0;
     
@@ -53,4 +53,8 @@ fn test_dump_spacedeb() {
 #[test]
 fn test_dump_amiga_limits() {
     generate_state_dump("test_data/AmigaLimitsFinetune.mod", "test_data/AmigaLimitsFinetune_dump.txt", 100);
+}
+#[test]
+fn test_dump_strshine() {
+    generate_state_dump("/Users/gil-ad/Downloads/mods/strshine.s3m", "test_data/strshine_refactor.txt", usize::MAX);
 }

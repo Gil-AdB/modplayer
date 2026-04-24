@@ -33,15 +33,15 @@ impl Pattern {
 
     pub(crate) fn is_porta_to_note(&self, song_type: SongType) -> bool {
         match song_type {
-            SongType::IT | SongType::S3M => self.effect == 0x07, // G
-            _ => self.effect == 0x3 // XM / MOD 
+            SongType::IT => self.effect == 0x07 || self.effect == 0x0c, // G or L
+            _ => self.effect == 0x3 || self.effect == 0x5 // 3 or 5 for XM, MOD, S3M
         }
     }
 
     pub(crate) fn is_note_delay(&self, song_type: SongType) -> bool {
         match song_type {
-            SongType::IT => self.effect == 0x13 && self.get_x() == 0xd, // S
-            SongType::S3M => self.effect == 0x13 && self.get_x() == 0xd, // S
+            SongType::IT => (self.effect == 0x13 || self.effect == 0xe) && self.get_x() == 0xd,
+            SongType::S3M => (self.effect == 0x13 || self.effect == 0xe) && self.get_x() == 0xd,
             _ => self.effect == 0xe && self.get_x() == 0xd // XM / MOD
         }
     }
