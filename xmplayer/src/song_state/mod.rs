@@ -55,6 +55,13 @@ impl std::ops::Deref for SongHandle {
     }
 }
 
+impl SongHandle {
+    pub fn get_song(&self) -> &Arc<Mutex<Song>> {
+        &self.0.get().song
+    }
+}
+
+
 pub struct SongState {
     pub(crate) stopped:              Arc<AtomicBool>,
     pub(crate) triple_buffer_reader: TripleBufferReader<PlayData>,
@@ -67,6 +74,29 @@ pub struct SongState {
 }
 
 impl SongState {
+
+    pub fn new_from_data(song_data: SongData) -> (SongHandle, AudioConsumer) {
+        let triple_buffer = TripleBuffer::<PlayData>::new_with_signal();
+        let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
+        let song = Arc::new(Mutex::new(Song::new(&song_data, triple_buffer_writer, 48000.0)));
+        let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
+        let stopped = Arc::new(AtomicBool::from(false));
+
+        let (producer, consumer) = ProducerConsumerQueue::<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>::new();
+
+        let sh = SongHandle(StructHolder::new( Box::new( Self {
+            stopped,
+            triple_buffer_reader,
+            song_data,
+            song,
+            tx,
+            rx: Arc::new(Mutex::new(rx)),
+            q: producer,
+            display_cb: Mutex::new(None),
+        })));
+
+        (sh, consumer)
+    }
 
     pub fn new(path: &str) -> SimpleResult<(SongHandle, AudioConsumer)> {
         let song_data = read_module(path)?;
