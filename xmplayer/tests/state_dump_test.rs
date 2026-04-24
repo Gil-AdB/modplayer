@@ -18,21 +18,13 @@ fn generate_state_dump(path: &str, output_filename: &str, max_ticks: usize) {
     let mut ticks = 0;
     
     while ticks < max_ticks {
-        let mut adapter = InterleavedBufferAdaptar {
-            buf: &mut dummy_buffer,
-        };
-        
         let mut song = song_handle.get_song().lock().unwrap();
         
-        // Output the state BEFORE the audio is mixed for this tick
         let dump = dump_tick(&song);
-        
-        // Only log if the order/row actually changes or if you want it every single tick
-        // Since we want deterministic mixing state, logging every tick is correct
         writeln!(output_file, "{}", dump.to_string()).unwrap();
 
-        let (_tx, mut rx): (std::sync::mpsc::Sender<xmplayer::song::PlaybackCmd>, std::sync::mpsc::Receiver<xmplayer::song::PlaybackCmd>) = std::sync::mpsc::channel();
-        if let CallbackState::Complete = song.get_next_tick(&mut adapter, &mut rx) {
+        song.process_tick();
+        if !song.next_tick() {
             break;
         }
         

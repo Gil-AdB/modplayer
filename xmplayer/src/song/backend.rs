@@ -673,18 +673,126 @@ impl ModuleBackend for XmBackend {
 }
 
 pub struct S3MModBackend {}
-
 impl S3MModBackend {
-    pub fn new() -> Self {
-        Self {}
-    }
+    pub fn new() -> Self { Self {} }
 }
 
 impl ModuleBackend for S3MModBackend {
     fn process_tick(&mut self, r: &mut SongPlaybackResources) {
-        // For now, S3M and MOD share logic with XM as per previous monolithic implementation
-        // but can be specialized later.
-        let mut xm = XmBackend::new();
-        xm.process_tick(r);
+        let first_tick = *r.tick == 0;
+        let is_s3m = r.song_data.song_type == SongType::S3M;
+
+        for i in 0..r.channels.len() {
+            let channel = &mut r.channels[i];
+            
+            // Lazy cleanup
+            if let Some(v_idx) = channel.voice_idx {
+                if r.voices[v_idx].channel_idx != i {
+                    channel.voice_idx = None;
+                }
+            }
+
+            let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
+            let pattern = &patterns.rows[*r.row].channels[i];
+
+            if first_tick {
+                if pattern.instrument != 0 {
+                    channel.last_instrument = pattern.instrument as usize;
+                }
+                
+                if pattern.note == 121 { // Note Cut (^^)
+                    if let Some(v_idx) = channel.voice_idx {
+                        r.voices[v_idx].on = false;
+                        r.voices[v_idx].volume.output_volume = 0.0;
+                    }
+                } else if pattern.note == 97 { // Note Off (==)
+                    if let Some(v_idx) = channel.voice_idx {
+                        r.voices[v_idx].sustained = false;
+                    }
+                } else if pattern.note != 0 {
+                    let inst_idx = channel.last_instrument;
+                    if inst_idx < r.song_data.instruments.len() {
+                        let instrument = &r.song_data.instruments[inst_idx];
+                        if !instrument.samples.is_empty() {
+                            let sample_idx = 0; // Simplified for S3M
+                            let voice_idx = channel.voice_idx.unwrap_or(i);
+                            let voice = &mut r.voices[voice_idx];
+                            voice.on = true;
+                            voice.channel_idx = i;
+                            voice.instrument = inst_idx;
+                            voice.sample = sample_idx;
+                            voice.sustained = true;
+                            voice.sample_position = 4.0;
+                            voice.loop_started = false;
+                            voice.ping = true;
+                            voice.volume.retrig(instrument.samples[sample_idx].volume as i32);
+                            voice.panning.panning = r.song_data.initial_channel_panning[i];
+                            
+                            voice.trigger_note(&r.song_data.instruments);
+                            
+                            let sample = &instrument.samples[sample_idx];
+                            let real_note = (pattern.note as i16 + sample.relative_note as i16) as u8;
+                            channel.note.set_note(real_note, sample.finetune, pattern.note, r.frequency_tables);
+                            channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+
+                            channel.voice_idx = Some(voice_idx);
+                        }
+                    }
+                }
+            }
+
+            if let Some(v_idx) = channel.voice_idx {
+                let voice = &mut r.voices[v_idx];
+                
+                let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
+                let channel_vol_f32 = channel.channel_volume as f32 / 64.0;
+                let master_vol_f32 = if is_s3m { r.song_data.master_volume as f32 / 128.0 } else { 1.0 };
+
+                voice.update_output_volume(global_vol_f32 * master_vol_f32, channel_vol_f32, 1.0);
+
+                // Effect processing
+                if pattern.effect >= 0x81 {
+                    let s3m_effect = pattern.effect - 0x80;
+                    match s3m_effect {
+                        1 => { // A: Set Speed
+                            if first_tick && pattern.effect_param != 0 {
+                                *r.speed = pattern.effect_param as u32;
+                            }
+                        }
+                        2 => { // B: Pattern Jump
+                            if first_tick {
+                                *r.pattern_change = PatternChange::new_jump(pattern.effect_param as usize);
+                            }
+                        }
+                        3 => { // C: Break to Row
+                            if first_tick {
+                                *r.pattern_change = PatternChange::new_break(pattern.effect_param as usize);
+                            }
+                        }
+                        4 => { // D: Volume Slide
+                            let x = pattern.effect_param >> 4;
+                            let y = pattern.effect_param & 0x0F;
+                            if x == 0x0F && y != 0 { // Fine slide up
+                                if first_tick { voice.volume.set_volume(voice.volume.volume as i32 + y as i32); }
+                            } else if x != 0 && y == 0x0F { // Fine slide down
+                                if first_tick { voice.volume.set_volume(voice.volume.volume as i32 - x as i32); }
+                            } else if x != 0 { // Slide up
+                                if !first_tick { voice.volume.set_volume(voice.volume.volume as i32 + x as i32); }
+                            } else if y != 0 { // Slide down
+                                if !first_tick { voice.volume.set_volume(voice.volume.volume as i32 - y as i32); }
+                            }
+                        }
+                        20 => { // T: Set BPM
+                            if first_tick && pattern.effect_param >= 0x21 {
+                                r.bpm.update(pattern.effect_param as u32, r.rate);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                
+                voice.update_envelopes(&r.song_data.instruments, r.rate);
+            }
+        }
     }
 }

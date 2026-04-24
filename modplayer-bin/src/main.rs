@@ -32,10 +32,43 @@ fn main() {
         Err(e) => {dbg!(e);return;}
     };
 
-    if env::args().len() > 2 {
+    if env::args().any(|arg| arg == "--dump") {
+        run_dump(&mut song, consumer);
+    } else if env::args().len() > 2 {
         print_module(&song, env::args().skip(2));
     } else {
         run(&mut song, consumer);
+    }
+}
+
+fn run_dump(song_data: &mut SongHandle, mut consumer: AudioConsumer) {
+    println!("Starting dump of {}...", song_data.get_song_data().name);
+    let _handle = song_data.start(|_, _, _, _| {});
+
+    let mut last_tick = 999;
+    let mut last_row = 999;
+    let mut last_pos = 999;
+
+    loop {
+        if song_data.is_stopped() { break; }
+        
+        consumer.drain();
+
+        let state = song_data.get_state();
+        if state.tick != last_tick || state.row != last_row || state.song_position != last_pos {
+            println!("{}", state.dump.to_string());
+            let _ = std::io::stdout().flush();
+            last_tick = state.tick;
+            last_row = state.row;
+            last_pos = state.song_position;
+        }
+
+        if state.song_position >= song_data.get_song_data().song_length as usize {
+            println!("Reached end of song.");
+            break;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
 

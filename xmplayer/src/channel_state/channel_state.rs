@@ -4,7 +4,6 @@ use crate::tables;
 #[allow(unused_imports)]
 use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
 use crate::tables::AudioTables;
-use std::num::Wrapping;
 use crate::instrument::VibratoEnvelope;
 
 
@@ -617,7 +616,7 @@ impl Note {
     }
 
 
-    pub(crate) fn frequency(&self, period_shift: i16, semitone: bool, frequency_tables: &AudioTables) -> f32 {
+    pub(crate) fn frequency(&self, period_shift: i16, _semitone: bool, frequency_tables: &AudioTables) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
         let period: u16;

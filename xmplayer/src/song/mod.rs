@@ -8,9 +8,8 @@ use std::sync::mpsc::Receiver;
 use std::time::Instant;
 
 use crate::channel_state::{ChannelState, Voice};
-use crate::channel_state::channel_state::{EnvelopeState, Note, Panning, VibratoEnvelopeState, VibratoState, TremoloState, PortaToNoteState};
 use crate::instrument::{LoopType, Instrument};
-use crate::module_reader::{SongData, SongType, is_note_valid, Patterns};
+use crate::module_reader::{SongData, SongType, Patterns};
 #[cfg(test)]
 #[allow(unused_imports)]
 use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
@@ -18,7 +17,6 @@ use crate::tables::{PANNING_TAB, AudioTables};
 use shared_sync_primitives::TripleBufferWriter;
 use std::collections::HashMap;
 use std::num::Wrapping;
-use std::borrow::Borrow;
 
 pub(crate) mod backend;
 pub mod test_dump;
@@ -313,6 +311,28 @@ impl PatternChange {
             pattern_delay: 0,
         }
     }
+
+    pub fn new_jump(order: usize) -> Self {
+        Self {
+            pattern_break: false,
+            pattern_jump: true,
+            is_loop: false,
+            row: 0,
+            pattern: order as u8,
+            pattern_delay: 0,
+        }
+    }
+
+    pub fn new_break(row: usize) -> Self {
+        Self {
+            pattern_break: true,
+            pattern_jump: false,
+            is_loop: false,
+            row: row as u8,
+            pattern: 0,
+            pattern_delay: 0,
+        }
+    }
     fn reset(&mut self) {
         *self = Self::new();
     }
@@ -320,11 +340,11 @@ impl PatternChange {
     fn set_break(&mut self, song_type: SongType, first_tick: bool, param: u8) {
         if !first_tick { return; }
         self.pattern_break = true;
-        if song_type == SongType::MOD {
-            // MOD uses BCD for Pattern Break
-            self.row = (param >> 4) * 10 + (param & 0x0F);
+        if song_type == SongType::MOD || song_type == SongType::S3M {
+            // MOD and S3M use BCD for Pattern Break
+            self.row = ((param >> 4) * 10 + (param & 0x0F)) as u8;
         } else {
-            // XM, IT, S3M use Hex
+            // XM and IT use Hex
             self.row = param;
         }
     }
@@ -546,6 +566,7 @@ pub struct PlayData {
     pub theme_id:                           u32,
     pub view_mode:                          u32,
     pub user_data:                          HashMap<String, UserData>,
+    pub dump:                               crate::song::test_dump::TickDump,
 }
 
 impl Default for PlayData {
@@ -576,7 +597,8 @@ impl Default for PlayData {
             display_fps: 0.0,
             theme_id: 0,
             view_mode: 0,
-            user_data: Default::default()
+            user_data: Default::default(),
+            dump: Default::default(),
         }
     }
 }
@@ -773,7 +795,7 @@ impl Song {
                 if p == 100 {
                     channel.panning.panning = 128; // Surround -> Center for now
                 } else {
-                    channel.panning.panning = (p as i16 * 4).min(255) as u8;
+                    channel.panning.panning = p;
                 }
                 channel.volume.set_volume(song_data.initial_channel_volume[i] as i32);
                 channel.channel_volume = song_data.initial_channel_volume[i];
@@ -921,7 +943,7 @@ impl Song {
                 if p == 100 {
                     ch.panning.panning = 128;
                 } else {
-                    ch.panning.panning = (p as i16 * 4).min(255) as u8;
+                    ch.panning.panning = p;
                 }
                 ch.volume.set_volume(self.song_data.initial_channel_volume[i] as i32);
                 ch.channel_volume = self.song_data.initial_channel_volume[i];
@@ -1058,6 +1080,7 @@ impl Song {
             }
         }
         play_data.virtual_channels = active_voices.saturating_sub(host_voices);
+        play_data.dump = crate::song::test_dump::dump_tick(self);
 
         // Optimized Channel Status (In-place update)
         let num_channels = self.channels.len();
@@ -1460,7 +1483,7 @@ impl Song {
         return true;
     }
 
-    pub(crate) fn next_tick(&mut self) -> bool {
+    pub fn next_tick(&mut self) -> bool {
         if self.song_position >= self.song_data.song_length as usize {
             return false;
         }

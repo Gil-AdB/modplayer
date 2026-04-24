@@ -59,6 +59,10 @@ impl SongHandle {
     pub fn get_song(&self) -> &Arc<Mutex<Song>> {
         &self.0.get().song
     }
+
+    pub fn get_song_data(&self) -> &SongData {
+        &self.0.get().song_data
+    }
 }
 
 
@@ -149,6 +153,11 @@ impl SongState {
 
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
+    }
+
+    pub fn get_state(&self) -> PlayData {
+        let (data, _) = self.triple_buffer_reader.get_read_buffer();
+        data.clone()
     }
 }
 
