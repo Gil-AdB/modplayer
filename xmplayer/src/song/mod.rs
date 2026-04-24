@@ -913,9 +913,26 @@ impl Song {
             row_delay: 0,
         };
 
-        // Reset all channels to blank slate
-        for ch in self.channels.iter_mut() {
+        // Reset all channels to blank slate, but preserve initial volumes/panning
+        for (i, ch) in self.channels.iter_mut().enumerate() {
             *ch = ChannelState::new();
+            if i < 64 && i < self.song_data.initial_channel_volume.len() && i < self.song_data.initial_channel_panning.len() {
+                let p = self.song_data.initial_channel_panning[i];
+                if p == 100 {
+                    ch.panning.panning = 128;
+                } else {
+                    ch.panning.panning = (p as i16 * 4).min(255) as u8;
+                }
+                ch.volume.set_volume(self.song_data.initial_channel_volume[i] as i32);
+                ch.channel_volume = self.song_data.initial_channel_volume[i];
+            }
+        }
+
+        // Reset all voices
+        for (i, voice) in self.voices.iter_mut().enumerate() {
+            let ch_count = (self.song_data.channel_count as usize).max(1);
+            *voice = Voice::new();
+            voice.channel_idx = i % ch_count;
         }
     }
 
@@ -1275,7 +1292,7 @@ impl Song {
                     }
 
                     self.tick_state.current_tick_position = 0usize;
-                    self.tick_state.state = BufferState::FillBuffer
+                    self.tick_state.state = BufferState::FillBuffer;
                 }
                 BufferState::FillBuffer => {
                     while self.tick_state.current_tick_position < self.bpm.tick_duration_in_frames {
@@ -1296,7 +1313,7 @@ impl Song {
                 }
                 BufferState::NextTick => {
                     if !self.next_tick() { return CallbackState::Complete; }
-                    self.tick_state.state = BufferState::Start
+                    self.tick_state.state = BufferState::Start;
                 }
             }
         }
@@ -1646,7 +1663,7 @@ impl Song {
                             let idx = p as usize;
                             let phase = (p.fract() * 512.0) as usize;
                             let table = &self.frequency_tables.resampling.sinc_table[phase];
-                            temp[j] = sinc_dot_product(&sample.data[idx - 3..], table);
+                            temp[j] = sinc_dot_product(&sample.data[idx.saturating_sub(3)..], table);
                         }
                         out_samples = temp;
                     },

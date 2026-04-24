@@ -235,7 +235,14 @@ impl ModuleBackend for ItBackend {
                             voice.sample_position = 4.0;
                             voice.loop_started = false;
                             voice.ping = true;
+                            voice.trigger_note(instruments);
+                            let sample = &instruments[inst_idx].samples[final_sample_idx];
+                            voice.volume.retrig(sample.volume as i32);
+                            voice.panning.panning = sample.panning;
                         } else {
+                            voice.sample_position = 4.0;
+                            voice.loop_started = false;
+                            voice.ping = true;
                             voice.trigger_note(instruments);
                             let sample = &instruments[inst_idx].samples[final_sample_idx];
                             voice.volume.retrig(sample.volume as i32);
@@ -439,7 +446,11 @@ impl ModuleBackend for XmBackend {
                 }
             }
 
-            if !pattern.is_porta_to_note(r.song_data.song_type) && first_tick {
+            let is_porta = pattern.is_porta_to_note(r.song_data.song_type);
+            let is_note_delay = pattern.is_note_delay(r.song_data.song_type);
+            if !is_porta &&
+                ((is_note_delay && *r.tick == pattern.get_y() as u32) ||
+                    (!is_note_delay && first_tick)) {
                 
                 let note = pattern.note;
                 let mut inst_idx = channel.last_instrument;
@@ -518,7 +529,14 @@ impl ModuleBackend for XmBackend {
                             voice.sample_position = 4.0;
                             voice.loop_started = false;
                             voice.ping = true;
+                            voice.trigger_note(instruments);
+                            let sample = &instruments[inst_idx].samples[final_sample_idx];
+                            voice.volume.retrig(sample.volume as i32);
+                            voice.panning.panning = sample.panning;
                         } else {
+                            voice.sample_position = 4.0;
+                            voice.loop_started = false;
+                            voice.ping = true;
                             voice.trigger_note(instruments);
                             let sample = &instruments[inst_idx].samples[final_sample_idx];
                             voice.volume.retrig(sample.volume as i32);

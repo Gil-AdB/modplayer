@@ -501,7 +501,7 @@
                 finetune,
                 loop_type: if sample_flags & 1 == 1 {LoopType::ForwardLoop} else {LoopType::NoLoop},
                 bitness: 8,
-                panning: 128,
+                panning: 255,
                 relative_note,
                 name: sample_name.clone().to_string(),
                 global_volume: 64,
@@ -514,6 +514,7 @@
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
+            instrument.sample_indexes = (0..120).map(|i| (i + 1, 0)).collect();
             instruments.push(instrument);
         }
         Ok(instruments)

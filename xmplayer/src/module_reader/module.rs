@@ -278,6 +278,7 @@
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
+            instrument.sample_indexes = (0..120).map(|i| (i + 1, 0)).collect();
             instruments.push(instrument);
         }
         Ok(instruments)
