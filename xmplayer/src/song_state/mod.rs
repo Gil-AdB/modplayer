@@ -178,6 +178,14 @@ impl SongState {
         &self.song
     }
 
+    /// Receiver side of the playback command channel. Embedders that drive
+    /// the song from a synchronous audio callback (no play_thread) need to
+    /// pump this so commands sent via the sender — set_order, etc. — are
+    /// observed by the song state machine.
+    pub fn get_rx(&self) -> &Arc<Mutex<Receiver<PlaybackCmd>>> {
+        &self.rx
+    }
+
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
         self.triple_buffer_reader.wake_reader();
