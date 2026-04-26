@@ -148,13 +148,17 @@ extern "C" fn Modplayer_Create(path: *const c_char) -> *mut c_void {
 #[cfg(feature="external-audio")]
 #[unsafe(no_mangle)]
 extern "C" fn Modplayer_FillBuffer(app_ptr: *mut c_void, out: *mut f32, frames: u32) {
+    use std::ops::DerefMut;
     if app_ptr.is_null() || out.is_null() { return; }
     let self_ = unsafe { &mut *(app_ptr as *mut App) };
     let slice = unsafe { std::slice::from_raw_parts_mut(out, (frames as usize) * 2) };
     let mut song = self_.song_handle.get_song().lock().unwrap();
-    let (_tx, mut rx) = mpsc::channel::<PlaybackCmd>();
+    let mut rx = self_.song_handle.get_rx().lock().unwrap();
+    // Drain any commands sent via Modplayer_SetOrder (and the like) so the
+    // song state machine sees position changes before producing samples.
+    song.handle_commands(rx.deref_mut());
     let mut adaptar = InterleavedBufferAdaptar { buf: slice };
-    if let CallbackState::Complete = song.get_next_tick(&mut adaptar, &mut rx) {
+    if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) {
         // Song reached end — let host see it via the next call returning silence.
     }
 }
