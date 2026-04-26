@@ -11,9 +11,13 @@ crate-type = ["staticlib"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["sdl2-feature"] # "portaudio-feature"/"sdl2-feature"
+default = ["sdl2-feature"] # "portaudio-feature"/"sdl2-feature"/"external-audio"
 portaudio-feature = ["portaudio"]
 sdl2-feature = ["sdl2"]
+# external-audio: no audio backend in Rust. Host (C/C++) opens its own audio
+# device and pulls samples via the Modplayer_FillBuffer C API. Required for
+# Emscripten where the bundled sdl2 crate collides with emcc's -sUSE_SDL=2.
+external-audio = []
 
 [dependencies]
 portaudio = {version = "0.8", optional = true}

@@ -2,7 +2,6 @@
 
 // extern crate lazy_static;
 
-extern crate sdl2;
 extern crate xmplayer;
 
 mod leak;
@@ -11,12 +10,17 @@ mod leak;
 #[cfg(feature="sdl2-feature")] use sdl2_audio::AudioOutput;
 #[cfg(feature="portaudio-feature")] mod portaudio_audio;
 #[cfg(feature="portaudio-feature")] use portaudio_audio::AudioOutput;
+#[cfg(feature="external-audio")] mod external_audio;
+#[cfg(feature="external-audio")] use external_audio::AudioOutput;
 
-use sdl2::audio::{AudioCallback};
+#[cfg(feature="sdl2-feature")] use sdl2::audio::AudioCallback;
+#[cfg(any(feature="sdl2-feature", feature="external-audio"))]
 use xmplayer::song::{PlaybackCmd, CallbackState, InterleavedBufferAdaptar};
+#[cfg(any(feature="sdl2-feature", feature="external-audio"))]
+use std::sync::mpsc;
+#[cfg(feature="sdl2-feature")] use std::sync::mpsc::{Receiver, Sender};
+
 use xmplayer::song_state::{SongState, SongHandle};
-use std::sync::{mpsc};
-use std::sync::mpsc::{Receiver, Sender};
 use std::ffi::{c_void, CStr};
 use std::os::raw::c_char;
 use xmplayer::SimpleResult;
@@ -27,11 +31,13 @@ pub enum PlayerCmd {
     NewSong(String)
 }
 
+#[cfg(feature="sdl2-feature")]
 #[allow(dead_code)]
 struct AudioCB {
     q: SongHandle,
 }
 
+#[cfg(feature="sdl2-feature")]
 impl AudioCallback for AudioCB {
     type Channel = f32;
 
@@ -60,7 +66,6 @@ struct App {
 impl App {
     fn new(path: String) -> SimpleResult<*mut c_void> {
 
-        dbg!("start");
         let (song, consumer) = SongState::new(&path)?;
         Ok(leak!(Self {
             song_row: 0,
@@ -73,9 +78,16 @@ impl App {
     }
 
     pub(crate) fn start(&mut self) {
-        let h = self.song_handle.start(|_data, _instruments, _patterns, _order| {});
-        self.play_thread = h.0;
-        self.display_thread = h.1;
+        // external-audio drives the song state directly from the audio
+        // callback in Modplayer_FillBuffer (the same pattern modplayer-emscripten
+        // uses), so no producer/consumer queue and no play_thread is needed.
+        // The other backends spawn the queue-feeding play_thread here.
+        #[cfg(not(feature="external-audio"))]
+        {
+            let h = self.song_handle.start(|_data, _instruments, _patterns, _order| {});
+            self.play_thread = h.0;
+            self.display_thread = h.1;
+        }
         self.audio_output.start_audio_output();
     }
 
@@ -107,7 +119,6 @@ extern "C" fn Modplayer_Stop(app_ptr: *mut c_void) {
 
 #[unsafe(no_mangle)]
 extern "C" fn Modplayer_Start(app_ptr: *mut c_void) {
-    dbg!("Modplayer_Start");
     if app_ptr == 0 as *mut c_void {return;}
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
@@ -116,7 +127,6 @@ extern "C" fn Modplayer_Start(app_ptr: *mut c_void) {
 
 #[unsafe(no_mangle)]
 extern "C" fn Modplayer_SetOrder(app_ptr: *mut c_void, order: u32) {
-    dbg!("Modplayer_SetOrder");
     if app_ptr == 0 as *mut c_void {return;}
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
@@ -129,6 +139,24 @@ extern "C" fn Modplayer_Create(path: *const c_char) -> *mut c_void {
          Ok(app) => {app}
          Err(_) => {0 as * mut c_void}
      }
+}
+
+// external-audio: host opens its own audio device and pulls samples here.
+// We drive the song state directly (no producer/consumer queue, no play_thread)
+// — the same pattern modplayer-emscripten's audio callback uses. `out` receives
+// `frames * 2` interleaved stereo f32s.
+#[cfg(feature="external-audio")]
+#[unsafe(no_mangle)]
+extern "C" fn Modplayer_FillBuffer(app_ptr: *mut c_void, out: *mut f32, frames: u32) {
+    if app_ptr.is_null() || out.is_null() { return; }
+    let self_ = unsafe { &mut *(app_ptr as *mut App) };
+    let slice = unsafe { std::slice::from_raw_parts_mut(out, (frames as usize) * 2) };
+    let mut song = self_.song_handle.get_song().lock().unwrap();
+    let (_tx, mut rx) = mpsc::channel::<PlaybackCmd>();
+    let mut adaptar = InterleavedBufferAdaptar { buf: slice };
+    if let CallbackState::Complete = song.get_next_tick(&mut adaptar, &mut rx) {
+        // Song reached end — let host see it via the next call returning silence.
+    }
 }
 
 
