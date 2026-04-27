@@ -17,6 +17,7 @@ pub struct VoiceDump {
     pub panning_envelope_pos: u16,
     pub effect: u8,
     pub effect_param: u8,
+    pub note_str: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -46,10 +47,11 @@ impl TickDump {
                 continue;
             }
             out.push_str(&format!(
-                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | Eff {:02x} {:02x}\n",
+                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | {} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | Eff {:02x} {:02x}\n",
                 v.channel_idx,
                 v.instrument,
                 v.sample,
+                v.note_str,
                 v.sample_pos,
                 v.du,
                 v.output_volume,
@@ -91,6 +93,9 @@ pub fn dump_tick(song: &Song) -> TickDump {
             panning_envelope_pos: voice.panning_envelope_state.frame,
             effect: pattern.effect,
             effect_param: pattern.effect_param,
+            note_str: if voice.last_played_note == 0 { "   ".to_string() } else if voice.last_played_note == 97 { "OFF".to_string() } else {
+                format!("{}{}", ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"][((voice.last_played_note - 1) % 12) as usize], (((voice.last_played_note - 1) / 12) + '0' as u8) as char)
+            },
         });
     }
 

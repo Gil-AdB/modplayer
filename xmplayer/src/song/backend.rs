@@ -379,7 +379,8 @@ impl ModuleBackend for ItBackend {
         let global_vol_f32 = r.global_volume.volume as f32 / divisor;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let mut channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            if r.channels[voice.channel_idx].force_off { channel_vol_f32 = 0.0; }
             voice.update_envelopes(instruments, r.rate);
             voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
             
@@ -663,7 +664,8 @@ impl ModuleBackend for XmBackend {
         let global_vol_f32 = r.global_volume.volume as f32 / divisor;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let mut channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            if r.channels[voice.channel_idx].force_off { channel_vol_f32 = 0.0; }
             voice.update_envelopes(instruments, r.rate);
             voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
             
@@ -756,7 +758,8 @@ impl ModuleBackend for ModBackend {
                 let voice = &mut r.voices[v_idx];
                 
                 let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
-                let channel_vol_f32 = channel.channel_volume as f32 / 64.0;
+                let mut channel_vol_f32 = channel.channel_volume as f32 / 64.0;
+                if channel.force_off { channel_vol_f32 = 0.0; }
 
                 voice.update_output_volume(global_vol_f32, channel_vol_f32, 1.0);
 
@@ -827,7 +830,8 @@ impl ModuleBackend for ModBackend {
         let global_vol_f32 = r.global_volume.volume as f32 / divisor;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let mut channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            if r.channels[voice.channel_idx].force_off { channel_vol_f32 = 0.0; }
             voice.update_envelopes(&r.song_data.instruments, r.rate);
             voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
             
@@ -875,13 +879,12 @@ impl ModuleBackend for S3MBackend {
                     channel.last_instrument = pattern.instrument as usize;
                 }
                 
-                let is_note_cut = pattern.note == 254;
-                let is_note_off = pattern.note == 255;
+                let is_note_off = pattern.note == 97;
+                let is_note_cut = pattern.note == 121;
 
                 if is_note_cut { // Note Cut
                     channel.on = false;
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].sustained = false;
                         r.voices[v_idx].on = false;
                         r.voices[v_idx].volume.output_volume = 0.0;
                     }
@@ -927,7 +930,7 @@ impl ModuleBackend for S3MBackend {
                                 let real_note = (pattern.note as i16 + sample.relative_note as i16) as u8;
                                 channel.note.set_note(real_note, sample.finetune, pattern.note, r.frequency_tables);
                                 channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
-
+                                voice.last_played_note = pattern.note;
                                 channel.voice_idx = Some(voice_idx);
                             }
                         }
@@ -939,24 +942,20 @@ impl ModuleBackend for S3MBackend {
                 let voice = &mut r.voices[v_idx];
                 
                 let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
-                let channel_vol_f32 = channel.channel_volume as f32 / 64.0;
+                let mut channel_vol_f32 = channel.channel_volume as f32 / 64.0;
+                if channel.force_off { channel_vol_f32 = 0.0; }
                 let master_vol_f32 = r.song_data.master_volume as f32 / 128.0;
 
                 // Volume column processing
-                match pattern.volume {
-                    0x10..=0x50 => { voice.volume.set_volume((pattern.volume - 0x10) as i32); }
-                    0x60..=0x6F => { channel.volume_slide(Some(voice), first_tick, (pattern.volume & 0x0F) as i8); } // Bx
-                    0x70..=0x7F => { channel.volume_slide(Some(voice), first_tick, -( (pattern.volume & 0x0F) as i8)); } // Ax
-                    0x80..=0x8F => { channel.fine_volume_slide(Some(voice), first_tick, (pattern.volume & 0x0F) as i8); } // 9x
-                    0x90..=0x9F => { channel.fine_volume_slide(Some(voice), first_tick, -( (pattern.volume & 0x0F) as i8)); } // 8x
-                    0xB0..=0xBF => { 
-                        channel.vibrato(Some(voice), first_tick, (pattern.volume & 0x0F) << 4, 0, r.old_effects, r.rate, r.frequency_tables); 
-                    } // Dx
-                    0xF0..=0xFF => { channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, (pattern.volume & 0x0F) << 4, r.compatible_g, r.rate, r.frequency_tables); } // Cx
-                    _ => {}
+                if first_tick {
+                    match pattern.volume {
+                        0..=64 => { voice.volume.set_volume(pattern.volume as i32); }
+                        _ => {}
+                    }
                 }
 
-                voice.update_output_volume(global_vol_f32 * master_vol_f32, channel_vol_f32, 1.0);
+                let master_vol_f32 = (r.song_data.master_volume & 127) as f32 / 64.0;
+                voice.update_output_volume(global_vol_f32 * master_vol_f32, channel_vol_f32, 64.0);
 
                 // Effect processing
                 match pattern.effect {
@@ -1046,7 +1045,10 @@ impl ModuleBackend for S3MBackend {
                         channel.vibrato(Some(voice), first_tick, param >> 4, param & 0x0F, true, r.rate, r.frequency_tables);
                     }
                     9 => { // I: Tremor
-                        channel.tremor = pattern.effect_param;
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.last_tremor_param; }
+                        channel.last_tremor_param = param;
+                        channel.tremor = param;
                     }
                     10 => { // J: Arpeggio
                         if pattern.effect_param != 0 {
@@ -1085,7 +1087,10 @@ impl ModuleBackend for S3MBackend {
                         }
                     }
                     16 => { // P: Panning Slide
-                        channel.panning_slide(Some(voice), first_tick, pattern.effect_param);
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.last_panning_slide; }
+                        channel.last_panning_slide = param;
+                        channel.panning_slide(Some(voice), first_tick, param);
                     }
                     17 => { // Q: Retrig
                         let mut param = pattern.effect_param;
@@ -1097,8 +1102,8 @@ impl ModuleBackend for S3MBackend {
                     }
                     18 => { // R: Tremolo
                         let mut param = pattern.effect_param;
-                        if param == 0 { param = channel.last_panning_speed; } // Reuse panning slide memory? No, S3M has own tremolo memory
-                        channel.last_panning_speed = param;
+                        if param == 0 { param = channel.last_tremolo_param; }
+                        channel.last_tremolo_param = param;
                         channel.tremolo(Some(voice), first_tick, param >> 4, param & 0x0F);
                     }
                     19 => { // S: Special
@@ -1110,11 +1115,32 @@ impl ModuleBackend for S3MBackend {
                                     voice.panning.set_panning((y as i32 * 17).min(255));
                                 }
                             }
+                            0x0B => { // SBx: Pattern Loop
+                                if first_tick {
+                                    if y == 0 {
+                                        channel.loop_row = *r.row as u8;
+                                    } else {
+                                        if channel.loop_count == 0 {
+                                            channel.loop_count = y;
+                                        } else {
+                                            channel.loop_count -= 1;
+                                        }
+                                        if channel.loop_count > 0 {
+                                            *r.pattern_change = PatternChange::new_break(channel.loop_row as usize);
+                                        }
+                                    }
+                                }
+                            }
                             0x0C => { // SCx: Note Cut
                                 if *r.tick == y as u32 {
                                     channel.on = false;
                                     voice.on = false;
                                     voice.volume.output_volume = 0.0;
+                                }
+                            }
+                            0x0E => { // SEx: Pattern Delay
+                                if first_tick {
+                                    *r.row_delay = y as usize;
                                 }
                             }
                             _ => {}
@@ -1135,7 +1161,10 @@ impl ModuleBackend for S3MBackend {
                         r.global_volume.set_volume(first_tick, pattern.effect_param);
                     }
                     23 => { // W: Global Volume Slide
-                        r.global_volume.volume_slide(first_tick, pattern.effect_param);
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = r.global_volume.last_volume_slide; }
+                        r.global_volume.last_volume_slide = param;
+                        r.global_volume.volume_slide(first_tick, param);
                     }
                     24 => { // X: Panning
                         if first_tick {
@@ -1152,9 +1181,11 @@ impl ModuleBackend for S3MBackend {
         let global_vol_f32 = r.global_volume.volume as f32 / divisor;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let mut channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            if r.channels[voice.channel_idx].force_off { channel_vol_f32 = 0.0; }
             voice.update_envelopes(&r.song_data.instruments, r.rate);
-            voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
+            let master_vol_f32 = (r.song_data.master_volume & 127) as f32 / 64.0;
+            voice.update_output_volume(global_vol_f32 * master_vol_f32, channel_vol_f32, divisor);
             
             let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
             
