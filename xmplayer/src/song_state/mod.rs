@@ -20,8 +20,6 @@ use crate::{SimpleResult};
 use crate::song::InterleavedBufferAdaptar;
 use crate::{AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS, AudioConsumer, AudioProducer};
 
-
-
 pub(crate) struct StructHolder<T> {
     t: Arc<T>,
 }
@@ -31,6 +29,11 @@ impl<T> Clone for StructHolder<T> {
         Self { t: self.t.clone() }
     }
 }
+
+// We implement Send and Sync to mimic the previous AtomicPtr behavior.
+// Users must ensure actual usage avoids data races.
+unsafe impl<T: Send> Send for StructHolder<T> {}
+unsafe impl<T: Sync> Sync for StructHolder<T> {}
 
 impl <T> StructHolder<T> {
     pub(crate) fn new(arg: Box<T>) -> Self {
@@ -52,6 +55,17 @@ impl std::ops::Deref for SongHandle {
     }
 }
 
+impl SongHandle {
+    pub fn get_song(&self) -> &Arc<Mutex<Song>> {
+        &self.0.get().song
+    }
+
+    pub fn get_song_data(&self) -> &SongData {
+        &self.0.get().song_data
+    }
+}
+
+
 pub struct SongState {
     pub(crate) stopped:              Arc<AtomicBool>,
     pub(crate) triple_buffer_reader: TripleBufferReader<PlayData>,
@@ -64,6 +78,29 @@ pub struct SongState {
 }
 
 impl SongState {
+
+    pub fn new_from_data(song_data: SongData) -> (SongHandle, AudioConsumer) {
+        let triple_buffer = TripleBuffer::<PlayData>::new_with_signal();
+        let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();
+        let song = Arc::new(Mutex::new(Song::new(&song_data, triple_buffer_writer, 48000.0)));
+        let (tx, rx): (Sender<PlaybackCmd>, Receiver<PlaybackCmd>) = mpsc::channel();
+        let stopped = Arc::new(AtomicBool::from(false));
+
+        let (producer, consumer) = ProducerConsumerQueue::<f32, AUDIO_BUF_SIZE, NUM_AUDIO_CHUNKS>::new();
+
+        let sh = SongHandle(StructHolder::new( Box::new( Self {
+            stopped,
+            triple_buffer_reader,
+            song_data,
+            song,
+            tx,
+            rx: Arc::new(Mutex::new(rx)),
+            q: producer,
+            display_cb: Mutex::new(None),
+        })));
+
+        (sh, consumer)
+    }
 
     pub fn new(path: &str) -> SimpleResult<(SongHandle, AudioConsumer)> {
         let song_data = read_module(path)?;
@@ -114,20 +151,13 @@ impl SongState {
         self.q.stop();
     }
 
-    // fn callback_planar(&mut self) {
-    //     let mut song = self.song.lock().unwrap();
-    //     let mut rx = self.rx.lock().unwrap();
-    //     self.q.get().produce(|buf: &mut [f32]| -> bool {
-    //         let adaptar = PlanarBufferAdaptar::new(buf);
-    //         if let CallbackState::Complete = song.get_next_tick(adaptar, rx.deref_mut()) { return false; }
-    //         true
-    //     });
-    //     self.stopped.store(true, Ordering::Release);
-    // }
-
-
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
+    }
+
+    pub fn get_state(&self) -> PlayData {
+        let (data, _) = self.triple_buffer_reader.get_read_buffer();
+        data.clone()
     }
 }
 
@@ -196,52 +226,8 @@ impl SongState {
         let _ = self.tx.send(Quit);
         self.q.stop();
         self.triple_buffer_reader.wake_reader();
-        // if handle.0.is_some() {
-        //     handle.0.unwrap().join().unwrap();
-        // }
-        // if handle.1.is_some() {
-        //     handle.1.unwrap().join().unwrap();
-        // }
     }
 }
-
-// pub struct SongHandleLockGuard<'a>{
-//     song_state: &'a mut SongState,
-//     mutex_guard: MutexGuard<'a, u32>,
-//     _nosend: PhantomData<*mut ()>
-// }
-//
-// impl<'a> Deref for SongHandleLockGuard<'a> {
-//     type Target = SongState;
-//     fn deref(&self) -> &SongState { (*self.song_state).as_ref() }
-// }
-//
-// impl<'a> DerefMut for SongHandleLockGuard<'a> {
-//     fn deref_mut(&mut self) -> &mut SongState { (*self.song_state).as_mut() }
-// }
-//
-// impl<'a> Drop for SongHandleLockGuard<'a> {
-//     fn drop(&mut self) {
-//         mem::drop(self.mutex_guard);
-//     }
-// }
-//
-// #[derive(Clone)]
-// pub struct SongHandle {
-//     song_state: *mut c_void,
-//     mutex: Mutex<u32>,
-// }
-//
-// impl SongHandle {
-//     pub fn new(path: String) -> Self {
-//         Self { song_state: leak!(SongState::new(path)), mutex: Mutex::new(0) }
-//     }
-//
-//     pub fn lock(&mut self) -> SongHandleLockGuard {
-//         let guard = self.mutex.lock().unwrap();
-//         SongHandleLockGuard{ song_state: self.song_state as &mut SongState, mutex_guard: guard, _nosend: Default::default() }
-//     }
-// }
 
 #[cfg(test)]
 mod tests {

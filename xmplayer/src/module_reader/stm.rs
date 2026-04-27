@@ -122,6 +122,13 @@
             instruments,
             use_amiga: true,
             song_message: "".to_string(),
+            initial_channel_volume: [64; 64],
+            initial_channel_panning: [32; 64],
+            global_volume:           64,
+            master_volume:           128,
+            mixing_volume:           128,
+            old_effects: false,
+            compatible_g: false,
         })
     }
 
@@ -269,6 +276,8 @@
             panning: 128,
             relative_note,
             name,
+            global_volume: 64,
+            surround: false,
             is_ping_pong: false,
             original_loop_end: 0,
             data: vec![],

@@ -4,7 +4,6 @@ use crate::tables;
 #[allow(unused_imports)]
 use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
 use crate::tables::AudioTables;
-use std::num::Wrapping;
 use crate::instrument::VibratoEnvelope;
 
 
@@ -28,22 +27,33 @@ pub fn clamp<T: PartialOrd>(input: T, min: T, max: T) -> T {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct PortaToNoteState {
-    pub(crate) target_note:                Note,
-    pub(crate) speed:                      u8,
+pub struct PortaToNoteState {
+    pub target_note:                Note,
+    pub speed:                      u16,
 }
 
 
 impl PortaToNoteState {
     pub(crate) fn new() -> PortaToNoteState {
         PortaToNoteState {
-            target_note: Note{
-                note: 0,
-                finetune: 0,
-                period: 0,
-                original_note: 0
-            },
+            target_note: Note::new(),
             speed: 0
+        }
+    }
+
+    pub(crate) fn next_tick(&mut self, current_note: &mut Note) {
+        if self.speed == 0 || self.target_note.period == 0 { return; }
+        
+        if current_note.period < self.target_note.period {
+            current_note.period = (std::num::Wrapping(current_note.period) + std::num::Wrapping(self.speed)).0;
+            if current_note.period > self.target_note.period {
+                current_note.period = self.target_note.period;
+            }
+        } else if current_note.period > self.target_note.period {
+            current_note.period = (std::num::Wrapping(current_note.period) - std::num::Wrapping(self.speed)).0;
+            if current_note.period < self.target_note.period {
+                current_note.period = self.target_note.period;
+            }
         }
     }
 }
@@ -71,10 +81,10 @@ const SIN_TABLE: [i32; 32] =
         180, 161, 141, 120,  97,  74,  49,  24];
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct VibratoState {
-    speed:  i8,
-    depth:  i8,
-    pos:    i8,
+pub struct VibratoState {
+    pub speed:  i8,
+    pub depth:  i16,
+    pub pos:    i8,
 }
 
 impl VibratoState {
@@ -95,7 +105,7 @@ impl VibratoState {
 
     pub(crate) fn set_depth(&mut self, depth: i8) {
         if depth != 0 {
-            self.depth = depth;
+            self.depth = depth as i16;
         }
     }
 
@@ -125,10 +135,10 @@ impl VibratoState {
 
 // This and vibrato should derive from a base class probably
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct TremoloState {
-    speed:  i8,
-    depth:  i8,
-    pos:    i8,
+pub struct TremoloState {
+    pub speed:  i8,
+    pub depth:  i16,
+    pub pos:    i8,
 }
 
 impl TremoloState {
@@ -149,7 +159,7 @@ impl TremoloState {
 
     pub(crate) fn set_depth(&mut self, depth: i8) {
         if depth != 0 {
-            self.depth = depth;
+            self.depth = depth as i16;
         }
     }
 
@@ -178,11 +188,11 @@ impl TremoloState {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct EnvelopeState {
-    pub(crate) frame:      u16,
-    pub(crate) sustained:  bool,
+pub struct EnvelopeState {
+    pub frame:      u16,
+    pub sustained:  bool,
     // looped:     bool,
-    pub(crate) idx:        usize,
+    pub idx:        usize,
     // instrument:         &'a Instrument,
 }
 
@@ -339,10 +349,10 @@ impl EnvelopeState {
         self.sustained  = false;
         // self.looped     = false;
 
-        if self.frame > env.points[(env.size - 1) as usize].frame {self.frame = env.points[(env.size - 1) as usize].frame;}
+        if env.size > 0 && self.frame > env.points[(env.size - 1) as usize].frame {self.frame = env.points[(env.size - 1) as usize].frame;}
         let mut idx:usize = 0;
         loop {
-            if idx >= env.size as usize - 2 { break; }
+            if env.size < 2 || idx >= env.size as usize - 2 { break; }
             if env.points[idx].frame <= self.frame && env.points[idx+1].frame >= self.frame {
                 break;
             }
@@ -355,9 +365,9 @@ impl EnvelopeState {
 #[derive(Clone,Copy,Debug)]
 #[allow(dead_code)]
 pub(crate) struct VibratoEnvelopeState {
-    vibrato_sweep:  u16,
-    vibrato_amp:    u16,
-    vibrato_pos:    u16,
+    pub vibrato_sweep:  u16,
+    pub vibrato_amp:    u16,
+    pub vibrato_pos:    u16,
 }
 
 impl VibratoEnvelopeState {
@@ -409,12 +419,12 @@ impl VibratoEnvelopeState {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Note {
-               note:            u8,
-               finetune:        i8,
-    pub(crate) period:          u16,
-               original_note:   u8,
-
+pub struct Note {
+    pub note:            u8,
+    pub finetune:        i8,
+    pub period:          u16,
+    pub base_period:     u16,
+    pub original_note:   u8,
 }
 
 impl Note {
@@ -424,20 +434,25 @@ impl Note {
             note: 0,
             finetune: 0,
             period: 0,
+            base_period: 0,
             original_note: 0,
         }
     }
 
     // note <= 120
     pub(crate) fn set_note(&mut self, note: u8, finetune: i8, original_note: u8, frequency_tables: &AudioTables) {
-
         self.note = note;
         self.original_note = original_note;
         self.finetune = finetune;
-        let sidx= (self.note as i32 - 1) * 16 + ((self.finetune >> 3) + 16) as i32;
+        self.period = self.note_to_period(note, finetune, frequency_tables);
+        self.base_period = self.period;
+    }
+
+    pub(crate) fn note_to_period(&self, note: u8, finetune: i8, frequency_tables: &AudioTables) -> u16 {
+        let sidx= (note as i32 - 1) * 16 + ((finetune >> 3) + 16) as i32;
         let idx = clamp(sidx, 0, 1935);
 
-        self.period = frequency_tables.periods[idx as usize];
+        frequency_tables.periods[idx as usize]
     }
 
 
@@ -599,15 +614,19 @@ impl Note {
     }
 
 
-    pub(crate) fn frequency(&self, period_shift: i16, semitone: bool, frequency_tables: &AudioTables) -> f32 {
+    pub(crate) fn base_frequency(&self, _semitone: bool, tables: &AudioTables) -> f32 {
+        if self.base_period == 0 { return 0.0; }
+        tables.d_period2hz_tab[self.base_period as usize] as f32
+    }
+
+    pub(crate) fn frequency(&self, period_shift: i16, _semitone: bool, frequency_tables: &AudioTables) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
         // if semitone {
-        let period:u16;
-        if semitone {
-            period = self.relocate_ton(self.period as u16, period_shift as u8, frequency_tables);
-            // period = self.nearest_semi_tone(self.period as u16, period_shift as u8, use_amiga);
+        let period: u16;
+        if period_shift != 0 {
+            period = self.relocate_ton(self.period, period_shift as u8, frequency_tables);
         } else {
-            period = (Wrapping(self.period) - Wrapping((period_shift * 16 * 4) as u16)).0;
+            period = self.period;
         }
         // }
 
@@ -714,14 +733,14 @@ mod tests {
 }
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Volume {
-    pub(crate) volume:         u8,
-    pub(crate) volume_shift:   i32,
-    pub(crate) output_volume:  f32,
-    pub(crate) fadeout_vol:    i32,
-    pub(crate) fadeout_speed:  i32,
-    pub(crate) envelope_vol:   i32,
-    pub(crate) global_vol:     i32,
+pub struct Volume {
+    pub volume:         u8,
+    pub volume_shift:   i32,
+    pub output_volume:  f32,
+    pub fadeout_vol:    i32,
+    pub fadeout_speed:  i32,
+    pub envelope_vol:   i32,
+    pub global_vol:     i32,
 }
 
 impl Volume {
@@ -732,8 +751,8 @@ impl Volume {
             output_volume: 1.0,
             fadeout_vol: 65536,
             fadeout_speed: 0,
-            envelope_vol: 0,
-            global_vol: 0
+            envelope_vol: 16384,
+            global_vol: 64
         }
     }
 
@@ -755,9 +774,9 @@ impl Volume {
 
 
 #[derive(Clone,Copy,Debug)]
-pub(crate) struct Panning {
-    pub(crate) panning:               u8,
-    pub(crate) final_panning:         u8,
+pub struct Panning {
+    pub panning:               u8,
+    pub final_panning:         u8,
 }
 
 impl Panning {

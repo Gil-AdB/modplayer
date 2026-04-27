@@ -28,8 +28,6 @@ const DIRTY_BIT: u32     = 0x40;
 /// [0-1]: Index of the buffer currently owned by the READER.
 const INITIAL_STATE: u32 = (2 << READY_SHIFT) | (1 << WRITER_SHIFT) | 0; // 0x24: Ready=2, Writer=1, Reader=0
 
-
-
 /// A lock-free triple buffer for single-producer, single-consumer state sharing.
 /// 
 /// Triple buffering allows the producer to write new state while the consumer reads the previous state
@@ -78,7 +76,6 @@ impl<T> TripleBufferReader<T> where T: Clone + Default {
             return (tb.get_buffer_ref(idx), State::StateDirty);
         }
     }
-
 }
 
 impl<T> TripleBufferReader<T> {

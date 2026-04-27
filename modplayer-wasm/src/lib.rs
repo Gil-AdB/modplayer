@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 use std::ffi::c_void;
 use xmplayer::instrument::Instrument;
-use display::{Display, ViewPort, display::TargetPlatform};
+use display::{Display, display::TargetPlatform};
 use xmplayer::module_reader::{open_module, Patterns};
 use shared_sync_primitives::{TripleBufferReader, TripleBuffer};
 use xmplayer::song::PlanarBufferAdaptar;

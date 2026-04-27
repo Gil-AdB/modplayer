@@ -1,0 +1,398 @@
+[Order 000 | Row 000 | Tick 000] (Voices: 0 / Channels: 0) (Speed: 6 / BPM: 125 / GVol: 64)
+
+[Order 000 | Row 000 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 000 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 000 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 000 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 000 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 001 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 001 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 001 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 001 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 001 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 001 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 002 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 002 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 002 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 002 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 002 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 002 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 003 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 003 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 003 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 003 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 003 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 003 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 004 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 004 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 004 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 004 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 004 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 004 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 005 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 005 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 005 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 005 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 005 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 005 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 006 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 006 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 006 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 006 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 006 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 006 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 007 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 007 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 007 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 007 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 007 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 007 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 008 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 008 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 008 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 008 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 008 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 008 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 009 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 009 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 009 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 009 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 009 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 009 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 010 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 010 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 010 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 010 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 010 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 010 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 011 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 011 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 011 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 011 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 011 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 011 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 012 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 012 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 012 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 012 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 012 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 012 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 013 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 013 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 013 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 013 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 013 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 013 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 014 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 014 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 014 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 014 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 014 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 014 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 015 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 015 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 015 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 015 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 015 | Tick 004] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 015 | Tick 005] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 016 | Tick 000] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.339 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 01 | Samp 00 | Pos     4.000 | dU   0.678 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 016 | Tick 001] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 02 | Samp 00 | Pos     4.000 | dU   0.329 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 02 | Samp 00 | Pos     4.000 | dU   0.658 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 016 | Tick 002] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 02 | Samp 00 | Pos     4.000 | dU   0.329 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 02 | Samp 00 | Pos     4.000 | dU   0.658 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+
+[Order 000 | Row 016 | Tick 003] (Voices: 2 / Channels: 4) (Speed: 6 / BPM: 125 / GVol: 64)
+  Ch 01: ON | Inst 02 | Samp 00 | Pos     4.000 | dU   0.329 | Vol   0.531 | Pan 204 (204) | Sus Y | Env V:000 P:000 | Eff 00 00
+  Ch 03: ON | Inst 02 | Samp 00 | Pos     4.000 | dU   0.658 | Vol   0.531 | Pan 051 (051) | Sus Y | Env V:000 P:000 | Eff 00 00
+

@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::{fmt, fs};
 use crate::{SimpleResult};
 use crate::instrument::{Instrument, Sample};
@@ -8,7 +9,7 @@ use crate::pattern::Pattern;
 use crate::channel_state::channel_state::clamp;
 use crate::module_reader::stm::read_stm;
 use crate::module_reader::it::read_it;
-use crate::channel_state::ChannelState;
+use crate::channel_state::Voice;
 use crate::song_state::SongHandle;
 use std::io::{Cursor, Seek, SeekFrom};
 
@@ -17,9 +18,10 @@ mod module;
 mod s3m;
 mod stm;
 mod it;
+mod it_compression;
 
-#[derive(Debug, Copy, Clone)]
-pub(crate) enum SongType {
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SongType {
     XM,
     MOD,
     S3M,
@@ -27,13 +29,17 @@ pub(crate) enum SongType {
     IT,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub(crate) enum FrequencyType {
+#[derive(PartialEq, Debug, Clone, Copy, Serialize)]
+pub enum FrequencyType {
     AMIGA,
     LINEAR
 }
-pub(crate) fn is_note_valid(note: u8) -> bool {
-    note > 0 && note < 97
+
+pub(crate) fn is_note_valid(note: u8, song_type: SongType) -> bool {
+    match song_type {
+        SongType::IT => note > 0 && note <= 120,
+        _ => note > 0 && note <= 96,
+    }
 }
 
 #[derive(Clone)]
@@ -76,7 +82,7 @@ pub struct Patterns {
 }
 
 impl Patterns {
-    fn new(row_count: usize, channel_count: usize) -> Self {
+    pub fn new(row_count: usize, channel_count: usize) -> Self {
         Self {
             rows: vec![Row::new(channel_count); row_count],
         }
@@ -87,22 +93,29 @@ impl Patterns {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SongData {
-    pub(crate)      id:                 String,
-    pub(crate)      name:               String,
-    pub(crate)      song_type:          SongType,
-    pub(crate)      tracker_name:       String,
-    pub(crate)      song_length:        u16,
-    pub(crate)      restart_position:   u16,
-    pub(crate)      channel_count:      u16,
-    pub(crate)      patterns:           Vec<Patterns>,
-    pub(crate)      instrument_count:   u16,
-    pub(crate)      frequency_type:     FrequencyType,
-    pub(crate)      tempo:              u16,
-    pub(crate)      bpm:                u16,
-    pub(crate)      pattern_order:      Vec<u8>,
-    pub(crate)      instruments:        Vec<Instrument>,
-    pub(crate)      use_amiga:          bool,
-    pub(crate)      song_message:       String,
+    pub                     id:                 String,
+    pub                     name:               String,
+    pub                     song_type:          SongType,
+    pub                     tracker_name:       String,
+    pub                     song_length:        u16,
+    pub                     restart_position:   u16,
+    pub                     channel_count:      u16,
+    pub                     patterns:           Vec<Patterns>,
+    pub                     instrument_count:   u16,
+    pub                     frequency_type:     FrequencyType,
+    pub                     tempo:              u16,
+    pub                     bpm:                u16,
+    pub                     pattern_order:      Vec<u8>,
+    pub                     instruments:        Vec<Instrument>,
+    pub                     use_amiga:          bool,
+    pub                     song_message:       String,
+    pub                     initial_channel_volume: [u8; 64],
+    pub                     initial_channel_panning: [u8; 64],
+    pub                     global_volume:           u8,
+    pub                     master_volume:           u8,
+    pub                     mixing_volume:           u8,
+    pub                     old_effects:             bool,
+    pub                     compatible_g:            bool,
 }
 
 impl Default for SongData {
@@ -124,6 +137,13 @@ impl Default for SongData {
             instruments: vec![],
             use_amiga: false,
             song_message: "".to_string(),
+            initial_channel_volume: [64; 64],
+            initial_channel_panning: [128; 64],
+            global_volume: 128,
+            master_volume: 128,
+            mixing_volume: 128,
+            old_effects: false,
+            compatible_g: false,
         }
     }
 }
@@ -137,12 +157,12 @@ impl Default for FrequencyType {
 }
 
 impl SongData {
-    pub(crate) fn get_sample<>(&self, channel: &ChannelState) -> &Sample {
-        &self.get_instrument(channel).samples[channel.voice.sample]
+    pub(crate) fn get_sample(&self, voice: &Voice) -> &Sample {
+        &self.instruments[voice.instrument].samples[voice.sample]
     }
 
-    pub(crate) fn get_instrument(&self, channel: &ChannelState) -> &Instrument {
-        &self.instruments[channel.voice.instrument]
+    pub(crate) fn get_instrument(&self, voice: &Voice) -> &Instrument {
+        &self.instruments[voice.instrument]
     }
 }
 

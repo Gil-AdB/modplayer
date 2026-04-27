@@ -20,17 +20,17 @@ all: build lib wasm
 
 # Build native binary
 build:
-	cargo build --release -p modplayer-bin
+	CMAKE_POLICY_VERSION_MINIMUM=3.5 PATH=$(PATH):/usr/local/bin:/opt/homebrew/bin cargo build --release -p modplayer-bin
 
 # Build C static library (used by Revival project)
 lib:
-	cargo build --release -p modplayer-lib
+	CMAKE_POLICY_VERSION_MINIMUM=3.5 PATH=$(PATH):/usr/local/bin:/opt/homebrew/bin cargo build --release -p modplayer-lib
 	@echo ""
 	@echo "Static library built: target/release/libmodplayer.a"
 
 # Build WASM package
 wasm:
-	wasm-pack build modplayer-wasm --target bundler --release
+	CMAKE_POLICY_VERSION_MINIMUM=3.5 PATH=$(PATH):/usr/local/bin:/opt/homebrew/bin wasm-pack build modplayer-wasm --target bundler --release
 	@echo ""
 	@echo "WASM package built in modplayer-wasm/pkg/"
 

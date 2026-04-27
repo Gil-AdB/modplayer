@@ -82,6 +82,13 @@
         });
 
 
+        let mut initial_channel_panning = [128u8; 64];
+        if num_channels == 4 {
+            for i in 0..4 {
+                initial_channel_panning[i] = if i == 0 || i == 3 { 51 } else { 204 };
+            }
+        }
+
         Ok(SongData {
             id: id_str.trim().to_string(),
             name: name.trim().to_string(),
@@ -99,6 +106,13 @@
             instruments,
             use_amiga: true,
             song_message: "".to_string(),
+            initial_channel_volume: [64; 64],
+            initial_channel_panning,
+            global_volume:           64,
+            master_volume:           128,
+            mixing_volume:           128,
+            old_effects: true,
+            compatible_g: true,
         })
     }
 
@@ -138,9 +152,7 @@
                         }
                     }
 
-                    let e = fix_effects(effect, effect_param);
-                    effect = e.0;
-                    effect_param = e.1;
+
 
                     channels.push(
                         Pattern {
@@ -160,44 +172,6 @@
         Ok(patterns)
     }
 
-    fn fix_effects(e: u8, p: u8) -> (u8, u8) {
-        let mut effect = e;
-        let mut effect_param = p;
-
-        if effect == 0xC {              // Clamp Volume to 64
-            if effect_param > 64 {
-                effect_param = 64;
-            }
-        } else if effect == 0x1 {       // No porta memory
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0x2 {       // No porta memory
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0x5 {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0x3;
-            }
-        } else if effect == 0x6 {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0x4;
-            }
-        } else if effect == 0xA {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0xE {       // No porta & volume slide memory
-            // check if certain E commands are empty
-            if effect_param == 0x10 || effect_param == 0x20 || effect_param == 0xA0 || effect_param == 0xB0
-            {
-                effect = 0;
-                effect_param = 0;
-            }
-        }
-        return (effect, effect_param)
-    }
 
     fn read_sample<R: Read>(file: &mut R) -> SimpleResult<Sample> {
         let name = file.read_string(22);
@@ -248,6 +222,8 @@
             panning: 128,
             relative_note: 0,
             name,
+            global_volume: 64,
+            surround: false,
             is_ping_pong: false,
             original_loop_end: 0,
             data: vec![],
@@ -269,6 +245,7 @@
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
+            instrument.sample_indexes = (0..120).map(|i| (i + 1, 0)).collect();
             instruments.push(instrument);
         }
         Ok(instruments)

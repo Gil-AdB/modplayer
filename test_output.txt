@@ -1,0 +1,56 @@
+
+running 18 tests
+test it_fidelity_tests::test_it_note_limit_acceptance ... ok
+test it_fidelity_tests::test_mod_note_limit_rejection ... ok
+test it_fidelity_tests::test_xm_note_limit_rejection ... ok
+test module_reader::s3m::tests::test_read_u24_s3m ... ok
+test song_state::tests::test_song_handle_drop ... ok
+test tables::tests::verify_linear_periods ... ok
+test tests::it_works ... ok
+test channel_state::channel_state::tests::test_tremor ... ok
+test it_fidelity_tests::test_it_volume_scaling ... ok
+test it_fidelity_tests::test_it_voice_deactivation ... ok
+test it_mapping_tests::tests::test_it_sample_panning ... ok
+test song_state::tests::test_song_state_leak ... ok
+test it_fidelity_tests::test_it_note_trigger_frequency ... ok
+test it_fidelity_tests::test_it_nna_continue ... ok
+test it_fidelity_tests::test_it_nna_note_off ... ok
+test it_mapping_tests::tests::test_it_keyboard_mapping ... ok
+test it_fidelity_tests::test_it_note_off_cut_remapped ... ok
+test channel_state::channel_state::tests::test_glissando ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 1 test
+test debug_it_patterns ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 3 tests
+test test_pattern_break_it ... ok
+test test_pattern_break_bcd_mod ... ok
+test test_pattern_jump_s3m ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test test_openmpt_amiga_limits ... ok
+test test_milky ... ok
+test test_openmpt_spacedeb ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 1 test
+test test_2nd_reality_s3m_artifacts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

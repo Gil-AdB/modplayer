@@ -36,13 +36,15 @@ pub struct Sample {
     pub panning: u8,
     pub relative_note: i8,
     pub name: String,
+    pub global_volume: u8,
+    pub surround: bool,
     pub is_ping_pong: bool,
     pub original_loop_end: u32,
     pub data: Vec<f32>
 }
 
 impl Sample {
-    fn new() -> Sample {
+    pub fn new() -> Sample {
         Sample {
             length: 0,
             loop_start: 0,
@@ -55,27 +57,29 @@ impl Sample {
             panning: 0,
             relative_note: 0,
             name: "".to_string(),
+            global_volume: 64,
+            surround: false,
             is_ping_pong: false,
             original_loop_end: 0,
             data: vec![]
         }
     }
 
-    fn unpack_i16(mut data: Vec<i16>) -> Vec<i16> {
+    pub fn unpack_i16(mut data: Vec<i16>) -> Vec<i16> {
         for i in 1..data.len() {
             data[i] = (Wrapping(data[i - 1]) + Wrapping(data[i])).0;
         }
         data
     }
 
-    fn unpack_i8(mut data: Vec<i8>) -> Vec<i8> {
+    pub fn unpack_i8(mut data: Vec<i8>) -> Vec<i8> {
         for i in 1..data.len() {
             data[i] = (Wrapping(data[i - 1]) + Wrapping(data[i])).0;
         }
         data
     }
 
-    fn upsamplei8(data: Vec<i8>) -> Vec<i16> {
+    pub fn upsamplei8(data: Vec<i8>) -> Vec<i16> {
         let mut result = vec!(0i16; data.len());
         result.reserve_exact(data.len() as usize);
         for i in 0..data.len() {
@@ -84,7 +88,7 @@ impl Sample {
         result
     }
 
-    fn upsampleu8(data: Vec<u8>) -> Vec<i16> {
+    pub fn upsampleu8(data: Vec<u8>) -> Vec<i16> {
         let mut result = vec!(0i16; data.len());
         result.reserve_exact(data.len() as usize);
         for i in 0..data.len() {
@@ -94,7 +98,7 @@ impl Sample {
     }
 
 
-    fn upsamplei16(data: Vec<i16>) -> Vec<f32> {
+    pub fn upsamplei16(data: Vec<i16>) -> Vec<f32> {
         let mut result = vec!(0.0f32; data.len());
         result.reserve_exact(data.len() as usize);
         for i in 0..data.len() {
@@ -138,7 +142,7 @@ impl Sample {
         Ok(())
     }
 
-    pub(crate) fn setup_loops_and_padding(&mut self) {
+    pub fn setup_loops_and_padding(&mut self) {
         if self.length == 0 || self.data.is_empty() { return; }
 
         self.original_loop_end = self.loop_end;
@@ -223,25 +227,40 @@ impl VibratoEnvelope {
 pub struct Instrument {
     pub name: String,
     pub idx: u8,
-    pub sample_indexes: Vec<u8>,
+    pub sample_indexes: Vec<(u8, u8)>, // (note, sample_idx) - Keyboard mapping
     pub volume_envelope: Envelope,
     pub panning_envelope: Envelope,
+    pub pitch_envelope: Envelope,
     pub vibrato_envelope: VibratoEnvelope,
     pub volume_fadeout: u16,
-
+    pub nna: u8,
+    pub dct: u8,
+    pub dca: u8,
+    pub global_volume: u8,
+    pub initial_filter_cutoff: u8,
+    pub initial_filter_resonance: u8,
+    pub is_filter_envelope: bool,
     pub samples: Vec<Sample>,
 }
 
 impl Instrument {
-    pub(crate) fn new() -> Instrument {
+    pub fn new() -> Instrument {
         Instrument {
             name: "".to_string(),
             idx: 0,
-            sample_indexes: vec![0u8; 96],
+            sample_indexes: vec![(0u8, 0u8); 120],
             volume_envelope: Envelope::new(),
             panning_envelope: Envelope::new(),
+            pitch_envelope: Envelope::new(),
             vibrato_envelope: VibratoEnvelope::new(),
             volume_fadeout: 0,
+            nna: 0,
+            dct: 0,
+            dca: 0,
+            global_volume: 64,
+            initial_filter_cutoff: 127,
+            initial_filter_resonance: 0,
+            is_filter_envelope: false,
             samples: vec![Sample::new(); 1]
         }
     }
