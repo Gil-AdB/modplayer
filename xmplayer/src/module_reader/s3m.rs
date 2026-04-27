@@ -125,6 +125,15 @@
             }
         }
 
+        // Remap logical S3M channels to internal packed indices
+        let mut final_panning = [128u8; 64];
+        for i in 0..32 {
+            if channel_map[i] != 255 {
+                final_panning[channel_map[i] as usize] = initial_channel_panning[i];
+            }
+        }
+        let initial_channel_panning = final_panning;
+
         let instruments = read_instruments(file, &instrument_ptrs)?;
         let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map)?;
 

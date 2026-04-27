@@ -876,6 +876,7 @@ impl ModuleBackend for S3MBackend {
                 }
                 
                 let is_note_cut = pattern.note == 254;
+                let is_note_off = pattern.note == 255;
 
                 if is_note_cut { // Note Cut
                     channel.on = false;
@@ -883,6 +884,11 @@ impl ModuleBackend for S3MBackend {
                         r.voices[v_idx].sustained = false;
                         r.voices[v_idx].on = false;
                         r.voices[v_idx].volume.output_volume = 0.0;
+                    }
+                } else if is_note_off { // Note Off
+                    channel.on = false;
+                    if let Some(v_idx) = channel.voice_idx {
+                        r.voices[v_idx].key_off(&r.song_data.instruments, false);
                     }
                 } else if pattern.note != 0 {
                     if pattern.effect == 7 { // G: Tone Porta - don't retrigger
@@ -970,8 +976,12 @@ impl ModuleBackend for S3MBackend {
                         }
                     }
                     4 => { // D: Volume Slide
-                        let x = pattern.effect_param >> 4;
-                        let y = pattern.effect_param & 0x0F;
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.last_volume_slide; }
+                        channel.last_volume_slide = param;
+
+                        let x = param >> 4;
+                        let y = param & 0x0F;
                         if x == 0x0F && y != 0 { // Fine slide up
                             if first_tick { voice.volume.set_volume(voice.volume.volume as i32 + y as i32); }
                         } else if x != 0 && y == 0x0F { // Fine slide down
@@ -983,8 +993,11 @@ impl ModuleBackend for S3MBackend {
                         }
                     }
                     5 => { // E: Porta Down
-                        if pattern.effect_param != 0 { channel.last_porta_down = (pattern.effect_param as u16) << 2; }
-                        let amount = (channel.last_porta_down >> 2) as u8;
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = (channel.last_porta_down >> 2) as u8; }
+                        channel.last_porta_down = (param as u16) << 2;
+
+                        let amount = param;
                         if amount >= 0xF0 { // Extra fine
                             if first_tick { channel.note.period = channel.note.period.saturating_add((amount & 0x0F) as u16); }
                         } else if amount >= 0xE0 { // Fine
@@ -995,8 +1008,11 @@ impl ModuleBackend for S3MBackend {
                         channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
                     }
                     6 => { // F: Porta Up
-                        if pattern.effect_param != 0 { channel.last_porta_up = (pattern.effect_param as u16) << 2; }
-                        let amount = (channel.last_porta_up >> 2) as u8;
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = (channel.last_porta_up >> 2) as u8; }
+                        channel.last_porta_up = (param as u16) << 2;
+
+                        let amount = param;
                         if amount >= 0xF0 { // Extra fine
                             if first_tick { channel.note.period = channel.note.period.saturating_sub((amount & 0x0F) as u16); }
                         } else if amount >= 0xE0 { // Fine
@@ -1007,6 +1023,9 @@ impl ModuleBackend for S3MBackend {
                         channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
                     }
                     7 => { // G: Porta to Note
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.porta_to_note.speed as u8 / 4; }
+                        
                         if first_tick && pattern.note != 0 {
                             let inst_idx = channel.last_instrument;
                             if inst_idx < r.song_data.instruments.len() {
@@ -1018,10 +1037,13 @@ impl ModuleBackend for S3MBackend {
                                 }
                             }
                         }
-                        channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables);
+                        channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, param, r.compatible_g, r.rate, r.frequency_tables);
                     }
                     8 => { // H: Vibrato
-                        channel.vibrato(Some(voice), first_tick, pattern.get_x(), pattern.get_y(), true, r.rate, r.frequency_tables);
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.last_vibrato_param; }
+                        channel.last_vibrato_param = param;
+                        channel.vibrato(Some(voice), first_tick, param >> 4, param & 0x0F, true, r.rate, r.frequency_tables);
                     }
                     9 => { // I: Tremor
                         channel.tremor = pattern.effect_param;
@@ -1033,12 +1055,18 @@ impl ModuleBackend for S3MBackend {
                         }
                     }
                     11 => { // K: Vibrato + Volume Slide
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.last_volume_slide; }
+                        channel.last_volume_slide = param;
                         channel.vibrato(Some(voice), first_tick, 0, 0, true, r.rate, r.frequency_tables);
-                        channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param);
+                        channel.volume_slide_main(Some(voice), first_tick, param);
                     }
                     12 => { // L: Tone Porta + Volume Slide
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.last_volume_slide; }
+                        channel.last_volume_slide = param;
                         channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables);
-                        channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param);
+                        channel.volume_slide_main(Some(voice), first_tick, param);
                     }
                     13 => { // M: Channel Volume
                         if first_tick && pattern.effect_param <= 64 {
@@ -1049,20 +1077,29 @@ impl ModuleBackend for S3MBackend {
                         channel.channel_volume_slide(first_tick, pattern.effect_param);
                     }
                     15 => { // O: Sample Offset
-                        if first_tick && pattern.effect_param != 0 {
-                            voice.sample_position = (pattern.effect_param as f32) * 256.0;
+                        let mut param = pattern.effect_param as u32;
+                        if param == 0 { param = channel.last_sample_offset; }
+                        channel.last_sample_offset = param;
+                        if first_tick {
+                            voice.sample_position = (param as f32) * 256.0;
                         }
                     }
                     16 => { // P: Panning Slide
                         channel.panning_slide(Some(voice), first_tick, pattern.effect_param);
                     }
                     17 => { // Q: Retrig
-                        if pattern.effect_param != 0 {
-                            channel.retrig(Some(voice), &r.song_data.instruments, *r.tick, pattern.get_y(), 0);
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.multi_retrig_volume; } // Reuse retrig memory
+                        channel.multi_retrig_volume = param;
+                        if param != 0 {
+                            channel.retrig(Some(voice), &r.song_data.instruments, *r.tick, param & 0x0F, 0);
                         }
                     }
                     18 => { // R: Tremolo
-                        channel.tremolo(Some(voice), first_tick, pattern.get_x(), pattern.get_y());
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.last_panning_speed; } // Reuse panning slide memory? No, S3M has own tremolo memory
+                        channel.last_panning_speed = param;
+                        channel.tremolo(Some(voice), first_tick, param >> 4, param & 0x0F);
                     }
                     19 => { // S: Special
                         let x = pattern.effect_param >> 4;
@@ -1089,7 +1126,10 @@ impl ModuleBackend for S3MBackend {
                         }
                     }
                     21 => { // U: Fine Vibrato
-                        channel.vibrato(Some(voice), first_tick, pattern.get_x(), pattern.get_y(), true, r.rate, r.frequency_tables);
+                        let mut param = pattern.effect_param;
+                        if param == 0 { param = channel.last_vibrato_param; }
+                        channel.last_vibrato_param = param;
+                        channel.vibrato(Some(voice), first_tick, param >> 4, param & 0x0F, true, r.rate, r.frequency_tables);
                     }
                     22 => { // V: Set Global Volume
                         r.global_volume.set_volume(first_tick, pattern.effect_param);
@@ -1108,7 +1148,7 @@ impl ModuleBackend for S3MBackend {
         }
 
         // 2. Process all active voices (Envelopes and Final Volume)
-        let divisor = 128.0;
+        let divisor = 64.0;
         let global_vol_f32 = r.global_volume.volume as f32 / divisor;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
