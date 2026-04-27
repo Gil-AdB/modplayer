@@ -19,7 +19,7 @@ fn minimal_song_data(song_type: SongType) -> SongData {
     song_data.channel_count = 1;
     song_data.tempo = 6;
     song_data.bpm = 125;
-    song_data.frequency_type = FrequencyType::LINEAR;
+    song_data.frequency_type = if song_type == SongType::XM { FrequencyType::LINEAR } else { FrequencyType::AMIGA };
     
     // Instrument 0 is dummy/empty
     song_data.instruments.push(Instrument::new());
@@ -233,7 +233,8 @@ fn test_key_off() {
         let mut adapter = InterleavedBufferAdaptar { buf: &mut dummy_buffer };
         let mut song = song_arc.lock().unwrap();
         song.get_next_tick(&mut adapter, &mut rx);
-        assert!(dump_tick(&song).voices[0].sustained == false);
+        let dump = dump_tick(&song);
+    assert!(dump.voices[0].sustained == false);
     }
 }
 
@@ -273,7 +274,7 @@ fn test_panning_slide() {
         song.get_next_tick(&mut adapter, &mut rx);
         let dump = dump_tick(&song);
         // 128 + 4 = 132
-        assert_eq!(dump.voices[0].panning, 132);
+    assert_eq!(dump.voices[0].panning, 132);
     }
 }
 
@@ -301,4 +302,53 @@ fn test_envelope_position() {
     song.get_next_tick(&mut adapter, &mut rx);
     let dump = dump_tick(&song);
     assert_eq!(dump.voices[0].volume_envelope_pos, 41);
+}
+#[test]
+fn test_s3m_note_off_cut() {
+    let mut song_data = minimal_song_data(SongType::S3M);
+    song_data.tempo = 3;
+
+    let mut patterns = Patterns::new(3, 1);
+    
+    // Row 0: Trigger C-4
+    patterns.rows[0].channels[0].note = 49;
+    patterns.rows[0].channels[0].instrument = 1;
+    
+    // Row 1: Note Off (==) - 253
+    patterns.rows[1].channels[0].note = 253;
+    
+    // Row 2: Note Cut (^^) - 254
+    patterns.rows[2].channels[0].note = 254;
+    
+    song_data.patterns.push(patterns);
+    song_data.pattern_order = vec![0];
+    song_data.song_length = 1;
+    song_data.song_type = SongType::S3M;
+
+    let (song_arc, mut rx) = create_test_song_handle(song_data);
+    let mut dummy_buffer = vec![0.0f32; 2000];
+
+    // Row 0 Tick 0: Trigger
+    {
+        let mut adapter = InterleavedBufferAdaptar { buf: &mut dummy_buffer };
+        let mut song = song_arc.lock().unwrap();
+        song.get_next_tick(&mut adapter, &mut rx);
+        let dump = dump_tick(&song);
+        assert!(dump.voices.iter().any(|v| v.is_on && v.channel_idx == 0));
+        
+        // Finish Row 0 (Ticks 1-5)
+        for _ in 1..6 {
+            song.get_next_tick(&mut adapter, &mut rx);
+        }
+    }
+
+    // Row 1 Tick 0: Note Off (==)
+    {
+        let mut adapter = InterleavedBufferAdaptar { buf: &mut dummy_buffer };
+        let mut song = song_arc.lock().unwrap();
+        song.get_next_tick(&mut adapter, &mut rx);
+        let dump = dump_tick(&song);
+        // S3M Note Off should kill the voice if no envelopes
+        assert!(!dump.voices.iter().any(|v| v.is_on && v.channel_idx == 0));
+    }
 }

@@ -49,7 +49,7 @@ fn test_pattern_jump_s3m() {
         note: 0,
         instrument: 0,
         volume: 255,
-        effect: 0x0B, // S3M B
+        effect: 0x82, // S3M B
         effect_param: 0x02,
     };
     builder.set_pattern_row(0, 0, 0, pattern_jump);

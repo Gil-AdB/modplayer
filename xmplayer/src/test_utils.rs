@@ -95,7 +95,7 @@ pub struct SongTester {
 impl SongTester {
     pub fn new(song_data: SongData) -> Self {
         let (_reader, writer) = TripleBuffer::<PlayData>::new().split();
-        let song = Song::new(&song_data, writer, 44100.0);
+        let song = Song::new(&song_data, writer, 48000.0);
         Self { song }
     }
 

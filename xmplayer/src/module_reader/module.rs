@@ -111,8 +111,8 @@
             global_volume:           64,
             master_volume:           128,
             mixing_volume:           128,
-            old_effects: false,
-            compatible_g: false,
+            old_effects: true,
+            compatible_g: true,
         })
     }
 
@@ -152,9 +152,7 @@
                         }
                     }
 
-                    let e = fix_effects(effect, effect_param);
-                    effect = e.0;
-                    effect_param = e.1;
+
 
                     channels.push(
                         Pattern {
@@ -174,44 +172,6 @@
         Ok(patterns)
     }
 
-    fn fix_effects(e: u8, p: u8) -> (u8, u8) {
-        let mut effect = e;
-        let mut effect_param = p;
-
-        if effect == 0xC {              // Clamp Volume to 64
-            if effect_param > 64 {
-                effect_param = 64;
-            }
-        } else if effect == 0x1 {       // No porta memory
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0x2 {       // No porta memory
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0x5 {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0x3;
-            }
-        } else if effect == 0x6 {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0x4;
-            }
-        } else if effect == 0xA {       // No volume slide memory
-            if effect_param == 0 {
-                effect = 0;
-            }
-        } else if effect == 0xE {       // No porta & volume slide memory
-            // check if certain E commands are empty
-            if effect_param == 0x10 || effect_param == 0x20 || effect_param == 0xA0 || effect_param == 0xB0
-            {
-                effect = 0;
-                effect_param = 0;
-            }
-        }
-        return (effect, effect_param)
-    }
 
     fn read_sample<R: Read>(file: &mut R) -> SimpleResult<Sample> {
         let name = file.read_string(22);

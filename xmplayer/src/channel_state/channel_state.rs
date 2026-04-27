@@ -36,12 +36,7 @@ pub struct PortaToNoteState {
 impl PortaToNoteState {
     pub(crate) fn new() -> PortaToNoteState {
         PortaToNoteState {
-            target_note: Note{
-                note: 0,
-                finetune: 0,
-                period: 0,
-                original_note: 0
-            },
+            target_note: Note::new(),
             speed: 0
         }
     }
@@ -428,6 +423,7 @@ pub struct Note {
     pub note:            u8,
     pub finetune:        i8,
     pub period:          u16,
+    pub base_period:     u16,
     pub original_note:   u8,
 }
 
@@ -438,6 +434,7 @@ impl Note {
             note: 0,
             finetune: 0,
             period: 0,
+            base_period: 0,
             original_note: 0,
         }
     }
@@ -448,6 +445,7 @@ impl Note {
         self.original_note = original_note;
         self.finetune = finetune;
         self.period = self.note_to_period(note, finetune, frequency_tables);
+        self.base_period = self.period;
     }
 
     pub(crate) fn note_to_period(&self, note: u8, finetune: i8, frequency_tables: &AudioTables) -> u16 {
@@ -615,6 +613,11 @@ impl Note {
         return (note2period[(tmp_period >>1) as usize], before_clamp);
     }
 
+
+    pub(crate) fn base_frequency(&self, _semitone: bool, tables: &AudioTables) -> f32 {
+        if self.base_period == 0 { return 0.0; }
+        tables.d_period2hz_tab[self.base_period as usize] as f32
+    }
 
     pub(crate) fn frequency(&self, period_shift: i16, _semitone: bool, frequency_tables: &AudioTables) -> f32 {
         // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
