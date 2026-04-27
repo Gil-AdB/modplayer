@@ -254,9 +254,6 @@
                         if pattern_data & 128 == 128 {
                         effect = file.read_u8()?;
                         effect_param = file.read_u8()?;
-                        if effect > 0 {
-                            effect += 0x80;
-                        }
                     }
 
                     if channel_num >= channel_count as u8 { continue; }

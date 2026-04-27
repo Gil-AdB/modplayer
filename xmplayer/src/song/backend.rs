@@ -678,20 +678,19 @@ impl ModuleBackend for XmBackend {
     }
 }
 
-pub struct S3MModBackend {}
-impl S3MModBackend {
+pub struct ModBackend {}
+impl ModBackend {
     pub fn new() -> Self { Self {} }
 }
 
-impl ModuleBackend for S3MModBackend {
+impl ModuleBackend for ModBackend {
     fn process_tick(&mut self, r: &mut SongPlaybackResources) {
         let first_tick = *r.tick == 0;
-        let is_s3m = r.song_data.song_type == SongType::S3M;
 
         for i in 0..r.channels.len() {
             let channel = &mut r.channels[i];
             
-            // Ensure every channel has a voice assigned (1:1 for S3M/MOD)
+            // Ensure every channel has a voice assigned (1:1 for MOD)
             if channel.voice_idx.is_none() {
                 channel.voice_idx = Some(i);
                 r.voices[i].channel_idx = i;
@@ -706,17 +705,13 @@ impl ModuleBackend for S3MModBackend {
 
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
             let pattern = &patterns.rows[*r.row].channels[i];
-            if i == 0 {
-                // println!("S3M_CHANNEL_0: note={}, inst={}, vol={}, effect={}, param={}", pattern.note, pattern.instrument, pattern.volume, pattern.effect, pattern.effect_param);
-            }
 
             if first_tick {
                 if pattern.instrument != 0 {
                     channel.last_instrument = pattern.instrument as usize;
                 }
                 
-                let is_note_cut = if is_s3m { pattern.note == 254 } else { pattern.note == 121 };
-                let is_note_off = if is_s3m { pattern.note == 253 } else { pattern.note == 97 };
+                let is_note_cut = pattern.note == 121;
 
                 if is_note_cut { // Note Cut
                     channel.on = false;
@@ -724,6 +719,165 @@ impl ModuleBackend for S3MModBackend {
                         r.voices[v_idx].on = false;
                         r.voices[v_idx].volume.output_volume = 0.0;
                     }
+                } else if pattern.note != 0 {
+                    channel.on = true;
+                    let inst_idx = channel.last_instrument;
+                    if inst_idx < r.song_data.instruments.len() {
+                        let instrument = &r.song_data.instruments[inst_idx];
+                        if !instrument.samples.is_empty() {
+                            let sample_idx = 0;
+                            let voice_idx = channel.voice_idx.unwrap_or(i);
+                            let voice = &mut r.voices[voice_idx];
+                            voice.on = true;
+                            voice.channel_idx = i;
+                            voice.instrument = inst_idx;
+                            voice.sample = sample_idx;
+                            voice.sustained = true;
+                            voice.sample_position = 4.0;
+                            voice.loop_started = false;
+                            voice.ping = true;
+                            voice.volume.retrig(instrument.samples[sample_idx].volume as i32);
+                            voice.panning.panning = r.song_data.initial_channel_panning[i];
+                            
+                            voice.trigger_note(&r.song_data.instruments);
+                            
+                            let sample = &instrument.samples[sample_idx];
+                            let real_note = (pattern.note as i16 + sample.relative_note as i16) as u8;
+                            channel.note.set_note(real_note, sample.finetune, pattern.note, r.frequency_tables);
+                            channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+
+                            channel.voice_idx = Some(voice_idx);
+                        }
+                    }
+                }
+            }
+
+            if let Some(v_idx) = channel.voice_idx {
+                let voice = &mut r.voices[v_idx];
+                
+                let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
+                let channel_vol_f32 = channel.channel_volume as f32 / 64.0;
+
+                voice.update_output_volume(global_vol_f32, channel_vol_f32, 1.0);
+
+                // MOD Effects
+                match pattern.effect {
+                    0x0 => { if pattern.effect_param != 0 { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y()); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); } }
+                    0x1 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); }
+                    0x2 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); }
+                    0x3 => { channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables); }
+                    0x4 => { channel.vibrato(Some(voice), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables); }
+                    0x5 => { channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables); channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param); }
+                    0x6 => { channel.vibrato(Some(voice), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables); channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param); }
+                    0x7 => { channel.tremolo(Some(voice), first_tick, pattern.get_x(), pattern.get_y()); }
+                    0x8 => { voice.panning.set_panning(pattern.effect_param as i32); }
+                    0x9 => { if first_tick { voice.sample_position = (pattern.effect_param as f32) * 256.0; } }
+                    0xA => { channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param); }
+                    0xB => { if first_tick { r.pattern_change.set_jump(first_tick, pattern.effect_param); } }
+                    0xC => { if first_tick { voice.volume.set_volume(pattern.effect_param as i32); } }
+                    0xD => { if first_tick { r.pattern_change.set_break(r.song_data.song_type, first_tick, pattern.effect_param); } }
+                    0xE => { // Extended
+                        let x = pattern.get_x();
+                        let y = pattern.get_y();
+                        match x {
+                            0x1 => { channel.fine_porta_up(r.song_data.song_type, first_tick, y); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); }
+                            0x2 => { channel.fine_porta_down(r.song_data.song_type, first_tick, y); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); }
+                            0x6 => { 
+                                if first_tick {
+                                    if y == 0 {
+                                        channel.loop_row = *r.row as u8;
+                                    } else {
+                                        if channel.loop_count == 0 {
+                                            channel.loop_count = y;
+                                        } else {
+                                            channel.loop_count -= 1;
+                                        }
+                                        
+                                        if channel.loop_count > 0 {
+                                            r.pattern_change.is_loop = true;
+                                            r.pattern_change.row = channel.loop_row;
+                                        }
+                                    }
+                                }
+                            }
+                            0x9 => { if first_tick { channel.retrig(Some(voice), &r.song_data.instruments, *r.tick, y, 0); } }
+                            0xA => { if first_tick { channel.volume.set_volume(channel.volume.volume as i32 + y as i32); } }
+                            0xB => { if first_tick { channel.volume.set_volume(channel.volume.volume as i32 - y as i32); } }
+                            0xC => { if *r.tick == y as u32 { channel.on = false; voice.on = false; voice.volume.output_volume = 0.0; } }
+                            0xE => { if first_tick { *r.row_delay = y as usize; } }
+                            _ => {}
+                        }
+                    }
+                    0xF => {
+                        if first_tick {
+                            if pattern.effect_param > 0 && pattern.effect_param < 32 {
+                                *r.speed = pattern.effect_param as u32;
+                            } else if pattern.effect_param >= 32 {
+                                r.bpm.update(pattern.effect_param as u32, r.rate);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 2. Process all active voices (Envelopes and Final Volume)
+        let divisor = 64.0;
+        let global_vol_f32 = r.global_volume.volume as f32 / divisor;
+        for (v_idx, voice) in r.voices.iter_mut().enumerate() {
+            if !voice.on { continue; }
+            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            voice.update_envelopes(&r.song_data.instruments, r.rate);
+            voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
+            
+            let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
+            
+            if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
+                voice.on = false;
+            } else if !is_host_voice && voice.volume.output_volume < 0.00001 {
+                voice.on = false;
+            }
+        }
+    }
+}
+
+pub struct S3MBackend {}
+impl S3MBackend {
+    pub fn new() -> Self { Self {} }
+}
+
+impl ModuleBackend for S3MBackend {
+    fn process_tick(&mut self, r: &mut SongPlaybackResources) {
+        let first_tick = *r.tick == 0;
+
+        for i in 0..r.channels.len() {
+            let channel = &mut r.channels[i];
+            
+            // Ensure every channel has a voice assigned (1:1 for S3M)
+            if channel.voice_idx.is_none() {
+                channel.voice_idx = Some(i);
+                r.voices[i].channel_idx = i;
+            }
+
+            // Lazy cleanup
+            if let Some(v_idx) = channel.voice_idx {
+                if r.voices[v_idx].channel_idx != i {
+                    channel.voice_idx = None;
+                }
+            }
+
+            let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
+            let pattern = &patterns.rows[*r.row].channels[i];
+
+            if first_tick {
+                if pattern.instrument != 0 {
+                    channel.last_instrument = pattern.instrument as usize;
+                }
+                
+                let is_note_cut = pattern.note == 254;
+
+                if is_note_cut { // Note Cut
                     channel.on = false;
                     if let Some(v_idx) = channel.voice_idx {
                         r.voices[v_idx].sustained = false;
@@ -731,8 +885,7 @@ impl ModuleBackend for S3MModBackend {
                         r.voices[v_idx].volume.output_volume = 0.0;
                     }
                 } else if pattern.note != 0 {
-                    let s3m_effect = if pattern.effect >= 0x81 { pattern.effect - 0x80 } else { 0 };
-                    if s3m_effect == 7 { // G: Tone Porta - don't retrigger
+                    if pattern.effect == 7 { // G: Tone Porta - don't retrigger
                         let inst_idx = channel.last_instrument;
                         if inst_idx < r.song_data.instruments.len() {
                             let instrument = &r.song_data.instruments[inst_idx];
@@ -748,7 +901,7 @@ impl ModuleBackend for S3MModBackend {
                         if inst_idx < r.song_data.instruments.len() {
                             let instrument = &r.song_data.instruments[inst_idx];
                             if !instrument.samples.is_empty() {
-                                let sample_idx = 0; // Simplified for S3M
+                                let sample_idx = 0;
                                 let voice_idx = channel.voice_idx.unwrap_or(i);
                                 let voice = &mut r.voices[voice_idx];
                                 voice.on = true;
@@ -781,7 +934,7 @@ impl ModuleBackend for S3MModBackend {
                 
                 let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
                 let channel_vol_f32 = channel.channel_volume as f32 / 64.0;
-                let master_vol_f32 = if is_s3m { r.song_data.master_volume as f32 / 128.0 } else { 1.0 };
+                let master_vol_f32 = r.song_data.master_volume as f32 / 128.0;
 
                 // Volume column processing
                 match pattern.volume {
@@ -800,226 +953,162 @@ impl ModuleBackend for S3MModBackend {
                 voice.update_output_volume(global_vol_f32 * master_vol_f32, channel_vol_f32, 1.0);
 
                 // Effect processing
-                if is_s3m && pattern.effect >= 0x81 {
-                    let s3m_effect = pattern.effect - 0x80;
-                    match s3m_effect {
-                        1 => { // A: Set Speed
-                            if first_tick && pattern.effect_param != 0 {
-                                *r.speed = pattern.effect_param as u32;
+                match pattern.effect {
+                    1 => { // A: Set Speed
+                        if first_tick && pattern.effect_param != 0 {
+                            *r.speed = pattern.effect_param as u32;
+                        }
+                    }
+                    2 => { // B: Pattern Jump
+                        if first_tick {
+                            *r.pattern_change = PatternChange::new_jump(pattern.effect_param as usize);
+                        }
+                    }
+                    3 => { // C: Break to Row
+                        if first_tick {
+                            *r.pattern_change = PatternChange::new_break(pattern.effect_param as usize);
+                        }
+                    }
+                    4 => { // D: Volume Slide
+                        let x = pattern.effect_param >> 4;
+                        let y = pattern.effect_param & 0x0F;
+                        if x == 0x0F && y != 0 { // Fine slide up
+                            if first_tick { voice.volume.set_volume(voice.volume.volume as i32 + y as i32); }
+                        } else if x != 0 && y == 0x0F { // Fine slide down
+                            if first_tick { voice.volume.set_volume(voice.volume.volume as i32 - x as i32); }
+                        } else if x != 0 { // Slide up
+                            if !first_tick { voice.volume.set_volume(voice.volume.volume as i32 + x as i32); }
+                        } else if y != 0 { // Slide down
+                            if !first_tick { voice.volume.set_volume(voice.volume.volume as i32 - y as i32); }
+                        }
+                    }
+                    5 => { // E: Porta Down
+                        if pattern.effect_param != 0 { channel.last_porta_down = (pattern.effect_param as u16) << 2; }
+                        let amount = (channel.last_porta_down >> 2) as u8;
+                        if amount >= 0xF0 { // Extra fine
+                            if first_tick { channel.note.period = channel.note.period.saturating_add((amount & 0x0F) as u16); }
+                        } else if amount >= 0xE0 { // Fine
+                            if first_tick { channel.note.period = channel.note.period.saturating_add(((amount & 0x0F) as u16) * 4); }
+                        } else { // Normal
+                            if !first_tick { channel.note.period = channel.note.period.saturating_add((amount as u16) * 4); }
+                        }
+                        channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+                    }
+                    6 => { // F: Porta Up
+                        if pattern.effect_param != 0 { channel.last_porta_up = (pattern.effect_param as u16) << 2; }
+                        let amount = (channel.last_porta_up >> 2) as u8;
+                        if amount >= 0xF0 { // Extra fine
+                            if first_tick { channel.note.period = channel.note.period.saturating_sub((amount & 0x0F) as u16); }
+                        } else if amount >= 0xE0 { // Fine
+                            if first_tick { channel.note.period = channel.note.period.saturating_sub(((amount & 0x0F) as u16) * 4); }
+                        } else { // Normal
+                            if !first_tick { channel.note.period = channel.note.period.saturating_sub((amount as u16) * 4); }
+                        }
+                        channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+                    }
+                    7 => { // G: Porta to Note
+                        if first_tick && pattern.note != 0 {
+                            let inst_idx = channel.last_instrument;
+                            if inst_idx < r.song_data.instruments.len() {
+                                let instrument = &r.song_data.instruments[inst_idx];
+                                if !instrument.samples.is_empty() {
+                                    let sample = &instrument.samples[0];
+                                    let real_note = (pattern.note as i16 + sample.relative_note as i16) as u8;
+                                    channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
+                                }
                             }
                         }
-                        2 => { // B: Pattern Jump
-                            if first_tick {
-                                *r.pattern_change = PatternChange::new_jump(pattern.effect_param as usize);
-                            }
-                        }
-                        3 => { // C: Break to Row
-                            if first_tick {
-                                *r.pattern_change = PatternChange::new_break(pattern.effect_param as usize);
-                            }
-                        }
-                        4 => { // D: Volume Slide
-                            let x = pattern.effect_param >> 4;
-                            let y = pattern.effect_param & 0x0F;
-                            if x == 0x0F && y != 0 { // Fine slide up
-                                if first_tick { voice.volume.set_volume(voice.volume.volume as i32 + y as i32); }
-                            } else if x != 0 && y == 0x0F { // Fine slide down
-                                if first_tick { voice.volume.set_volume(voice.volume.volume as i32 - x as i32); }
-                            } else if x != 0 { // Slide up
-                                if !first_tick { voice.volume.set_volume(voice.volume.volume as i32 + x as i32); }
-                            } else if y != 0 { // Slide down
-                                if !first_tick { voice.volume.set_volume(voice.volume.volume as i32 - y as i32); }
-                            }
-                        }
-                        5 => { // E: Porta Down
-                            if pattern.effect_param != 0 { channel.last_porta_down = (pattern.effect_param as u16) << 2; }
-                            let amount = (channel.last_porta_down >> 2) as u8;
-                            if amount >= 0xF0 { // Extra fine
-                                if first_tick { channel.note.period = channel.note.period.saturating_add((amount & 0x0F) as u16); }
-                            } else if amount >= 0xE0 { // Fine
-                                if first_tick { channel.note.period = channel.note.period.saturating_add(((amount & 0x0F) as u16) * 4); }
-                            } else { // Normal
-                                if !first_tick { channel.note.period = channel.note.period.saturating_add((amount as u16) * 4); }
-                            }
+                        channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables);
+                    }
+                    8 => { // H: Vibrato
+                        channel.vibrato(Some(voice), first_tick, pattern.get_x(), pattern.get_y(), true, r.rate, r.frequency_tables);
+                    }
+                    9 => { // I: Tremor
+                        channel.tremor = pattern.effect_param;
+                    }
+                    10 => { // J: Arpeggio
+                        if pattern.effect_param != 0 {
+                            channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y());
                             channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
                         }
-                        6 => { // F: Porta Up
-                            if pattern.effect_param != 0 { channel.last_porta_up = (pattern.effect_param as u16) << 2; }
-                            let amount = (channel.last_porta_up >> 2) as u8;
-                            if amount >= 0xF0 { // Extra fine
-                                if first_tick { channel.note.period = channel.note.period.saturating_sub((amount & 0x0F) as u16); }
-                            } else if amount >= 0xE0 { // Fine
-                                if first_tick { channel.note.period = channel.note.period.saturating_sub(((amount & 0x0F) as u16) * 4); }
-                            } else { // Normal
-                                if !first_tick { channel.note.period = channel.note.period.saturating_sub((amount as u16) * 4); }
-                            }
-                            channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
-                        }
-                        7 => { // G: Porta to Note
-                            if first_tick && pattern.note != 0 {
-                                let inst_idx = channel.last_instrument;
-                                if inst_idx < r.song_data.instruments.len() {
-                                    let instrument = &r.song_data.instruments[inst_idx];
-                                    if !instrument.samples.is_empty() {
-                                        let sample = &instrument.samples[0];
-                                        let real_note = (pattern.note as i16 + sample.relative_note as i16) as u8;
-                                        channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
-                                    }
-                                }
-                            }
-                            channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables);
-                        }
-                        8 => { // H: Vibrato
-                            channel.vibrato(Some(voice), first_tick, pattern.get_x(), pattern.get_y(), true, r.rate, r.frequency_tables);
-                        }
-                        9 => { // I: Tremor
-                            // Tremor not fully implemented in ChannelState yet, but we can set the param
-                            channel.tremor = pattern.effect_param;
-                        }
-                        10 => { // J: Arpeggio
-                            if pattern.effect_param != 0 {
-                                channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y());
-                                channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
-                            }
-                        }
-                        11 => { // K: Vibrato + Volume Slide
-                            channel.vibrato(Some(voice), first_tick, 0, 0, true, r.rate, r.frequency_tables);
-                            channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param);
-                        }
-                        12 => { // L: Tone Porta + Volume Slide
-                            channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables);
-                            channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param);
-                        }
-                        13 => { // M: Channel Volume
-                            if first_tick && pattern.effect_param <= 64 {
-                                channel.channel_volume = pattern.effect_param;
-                            }
-                        }
-                        14 => { // N: Channel Volume Slide
-                            channel.channel_volume_slide(first_tick, pattern.effect_param);
-                        }
-                        15 => { // O: Sample Offset
-                            if first_tick && pattern.effect_param != 0 {
-                                voice.sample_position = (pattern.effect_param as f32) * 256.0;
-                            }
-                        }
-                        16 => { // P: Panning Slide
-                            channel.panning_slide(Some(voice), first_tick, pattern.effect_param);
-                        }
-                        17 => { // Q: Retrig
-                            if pattern.effect_param != 0 {
-                                channel.retrig(Some(voice), &r.song_data.instruments, *r.tick, pattern.get_y(), 0);
-                            }
-                        }
-                        18 => { // R: Tremolo
-                            channel.tremolo(Some(voice), first_tick, pattern.get_x(), pattern.get_y());
-                        }
-                        19 => { // S: Special
-                            let x = pattern.effect_param >> 4;
-                            let y = pattern.effect_param & 0x0F;
-                            match x {
-                                0x08 => { // S8x: Set Panning
-                                    if first_tick {
-                                        voice.panning.set_panning((y as i32 * 17).min(255));
-                                    }
-                                }
-                                0x0C => { // SCx: Note Cut
-                                    if *r.tick == y as u32 {
-                                        channel.on = false;
-                                        voice.on = false;
-                                        voice.volume.output_volume = 0.0;
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        20 => { // T: Set BPM
-                            if first_tick && pattern.effect_param >= 0x21 {
-                                r.bpm.update(pattern.effect_param as u32, r.rate);
-                            }
-                        }
-                        21 => { // U: Fine Vibrato
-                            channel.vibrato(Some(voice), first_tick, pattern.get_x(), pattern.get_y(), true, r.rate, r.frequency_tables);
-                        }
-                        22 => { // V: Set Global Volume
-                            r.global_volume.set_volume(first_tick, pattern.effect_param);
-                        }
-                        23 => { // W: Global Volume Slide
-                            r.global_volume.volume_slide(first_tick, pattern.effect_param);
-                        }
-                        24 => { // X: Panning
-                            if first_tick {
-                                voice.panning.set_panning(pattern.effect_param as i32);
-                            }
-                        }
-                        _ => {}
                     }
-                } else if !is_s3m {
-                    // MOD Effects
-                    match pattern.effect {
-                        0x0 => { if pattern.effect_param != 0 { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y()); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); } }
-                        0x1 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); }
-                        0x2 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); }
-                        0x3 => { channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables); }
-                        0x4 => { channel.vibrato(Some(voice), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables); }
-                        0x5 => { channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables); channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param); }
-                        0x6 => { channel.vibrato(Some(voice), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables); channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param); }
-                        0x7 => { channel.tremolo(Some(voice), first_tick, pattern.get_x(), pattern.get_y()); }
-                        0x8 => { voice.panning.set_panning(pattern.effect_param as i32); }
-                        0x9 => { if first_tick { voice.sample_position = (pattern.effect_param as f32) * 256.0; } }
-                        0xA => { channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param); }
-                        0xB => { if first_tick { r.pattern_change.set_jump(first_tick, pattern.effect_param); } }
-                        0xC => { if first_tick { voice.volume.set_volume(pattern.effect_param as i32); } }
-                        0xD => { if first_tick { r.pattern_change.set_break(r.song_data.song_type, first_tick, pattern.effect_param); } }
-                        0xE => { // Extended
-                            let x = pattern.get_x();
-                            let y = pattern.get_y();
-                            match x {
-                                0x1 => { channel.fine_porta_up(r.song_data.song_type, first_tick, y); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); }
-                                0x2 => { channel.fine_porta_down(r.song_data.song_type, first_tick, y); channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables); }
-                                0x6 => { 
-                                    if first_tick {
-                                        if y == 0 {
-                                            channel.loop_row = *r.row as u8;
-                                        } else {
-                                            if channel.loop_count == 0 {
-                                                channel.loop_count = y;
-                                            } else {
-                                                channel.loop_count -= 1;
-                                            }
-                                            
-                                            if channel.loop_count > 0 {
-                                                r.pattern_change.is_loop = true;
-                                                r.pattern_change.row = channel.loop_row;
-                                            }
-                                        }
-                                    }
-                                }
-                                0x9 => { if first_tick { channel.retrig(Some(voice), &r.song_data.instruments, *r.tick, y, 0); } }
-                                0xA => { if first_tick { channel.volume.set_volume(channel.volume.volume as i32 + y as i32); } }
-                                0xB => { if first_tick { channel.volume.set_volume(channel.volume.volume as i32 - y as i32); } }
-                                0xC => { if *r.tick == y as u32 { channel.on = false; voice.on = false; voice.volume.output_volume = 0.0; } }
-                                0xE => { if first_tick { *r.row_delay = y as usize; } }
-                                _ => {}
-                            }
-                        }
-                        0xF => {
-                            if first_tick {
-                                if pattern.effect_param > 0 && pattern.effect_param < 32 {
-                                    *r.speed = pattern.effect_param as u32;
-                                } else if pattern.effect_param >= 32 {
-                                    r.bpm.update(pattern.effect_param as u32, r.rate);
-                                }
-                            }
-                        }
-                        _ => {}
+                    11 => { // K: Vibrato + Volume Slide
+                        channel.vibrato(Some(voice), first_tick, 0, 0, true, r.rate, r.frequency_tables);
+                        channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param);
                     }
+                    12 => { // L: Tone Porta + Volume Slide
+                        channel.porta_to_note(r.song_data.song_type, Some(voice), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables);
+                        channel.volume_slide_main(Some(voice), first_tick, pattern.effect_param);
+                    }
+                    13 => { // M: Channel Volume
+                        if first_tick && pattern.effect_param <= 64 {
+                            channel.channel_volume = pattern.effect_param;
+                        }
+                    }
+                    14 => { // N: Channel Volume Slide
+                        channel.channel_volume_slide(first_tick, pattern.effect_param);
+                    }
+                    15 => { // O: Sample Offset
+                        if first_tick && pattern.effect_param != 0 {
+                            voice.sample_position = (pattern.effect_param as f32) * 256.0;
+                        }
+                    }
+                    16 => { // P: Panning Slide
+                        channel.panning_slide(Some(voice), first_tick, pattern.effect_param);
+                    }
+                    17 => { // Q: Retrig
+                        if pattern.effect_param != 0 {
+                            channel.retrig(Some(voice), &r.song_data.instruments, *r.tick, pattern.get_y(), 0);
+                        }
+                    }
+                    18 => { // R: Tremolo
+                        channel.tremolo(Some(voice), first_tick, pattern.get_x(), pattern.get_y());
+                    }
+                    19 => { // S: Special
+                        let x = pattern.effect_param >> 4;
+                        let y = pattern.effect_param & 0x0F;
+                        match x {
+                            0x08 => { // S8x: Set Panning
+                                if first_tick {
+                                    voice.panning.set_panning((y as i32 * 17).min(255));
+                                }
+                            }
+                            0x0C => { // SCx: Note Cut
+                                if *r.tick == y as u32 {
+                                    channel.on = false;
+                                    voice.on = false;
+                                    voice.volume.output_volume = 0.0;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    20 => { // T: Set BPM
+                        if first_tick && pattern.effect_param >= 0x21 {
+                            r.bpm.update(pattern.effect_param as u32, r.rate);
+                        }
+                    }
+                    21 => { // U: Fine Vibrato
+                        channel.vibrato(Some(voice), first_tick, pattern.get_x(), pattern.get_y(), true, r.rate, r.frequency_tables);
+                    }
+                    22 => { // V: Set Global Volume
+                        r.global_volume.set_volume(first_tick, pattern.effect_param);
+                    }
+                    23 => { // W: Global Volume Slide
+                        r.global_volume.volume_slide(first_tick, pattern.effect_param);
+                    }
+                    24 => { // X: Panning
+                        if first_tick {
+                            voice.panning.set_panning(pattern.effect_param as i32);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
 
         // 2. Process all active voices (Envelopes and Final Volume)
-        let divisor = if is_s3m { 128.0 } else { 64.0 };
+        let divisor = 128.0;
         let global_vol_f32 = r.global_volume.volume as f32 / divisor;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }

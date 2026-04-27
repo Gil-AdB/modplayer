@@ -870,7 +870,8 @@ impl Song {
             backend: match song_data.song_type {
                 SongType::IT => Some(Box::new(crate::song::backend::ItBackend::new())),
                 SongType::XM => Some(Box::new(crate::song::backend::XmBackend::new())),
-                _ => Some(Box::new(crate::song::backend::S3MModBackend::new())),
+                SongType::S3M => Some(Box::new(crate::song::backend::S3MBackend::new())),
+                _ => Some(Box::new(crate::song::backend::ModBackend::new())),
             },
         };
 
