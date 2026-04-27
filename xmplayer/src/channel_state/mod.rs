@@ -283,6 +283,7 @@ pub struct ChannelState {
     pub(crate) last_played_note:               u8,
     pub(crate) last_it_slide_speed:            u8,
     pub(crate) last_it_vol_slide:              u8,
+    pub(crate) last_vibrato_param:             u8,
     pub(crate) last_samples:                   [f32; 512], // Standardized to 512 for UI
     pub(crate) last_samples_pos:               usize,
     pub(crate) loop_row:                       u8,
@@ -323,6 +324,7 @@ impl ChannelState {
             last_played_note: 0,
             last_it_slide_speed: 0,
             last_it_vol_slide: 0,
+            last_vibrato_param: 0,
             last_samples: [0.0; 512],
             last_samples_pos: 0,
             loop_row: 0,

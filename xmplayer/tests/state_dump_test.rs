@@ -48,5 +48,10 @@ fn test_dump_amiga_limits() {
 }
 #[test]
 fn test_dump_strshine() {
-    generate_state_dump("/Users/gil-ad/Downloads/mods/strshine.s3m", "test_data/strshine_refactor.txt", usize::MAX);
+    generate_state_dump("/Users/gil-ad/Downloads/mods/strshine.s3m", "test_data/strshine_refactor.txt", 1000);
+}
+
+#[test]
+fn test_dump_2nd_reality() {
+    generate_state_dump("/Users/gil-ad/Downloads/mods/2nd_reality.s3m", "test_data/2nd_reality_refactor.txt", 1000);
 }
