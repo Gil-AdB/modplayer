@@ -110,13 +110,17 @@
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize)?;
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize)?;
 
-        let mut initial_channel_panning = [32u8; 64];
+        let mut initial_channel_panning = [128u8; 64];
+        for i in 0..32 {
+            initial_channel_panning[i] = if i % 2 == 0 { 51 } else { 204 };
+        }
+        
         if default_panning_present == 252 {
             let panning_data = file.read_bytes(32)?;
             for i in 0..32 {
                 if panning_data[i] & 32 != 0 {
                     let p = panning_data[i] & 15;
-                    initial_channel_panning[i] = p * 16 + 8; // Map 0-15 to 0-255 scale
+                    initial_channel_panning[i] = p * 17; // Map 0-15 to 0-255 scale
                 }
             }
         }
@@ -227,8 +231,24 @@
                     }
 
                     if pattern_data & 64 == 64 {
-                        volume = file.read_u8()?;
-                        if volume <= 64 {volume += 0x10} else { volume = 0;}
+                        let vol = file.read_u8()?;
+                        if vol <= 64 {
+                            volume = vol + 0x10;
+                        } else if (128..=143).contains(&vol) { // 8x: Fine Vol Slide Down
+                            volume = 0x90 | (vol & 0x0F);
+                        } else if (144..=159).contains(&vol) { // 9x: Fine Vol Slide Up
+                            volume = 0x80 | (vol & 0x0F);
+                        } else if (160..=175).contains(&vol) { // Ax: Vol Slide Down
+                            volume = 0x70 | (vol & 0x0F);
+                        } else if (176..=191).contains(&vol) { // Bx: Vol Slide Up
+                            volume = 0x60 | (vol & 0x0F);
+                        } else if (192..=207).contains(&vol) { // Cx: Tone Porta
+                            volume = 0xF0 | (vol & 0x0F);
+                        } else if (208..=223).contains(&vol) { // Dx: Vibrato Speed
+                            volume = 0xB0 | (vol & 0x0F);
+                        } else {
+                            volume = 0;
+                        }
                     }
 
                         if pattern_data & 128 == 128 {

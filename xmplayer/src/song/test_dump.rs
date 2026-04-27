@@ -68,8 +68,14 @@ impl TickDump {
 
 pub fn dump_tick(song: &Song) -> TickDump {
     let mut voices = Vec::new();
-    for voice in &song.voices {
+    for (v_idx, voice) in song.voices.iter().enumerate() {
+        if voice.on {
+        }
         let pattern = &song.song_data.patterns[song.song_data.pattern_order[song.song_position] as usize].rows[song.row].channels[voice.channel_idx];
+        if voice.on {
+        }
+        if voice.on {
+        }
         voices.push(VoiceDump {
             is_on: voice.on,
             channel_idx: voice.channel_idx,
@@ -88,13 +94,14 @@ pub fn dump_tick(song: &Song) -> TickDump {
         });
     }
 
+    let active_voices = voices.iter().filter(|v| v.is_on).count();
     TickDump {
         song_position: song.song_position,
         row: song.row,
         tick: song.tick,
         speed: song.speed,
         bpm: song.bpm.bpm,
-        active_voices: song.voices.iter().filter(|v| v.on).count(),
+        active_voices,
         active_channels: song.channels.iter().filter(|c| c.voice_idx.is_some()).count(),
         voices,
         global_volume: song.global_volume.volume,

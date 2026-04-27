@@ -162,7 +162,11 @@ impl Voice {
 
     pub(crate) fn set_frequency(&mut self, frequency: f32, rate: f32) {
         self.frequency = frequency;
-        self.du = self.frequency / rate;
+        if rate > 0.0 {
+            self.du = self.frequency / rate;
+        } else {
+            self.du = 0.0;
+        }
     }
 
     pub(crate) fn update_envelopes(&mut self, instruments: &Instruments, rate: f32) {
@@ -228,6 +232,7 @@ impl Voice {
         self.loop_started = false;
         self.ping = true;
         self.sustained = true;
+        self.on = true;
         self.on = true;
         
         self.volume.fadeout_vol = 65536;
@@ -367,7 +372,7 @@ impl ChannelState {
         voice.set_frequency(self.frequency, rate)
     }
 
-    pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, tables: &AudioTables) {
+    pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, rate: f32, tables: &AudioTables) {
         if let Some(v) = voice {
             if first_tick {
                 if speed != 0 {
@@ -380,7 +385,7 @@ impl ChannelState {
             } else {
                 v.vibrato_state.next_tick();
             }
-            self.update_frequency_voice(v, 0.0, true, tables);
+            self.update_frequency_voice(v, rate, true, tables);
         }
     }
 
@@ -551,7 +556,7 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn porta_to_note(&mut self, _song_type: SongType, voice: Option<&mut Voice>, first_tick: bool, speed: u8, _compatible_g: bool, tables: &AudioTables) {
+    pub(crate) fn porta_to_note(&mut self, _song_type: SongType, voice: Option<&mut Voice>, first_tick: bool, speed: u8, _compatible_g: bool, rate: f32, tables: &AudioTables) {
         if first_tick {
             if speed != 0 {
                 self.porta_to_note.speed = (speed as u16) * 4;
@@ -560,7 +565,7 @@ impl ChannelState {
             self.porta_to_note.next_tick(&mut self.note);
         }
         if let Some(v) = voice {
-            self.update_frequency_voice(v, 0.0, true, tables);
+            self.update_frequency_voice(v, rate, true, tables);
         }
     }
 

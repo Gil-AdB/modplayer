@@ -142,7 +142,7 @@ impl Sample {
         Ok(())
     }
 
-    pub(crate) fn setup_loops_and_padding(&mut self) {
+    pub fn setup_loops_and_padding(&mut self) {
         if self.length == 0 || self.data.is_empty() { return; }
 
         self.original_loop_end = self.loop_end;
@@ -244,7 +244,7 @@ pub struct Instrument {
 }
 
 impl Instrument {
-    pub(crate) fn new() -> Instrument {
+    pub fn new() -> Instrument {
         Instrument {
             name: "".to_string(),
             idx: 0,

@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::{fmt, fs};
 use crate::{SimpleResult};
 use crate::instrument::{Instrument, Sample};
@@ -28,7 +29,7 @@ pub enum SongType {
     IT,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(PartialEq, Debug, Clone, Copy, Serialize)]
 pub enum FrequencyType {
     AMIGA,
     LINEAR
@@ -81,7 +82,7 @@ pub struct Patterns {
 }
 
 impl Patterns {
-    pub(crate) fn new(row_count: usize, channel_count: usize) -> Self {
+    pub fn new(row_count: usize, channel_count: usize) -> Self {
         Self {
             rows: vec![Row::new(channel_count); row_count],
         }

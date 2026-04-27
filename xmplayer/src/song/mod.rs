@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use crate::channel_state::{ChannelState, Voice};
 use crate::instrument::{LoopType, Instrument};
-use crate::module_reader::{SongData, SongType, Patterns};
+use crate::module_reader::{SongData, SongType, Patterns, FrequencyType};
 #[cfg(test)]
 #[allow(unused_imports)]
 use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
@@ -1165,8 +1165,10 @@ impl Song {
             status.on                 = channel.on && voice_on;
             status.force_off          = channel.force_off;
             status.frequency          = voice_frequency;
-            if channel.frequency > 0.0 && voice_frequency > 0.0 {
-                status.pitch_shift = (voice_frequency / channel.frequency).log2() * 12.0;
+            let is_linear = self.song_data.frequency_type == FrequencyType::LINEAR;
+            let base_frequency = channel.note.base_frequency(is_linear, &self.frequency_tables);
+            if base_frequency > 0.0 && voice_frequency > 0.0 {
+                status.pitch_shift = (voice_frequency / base_frequency).log2() * 12.0;
             } else {
                 status.pitch_shift = 0.0;
             }
