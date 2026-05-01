@@ -879,8 +879,8 @@ impl ModuleBackend for S3MBackend {
                     channel.last_instrument = pattern.instrument as usize;
                 }
                 
-                let is_note_off = pattern.note == 97;
-                let is_note_cut = pattern.note == 121;
+                let is_note_off = pattern.note == 97 || pattern.note == 253;
+                let is_note_cut = pattern.note == 121 || pattern.note == 254;
 
                 if is_note_cut { // Note Cut
                     channel.on = false;
