@@ -149,6 +149,7 @@ mod tests {
         
         tester.step_row(); // Row 1 (Memory)
         let pan1 = tester.song.voices[0].panning.panning;
+        println!("pan0: {}, pan1: {}", pan0, pan1);
         
         assert!(pan1 < pan0, "Panning should have slid further left in row 1");
     }

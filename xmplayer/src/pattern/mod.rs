@@ -33,23 +33,37 @@ impl Pattern {
 
     pub(crate) fn is_porta_to_note(&self, song_type: SongType) -> bool {
         match song_type {
-            SongType::IT => self.effect == 0x07 || self.effect == 0x0c, // G or L
-            _ => self.effect == 0x3 || self.effect == 0x5 // 3 or 5 for XM, MOD, S3M
+            SongType::IT => {
+                self.effect == 0x07 || self.effect == 0x0c || (self.volume >= 193 && self.volume <= 202)
+            }
+            SongType::XM => {
+                self.effect == 0x03 || self.effect == 0x05 || (self.volume >= 0xf0 && self.volume <= 0xfe)
+            }
+            SongType::S3M => {
+                self.effect == 0x07 || self.effect == 0x0c // G or L
+            }
+            _ => self.effect == 0x3 || self.effect == 0x5 // MOD
         }
     }
 
     pub(crate) fn is_note_delay(&self, song_type: SongType) -> bool {
         match song_type {
-            SongType::IT => (self.effect == 0x13 || self.effect == 0xe) && self.get_x() == 0xd,
-            SongType::S3M => (self.effect == 0x13 || self.effect == 0xe) && self.get_x() == 0xd,
-            _ => self.effect == 0xe && self.get_x() == 0xd // XM / MOD
+            SongType::IT | SongType::S3M => {
+                (self.effect == 0x13 || self.effect == 0x0e) && self.get_x() == 0x0d
+            }
+            _ => self.effect == 0x0e && self.get_x() == 0x0d // XM / MOD
         }
     }
 
     pub(crate) fn has_vibrato(&self, song_type: SongType) -> bool {
         match song_type {
-            SongType::IT => self.effect == 0x08 || self.effect == 0x06, // H or F
-            _ => self.get_volume_effect() == 0xb || self.effect == 0x4 || self.effect == 0x6
+            SongType::IT => {
+                self.effect == 0x08 || self.effect == 0x06 || (self.volume >= 203 && self.volume <= 212)
+            }
+            _ => {
+                let vol_eff = self.get_volume_effect();
+                vol_eff == 0x0a || vol_eff == 0x0b || self.effect == 0x04 || self.effect == 0x06
+            }
         }
     }
 
@@ -69,7 +83,7 @@ impl Pattern {
     }
 
     fn get_volume_effect(&self) -> u8 {
-        self.volume & 0xf0 >> 4
+        (self.volume & 0xf0) >> 4
     }
     pub(crate) fn get_volume_param(&self) -> u8 {
         self.volume & 0xf

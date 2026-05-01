@@ -54,7 +54,7 @@ impl Sample {
             finetune: 0,
             loop_type: LoopType::NoLoop,
             bitness: 0,
-            panning: 0,
+            panning: 255,
             relative_note: 0,
             name: "".to_string(),
             global_volume: 64,

@@ -83,6 +83,7 @@
         let signature = file.read_string(4);
 
         if signature != "SCRM" {
+            dbg!(&signature);
             return Err(SimpleError::new("Unknown s3m format - signature"));
         }
 
@@ -90,11 +91,13 @@
         let speed = file.read_u8()?;
         let bpm = file.read_u8()?;
         let master_volume = file.read_u8()?;
+        dbg!(global_volume, speed, bpm, master_volume);
         let _ultra_click_removal = file.read_u8()?;
         let default_panning_present = file.read_u8()?;
         file.seek(SeekFrom::Current(10))?;
 
         let channel_data = file.read_bytes(32)?;
+        dbg!(&channel_data);
         let mut channel_map = [255u8; 32];
 
         for i in 0..channel_data.len() {
@@ -106,9 +109,11 @@
 
         let mut pattern_order = file.read_bytes(song_length as usize)?;
         truncate_patterns(&mut pattern_order);
+        dbg!(&pattern_order);
 
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize)?;
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize)?;
+        dbg!(&instrument_ptrs, &pattern_ptrs);
 
         let mut initial_channel_panning = [128u8; 64];
         for i in 0..32 {
@@ -142,7 +147,7 @@
                 channels: vec![Pattern {
                     note: 0,
                     instrument: 0,
-                    volume: 0,
+                    volume: 255,
                     effect: 0,
                     effect_param: 0
                 }; num_channels as usize]
@@ -191,6 +196,7 @@
     }
 
     fn read_patterns<R: Read + Seek>(file: &mut R, pattern_ptrs: &Vec<u16>, channel_count: usize, channel_map: &[u8; 32]) -> SimpleResult<Vec<Patterns>> {
+        dbg!(pattern_ptrs.len());
         let pattern_count = pattern_ptrs.len();
         let mut patterns: Vec<Patterns> = vec![];
         patterns.reserve_exact(pattern_count);
@@ -216,7 +222,7 @@
 
                     let mut note = 0u8;
                     let mut instrument = 0u8;
-                    let mut volume = 0u8;
+                    let mut volume = 255u8; // 255 = no volume column present
                     let mut effect = 0u8;
                     let mut effect_param = 0u8;
 
@@ -265,6 +271,7 @@
     }
 
     fn read_instruments<R: Read + Seek>(file: &mut R, instrument_ptrs: &Vec<u16>) -> SimpleResult<Vec<Instrument>> {
+        dbg!(instrument_ptrs.len());
         let mut instruments: Vec<Instrument> = vec![];
         let instrument_count = instrument_ptrs.len();
 
@@ -274,14 +281,15 @@
         instruments.push(Instrument::new());
 
         for (instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
+            dbg!(instrument_idx, instrument_ptr);
             let mut instrument = Instrument::new();
             file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16))?;
             let _type_ = file.read_u8()?;
             let _dos_name = file.read_string(12);
             let sample_ptr = file.read_u24_s3m()?;
-            let sample_len = file.read_u32()? & 0xFFFF;
-            let sample_loop_start = file.read_u32()? & 0xFFFF;
-            let sample_loop_end = file.read_u32()? & 0xFFFF;
+            let sample_len = file.read_u32()?;
+            let sample_loop_start = file.read_u32()?;
+            let sample_loop_end = file.read_u32()?;
             let sample_volume = file.read_u8()?;
             let _ = file.read_u8()?;
             let sample_packing = file.read_u8()?;
@@ -289,7 +297,7 @@
                 return Err(SimpleError::new("Unknown file format"));
             }
             let sample_flags = file.read_u8()?;
-            let c2spd = file.read_u32()? & 0xFFFF;
+            let c2spd = file.read_u32()?;
             let _ = file.read_bytes(12)?;
             let sample_name = file.read_string(28);
             let _sample_sig = file.read_string(4);
@@ -318,7 +326,7 @@
             instrument.name = sample.name.clone();
             instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
-            instrument.sample_indexes = (0..120).map(|i| (i + 1, 0)).collect();
+            instrument.sample_indexes = (0..120).map(|i| (i as u8, 1)).collect();
             instruments.push(instrument);
         }
         Ok(instruments)

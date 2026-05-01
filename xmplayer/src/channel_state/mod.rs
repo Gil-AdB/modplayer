@@ -134,7 +134,7 @@ impl Voice {
     }
 
 
-    pub(crate) fn key_off(&mut self, instruments: &Instruments, is_note_delay: bool) -> bool {
+    pub(crate) fn key_off(&mut self, instruments: &Instruments, _is_note_delay: bool) -> bool {
         let instrument = &instruments[self.instrument];
         self.sustained = false;
         self.volume_envelope_state.key_off(&instrument.volume_envelope);
@@ -144,17 +144,6 @@ impl Voice {
         if !instrument.volume_envelope.on {
             self.on = false;
             self.volume.retrig(0);
-
-            if !is_note_delay {
-                self.volume.fadeout_speed = instrument.volume_fadeout as i32;
-            }
-
-            if self.volume.fadeout_speed == 0 {
-                self.volume.fadeout_vol = 0;
-            }
-
-
-            return false;
         }
         self.volume.fadeout_speed = instrument.volume_fadeout as i32;
         return true;
@@ -184,6 +173,23 @@ impl Voice {
             // IT filter envelopes are centered around 32 (range 0..64)
             // They add/subtract from the current cutoff.
             final_cutoff += (envelope_filter as i32 - 32 * 256) / 256;
+        } else {
+            let envelope_pitch = self.pitch_envelope_state.handle(&instrument.pitch_envelope, self.sustained, 32, false);
+            // Pitch envelopes are centered around 32.
+            // Each unit is approx 1/16 of a semitone.
+            // We'll approximate this by adding to frequency_shift.
+            // 1 semitone is approx 6% frequency change.
+            // So 1/16 semitone is approx 0.375% change.
+            let pitch_shift_units = (envelope_pitch as i32 - 32 * 256) / 256;
+            self.frequency_shift = self.frequency * (pitch_shift_units as f32 * 0.00375);
+        }
+
+        // Auto-vibrato
+        let auto_vibrato = self.vibrato_envelope_state.handle(&instrument.vibrato_envelope, self.sustained);
+        if auto_vibrato != 0 {
+            // auto_vibrato is i16 from handle
+            let vib_shift = (auto_vibrato as f32 / 256.0) * 0.05; // Adjust scaling as needed
+            self.frequency_shift += self.frequency * vib_shift;
         }
 
         self.update_filter(rate, final_cutoff.clamp(0, 127) as u8);
@@ -220,8 +226,8 @@ impl Voice {
 
         self.volume.output_volume = (self.volume.fadeout_vol as f32 / 65536.0) * 
                                     (self.volume.envelope_vol as f32 / 16384.0) * 
-                                    (self.volume.get_volume() as f32 / divisor) * 
-                                    (self.instrument_global_volume as f32 / 64.0) *
+                                    (self.volume.get_volume() as f32 / 64.0) * 
+                                    (self.instrument_global_volume as f32 / divisor) * 
                                     (self.sample_global_volume as f32 / 64.0) *
                                     channel_volume *
                                     global_volume;
@@ -668,9 +674,16 @@ impl ChannelState {
     }
 
     pub(crate) fn panning_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
+        let mut actual_param = param;
+        if actual_param == 0 {
+            actual_param = self.last_panning_slide;
+        } else {
+            self.last_panning_slide = actual_param;
+        }
+
         if first_tick {
-            let right = (param >> 4) as i32;
-            let left = (param & 0xf) as i32;
+            let right = (actual_param >> 4) as i32;
+            let left = (actual_param & 0xf) as i32;
             if right == 0xf && left != 0 {
                 if let Some(v) = voice {
                     v.panning.set_panning(v.panning.panning as i32 - (left << 2));
@@ -681,8 +694,8 @@ impl ChannelState {
                 }
             }
         } else {
-            let right = (param >> 4) as i32;
-            let left = (param & 0xf) as i32;
+            let right = (actual_param >> 4) as i32;
+            let left = (actual_param & 0xf) as i32;
             if let Some(v) = voice {
                 if right != 0 && right != 0xf && left == 0 {
                     v.panning.set_panning(v.panning.panning as i32 + (right << 2));

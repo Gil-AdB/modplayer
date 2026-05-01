@@ -361,15 +361,14 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let message_offset = file.read_u32()?;
         let _ = file.read_u32()?;
         
-        let mut initial_channel_panning = [32u8; 64];
+        let mut initial_channel_panning = [128u8; 64];
         let mut initial_channel_volume = [64u8; 64];
-        let panning_bytes = file.read_bytes(64)?;
         for i in 0..64 {
-            let p = panning_bytes[i];
+            let p = file.read_u8()?;
             if p <= 64 {
-                initial_channel_panning[i] = p;
-            } else if p == 100 { // Surround
-                initial_channel_panning[i] = 100;
+                initial_channel_panning[i] = p * 4;
+            } else if p == 100 {
+                initial_channel_panning[i] = 128; // Surround -> Center for now
             } else if p >= 128 { // Mute
                 initial_channel_volume[i] = 0;
             }

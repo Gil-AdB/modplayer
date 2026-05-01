@@ -74,7 +74,7 @@ fn test_it_volume_scaling() {
     let mut builder = MockSongBuilder::new(SongType::IT, 2);
     builder.add_empty_pattern(64);
     builder.add_instrument("Test", vec![0.5; 100]);
-    builder.instruments[1].global_volume = 64; // Max IT instrument global vol
+    builder.instruments[1].global_volume = 128; // Max IT instrument global vol
     
     // Row 0: Play Note
     builder.set_pattern_row(0, 0, 0, Pattern { note: 61, instrument: 1, volume: 64, ..Pattern::new() });

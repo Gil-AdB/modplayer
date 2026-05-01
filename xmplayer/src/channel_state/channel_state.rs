@@ -398,7 +398,7 @@ impl VibratoEnvelopeState {
             } else {
                 _auto_vibrato_amp = self.vibrato_amp;
             }
-            self.vibrato_pos += env.vibrato_rate as u16;
+            self.vibrato_pos = (self.vibrato_pos + env.vibrato_rate as u16) & 255;
  
             let _auto_vibrato_value : i16;
             if env.vibrato_type == 1 { // square
@@ -411,7 +411,7 @@ impl VibratoEnvelopeState {
                 _auto_vibrato_value = tables::VIB_SINE_TAB[self.vibrato_pos as usize] as i16;
             }
 
-            0
+            (_auto_vibrato_value as i32 * _auto_vibrato_amp as i32 / 64) as u16
         } else {
             0
         }

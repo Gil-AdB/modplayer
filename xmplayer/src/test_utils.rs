@@ -27,7 +27,7 @@ impl MockSongBuilder {
                 sample.data = vec![0.0; 100];
                 sample.length = 100;
                 inst.samples.push(sample);
-                for i in 0..120 { inst.sample_indexes[i] = (0, 0); }
+                for i in 0..120 { inst.sample_indexes[i] = (i as u8, 1); }
                 vec![Instrument::new(), inst]
             },
             global_volume: 64,
