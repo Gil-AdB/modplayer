@@ -142,7 +142,7 @@ impl Voice {
         self.pitch_envelope_state.key_off(&instrument.pitch_envelope);
 
         if !instrument.volume_envelope.on {
-            // self.on = false;
+            self.on = false;
             self.volume.retrig(0);
 
             if !is_note_delay {
@@ -209,7 +209,7 @@ impl Voice {
         self.filter_state.b = r;
     }
 
-    pub(crate) fn update_output_volume(&mut self, global_volume: f32, channel_volume: f32, _divisor: f32) {
+    pub(crate) fn update_output_volume(&mut self, global_volume: f32, channel_volume: f32, divisor: f32) {
         if !self.sustained {
             if self.volume.fadeout_vol - self.volume.fadeout_speed < 0 {
                 self.volume.fadeout_vol = 0;
@@ -220,7 +220,7 @@ impl Voice {
 
         self.volume.output_volume = (self.volume.fadeout_vol as f32 / 65536.0) * 
                                     (self.volume.envelope_vol as f32 / 16384.0) * 
-                                    (self.volume.get_volume() as f32 / 64.0) * 
+                                    (self.volume.get_volume() as f32 / divisor) * 
                                     (self.instrument_global_volume as f32 / 64.0) *
                                     (self.sample_global_volume as f32 / 64.0) *
                                     channel_volume *
@@ -284,6 +284,9 @@ pub struct ChannelState {
     pub(crate) last_it_slide_speed:            u8,
     pub(crate) last_it_vol_slide:              u8,
     pub(crate) last_vibrato_param:             u8,
+    pub(crate) last_tremolo_param:             u8,
+    pub(crate) last_tremor_param:              u8,
+    pub(crate) last_panning_slide:             u8,
     pub(crate) last_samples:                   [f32; 512], // Standardized to 512 for UI
     pub(crate) last_samples_pos:               usize,
     pub(crate) loop_row:                       u8,
@@ -325,6 +328,9 @@ impl ChannelState {
             last_it_slide_speed: 0,
             last_it_vol_slide: 0,
             last_vibrato_param: 0,
+            last_tremolo_param: 0,
+            last_tremor_param: 0,
+            last_panning_slide: 0,
             last_samples: [0.0; 512],
             last_samples_pos: 0,
             loop_row: 0,

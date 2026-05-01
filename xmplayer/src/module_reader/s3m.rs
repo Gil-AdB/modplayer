@@ -89,7 +89,7 @@
         let global_volume = file.read_u8()?;
         let speed = file.read_u8()?;
         let bpm = file.read_u8()?;
-        let _master_multiplier = file.read_u8()?;
+        let master_volume = file.read_u8()?;
         let _ultra_click_removal = file.read_u8()?;
         let default_panning_present = file.read_u8()?;
         file.seek(SeekFrom::Current(10))?;
@@ -98,7 +98,7 @@
         let mut channel_map = [255u8; 32];
 
         for i in 0..channel_data.len() {
-            if channel_data[i] < 16u8 {
+            if channel_data[i] != 255 {
                 channel_map[i] = num_channels;
                 num_channels += 1;
             }
@@ -169,7 +169,7 @@
             initial_channel_volume: [64; 64],
             initial_channel_panning,
             global_volume,
-            master_volume:           128,
+            master_volume,
             mixing_volume:           128,
             old_effects: false,
             compatible_g: true, // S3M always uses compatible G behavior
@@ -204,11 +204,6 @@
 
             let _size = file.read_u16()?;
 
-            let mut last_effect_param       = [0u8; 32];
-            let mut last_effect             = [0u8; 32];
-            let mut last_vibrato_param      = [0u8; 32];
-            let mut last_instrument = [0u8; 32];
-
             for row in pattern.rows.iter_mut() {
                 let channels = &mut row.channels;
 
@@ -226,54 +221,37 @@
                     let mut effect_param = 0u8;
 
                     if pattern_data & 32 == 32 {
-                        note = file.read_u8()?;
+                        let note_val = file.read_u8()?;
                         instrument = file.read_u8()?;
 
-                        if note == 255 {
+                        if note_val == 255 {
                             note = 0;
-                        } else if note == 254 {
-                            note = 97;
+                        } else if note_val == 254 {
+                            note = 97; // Note Off
                         } else {
-                            note = 1 + (note >> 4) * 12 + (note & 0xF);
-                            if note > 96 {note = 0;}
+                            let oct = (note_val >> 4) as u8;
+                            let n = (note_val & 0x0F) as u8;
+                            if n < 12 {
+                                note = oct * 12 + n + 1;
+                            } else {
+                                note = 0;
+                            }
                         }
                     }
 
                     if pattern_data & 64 == 64 {
-                        let vol = file.read_u8()?;
-                        if vol <= 64 {
-                            volume = vol + 0x10;
-                        } else if (128..=143).contains(&vol) { // 8x: Fine Vol Slide Down
-                            volume = 0x90 | (vol & 0x0F);
-                        } else if (144..=159).contains(&vol) { // 9x: Fine Vol Slide Up
-                            volume = 0x80 | (vol & 0x0F);
-                        } else if (160..=175).contains(&vol) { // Ax: Vol Slide Down
-                            volume = 0x70 | (vol & 0x0F);
-                        } else if (176..=191).contains(&vol) { // Bx: Vol Slide Up
-                            volume = 0x60 | (vol & 0x0F);
-                        } else if (192..=207).contains(&vol) { // Cx: Tone Porta
-                            volume = 0xF0 | (vol & 0x0F);
-                        } else if (208..=223).contains(&vol) { // Dx: Vibrato Speed
-                            volume = 0xB0 | (vol & 0x0F);
-                        } else {
-                            volume = 0;
-                        }
+                        volume = file.read_u8()?;
                     }
 
-                        if pattern_data & 128 == 128 {
+                    if pattern_data & 128 == 128 {
                         effect = file.read_u8()?;
                         effect_param = file.read_u8()?;
                     }
 
-                    if channel_num >= channel_count as u8 { continue; }
+                    if channel_map[channel_num as usize] == 255 { continue; }
                     let channel = &mut channels[channel_id];
 
-                    channel.note = match note {
-                        253 => 97,  // Note Off (==)
-                        254 => 121, // Note Cut (^^)
-                        255 => 0,   // Empty
-                        _ => note
-                    };
+                    channel.note = note;
                     channel.instrument = instrument;
                     channel.volume = volume;
                     channel.effect = effect;

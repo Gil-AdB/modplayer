@@ -10,6 +10,8 @@ pub struct MockSongBuilder {
     pub patterns: Vec<Patterns>,
     pub order: Vec<u8>,
     pub instruments: Vec<Instrument>,
+    pub global_volume: u8,
+    pub master_volume: u8,
 }
 
 impl MockSongBuilder {
@@ -19,7 +21,17 @@ impl MockSongBuilder {
             channels,
             patterns: vec![],
             order: vec![],
-            instruments: vec![Instrument::new()], // Null instrument
+            instruments: {
+                let mut inst = Instrument::new();
+                let mut sample = Sample::new();
+                sample.data = vec![0.0; 100];
+                sample.length = 100;
+                inst.samples.push(sample);
+                for i in 0..120 { inst.sample_indexes[i] = (0, 0); }
+                vec![Instrument::new(), inst]
+            },
+            global_volume: 64,
+            master_volume: 48 | 128, // Default S3M style: Vol 48, Stereo
         }
     }
 
@@ -36,6 +48,20 @@ impl MockSongBuilder {
 
     pub fn set_order(&mut self, order: Vec<u8>) -> &mut Self {
         self.order = order;
+        self
+    }
+
+    pub fn add_pattern_row(&mut self, pat_idx: usize, row_idx: usize, note: u8, inst: u8, vol: u8, eff: u8, eff_param: u8) -> &mut Self {
+        if self.patterns.len() <= pat_idx {
+            self.add_empty_pattern(64);
+        }
+        self.patterns[pat_idx].rows[row_idx].channels[0] = Pattern {
+            note,
+            instrument: inst,
+            volume: vol,
+            effect: eff,
+            effect_param: eff_param,
+        };
         self
     }
 
@@ -75,8 +101,8 @@ impl MockSongBuilder {
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
             initial_channel_panning: [128; 64],
-            global_volume: 128,
-            master_volume: 128,
+            global_volume: self.global_volume,
+            master_volume: self.master_volume,
             mixing_volume: 128,
             old_effects: false,
             compatible_g: false,
@@ -131,5 +157,29 @@ impl SongTester {
             .filter(|(_, v)| v.on && v.channel_idx == channel)
             .map(|(i, _)| i)
             .collect()
+    }
+
+    pub fn assert_voice_on(&self, voice_idx: usize, on: bool) {
+        assert_eq!(self.song.voices[voice_idx].on, on, "Voice {} on state mismatch", voice_idx);
+    }
+
+    pub fn get_voice_du(&self, voice_idx: usize) -> f32 {
+        self.song.voices[voice_idx].du
+    }
+
+    pub fn assert_voice_du_near(&self, voice_idx: usize, expected: f32, epsilon: f32) {
+        let actual = self.get_voice_du(voice_idx);
+        assert!((actual - expected).abs() < epsilon, "Voice {} dU mismatch: expected {}, got {}", voice_idx, expected, actual);
+    }
+
+    pub fn assert_voice_volume_near(&self, voice_idx: usize, expected: f32, epsilon: f32) {
+        let actual = self.song.voices[voice_idx].volume.output_volume;
+        assert!((actual - expected).abs() < epsilon, "Voice {} volume mismatch: expected {}, got {}", voice_idx, expected, actual);
+    }
+
+    pub fn step_to_row(&mut self, row: usize) {
+        while self.song.row < row {
+            self.step_row();
+        }
     }
 }
