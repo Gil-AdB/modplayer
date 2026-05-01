@@ -235,7 +235,7 @@ impl ModuleBackend for ItBackend {
                             voice.sample_position = 4.0;
                             voice.loop_started = false;
                             voice.ping = true;
-                            voice.trigger_note(instruments);
+                            voice.trigger_note(instruments, false);
                             let sample = &instruments[inst_idx].samples[final_sample_idx];
                             voice.volume.retrig(sample.volume as i32);
                             voice.panning.panning = sample.panning;
@@ -243,7 +243,7 @@ impl ModuleBackend for ItBackend {
                             voice.sample_position = 4.0;
                             voice.loop_started = false;
                             voice.ping = true;
-                            voice.trigger_note(instruments);
+                            voice.trigger_note(instruments, true);
                             let sample = &instruments[inst_idx].samples[final_sample_idx];
                             voice.volume.retrig(sample.volume as i32);
                             voice.panning.panning = sample.panning;
@@ -530,7 +530,7 @@ impl ModuleBackend for XmBackend {
                             voice.sample_position = 4.0;
                             voice.loop_started = false;
                             voice.ping = true;
-                            voice.trigger_note(instruments);
+                            voice.trigger_note(instruments, false);
                             let sample = &instruments[inst_idx].samples[final_sample_idx];
                             voice.volume.retrig(sample.volume as i32);
                             voice.panning.panning = sample.panning;
@@ -538,7 +538,7 @@ impl ModuleBackend for XmBackend {
                             voice.sample_position = 4.0;
                             voice.loop_started = false;
                             voice.ping = true;
-                            voice.trigger_note(instruments);
+                            voice.trigger_note(instruments, true);
                             let sample = &instruments[inst_idx].samples[final_sample_idx];
                             voice.volume.retrig(sample.volume as i32);
                             voice.panning.panning = sample.panning;
@@ -741,7 +741,7 @@ impl ModuleBackend for ModBackend {
                             voice.volume.retrig(instrument.samples[sample_idx].volume as i32);
                             voice.panning.panning = r.song_data.initial_channel_panning[i];
                             
-                            voice.trigger_note(&r.song_data.instruments);
+                            voice.trigger_note(&r.song_data.instruments, true);
                             
                             let sample = &instrument.samples[sample_idx];
                             let real_note = (pattern.note as i16 + sample.relative_note as i16) as u8;
@@ -924,7 +924,7 @@ impl ModuleBackend for S3MBackend {
                                 voice.volume.retrig(instrument.samples[sample_idx].volume as i32);
                                 voice.panning.panning = r.song_data.initial_channel_panning[i];
                                 
-                                voice.trigger_note(&r.song_data.instruments);
+                                voice.trigger_note(&r.song_data.instruments, true);
                                 
                                 let sample = &instrument.samples[sample_idx];
                                 let real_note = (pattern.note as i16 + sample.relative_note as i16) as u8;

@@ -227,7 +227,7 @@ impl Voice {
                                     global_volume;
     }
 
-    pub(crate) fn trigger_note(&mut self, instruments: &Instruments) {
+    pub(crate) fn trigger_note(&mut self, instruments: &Instruments, reset_envelopes: bool) {
         self.sample_position = 4.0;
         self.loop_started = false;
         self.ping = true;
@@ -245,9 +245,11 @@ impl Voice {
             self.sample_global_volume = instrument.samples[self.sample].global_volume;
         }
 
-        self.volume_envelope_state.reset(0, &instrument.volume_envelope);
-        self.panning_envelope_state.reset(0, &instrument.panning_envelope);
-        self.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
+        if reset_envelopes {
+            self.volume_envelope_state.reset(0, &instrument.volume_envelope);
+            self.panning_envelope_state.reset(0, &instrument.panning_envelope);
+            self.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
+        }
     }
 }
 
@@ -610,7 +612,7 @@ impl ChannelState {
         if amount == 0 { return; }
         if tick % (amount as u32) == 0 {
             if let Some(v) = voice {
-                v.trigger_note(instruments);
+                v.trigger_note(instruments, true);
                 match volume_change {
                     1 => { v.volume.set_volume(v.volume.get_volume() as i32 - 1); }
                     2 => { v.volume.set_volume(v.volume.get_volume() as i32 - 2); }
