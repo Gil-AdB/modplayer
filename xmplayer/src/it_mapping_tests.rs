@@ -29,7 +29,7 @@ mod tests {
         let chan = &tester.song.channels[0];
         // The pattern note should be 61, but the "real" note derived from instrument should be 72 + sample.relative_note (0) = 72.
         assert_eq!(chan.last_played_note, 61);
-        assert_eq!(tester.song.voices[chan.voice_idx.unwrap()].last_played_note, 73); // mapped_note + 1
+        assert_eq!(tester.song.voices[chan.voice_idx.unwrap()].last_played_note, 61); // Used for DCT matching
         
         // Frequency check: C-6 is double C-5
         let voice = &tester.song.voices[chan.voice_idx.unwrap()];

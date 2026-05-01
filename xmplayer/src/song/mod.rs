@@ -393,17 +393,24 @@ impl GlobalVolume {
     }
 
     pub(crate) fn volume_slide(&mut self, first_tick: bool, param: u8) {
+        let mut actual_param = param;
+        if actual_param == 0 {
+            actual_param = self.last_volume_slide;
+        } else {
+            self.last_volume_slide = actual_param;
+        }
+
         if first_tick {
-            let up = (param >> 4) as i32;
-            let down = (param & 0xf) as i32;
+            let up = (actual_param >> 4) as i32;
+            let down = (actual_param & 0xf) as i32;
             if up == 0xf && down != 0 {
                 self.volume_slide_inner(down as i8);
             } else if down == 0xf && up != 0 {
                 self.volume_slide_inner(-(up as i8));
             }
         } else {
-            let up = (param >> 4) as i32;
-            let down = (param & 0xf) as i32;
+            let up = (actual_param >> 4) as i32;
+            let down = (actual_param & 0xf) as i32;
             if up != 0 && up != 0xf && down == 0 {
                 self.volume_slide_inner(up as i8);
             } else if down != 0 && down != 0xf && up == 0 {
@@ -1629,7 +1636,7 @@ impl Song {
         }
 
         let master_gain = (self.master_volume as f32 / 128.0) * (self.mixing_volume as f32 / 128.0);
-        let final_master_gain = if self.song_data.song_type == SongType::IT { master_gain } else { 1.0 };
+        let final_master_gain = master_gain;
 
         for voice in &mut self.voices {
             if !voice.on { continue; }
@@ -1703,7 +1710,7 @@ impl Song {
                     }
                 }
 
-                let output_vol = (voice.volume.output_volume / 4.0) * final_master_gain;
+                let output_vol = (voice.volume.output_volume / 2.0) * final_master_gain;
                 let channel = &mut self.channels[voice.channel_idx];
 
                 for j in 0..4 {
@@ -1782,7 +1789,7 @@ impl Song {
                     out_sample = new_low;
                 }
 
-                let final_sample = (out_sample / 4.0) * voice.volume.output_volume * final_master_gain;
+                let final_sample = (out_sample / 2.0) * voice.volume.output_volume * final_master_gain;
                 let channel = &mut self.channels[voice.channel_idx];
 
                 channel.last_samples[channel.last_samples_pos] = final_sample;

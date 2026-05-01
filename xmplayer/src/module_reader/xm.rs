@@ -209,7 +209,7 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Si
             instruments.push(Instrument {
                 name,
                 idx: (instrument_idx + 1) as u8,
-                sample_indexes: sample_indexes.iter().enumerate().map(|(n, &s)| (n as u8, s)).collect(),
+                sample_indexes: sample_indexes.iter().enumerate().map(|(n, &s)| (n as u8, s + 1)).collect(),
                 volume_envelope: Envelope::create(volume_envelope, volume_points, volume_sustain_point, volume_loop_start_point, volume_loop_end_point, volume_type),
                 panning_envelope: Envelope::create(panning_envelope,panning_points, panning_sustain_point, panning_loop_start_point, panning_loop_end_point,panning_type),
                 pitch_envelope: Envelope::new(),
@@ -332,7 +332,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
             use_amiga: (flags & 1) != 1,
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
-            initial_channel_panning: [32; 64],
+            initial_channel_panning: [128; 64],
             global_volume:           64,
             master_volume:           128,
             mixing_volume:           128,
