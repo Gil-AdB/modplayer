@@ -88,7 +88,7 @@ impl ModuleBackend for ItBackend {
                             let sample_idx = it_mapping.1 as usize;
                             if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
                                 let sample = &instruments[inst_idx].samples[sample_idx - 1];
-                                let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(0, 119) as u8;
+                                let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                                 channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
                             }
                         }
@@ -397,7 +397,7 @@ impl ModuleBackend for XmBackend {
                                 
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
-                                let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(0, 119) as u8;
+                                let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                                 channel.note.set_note(real_note, sample.finetune, mapped_note, r.frequency_tables);
                                 channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
                                 voice.last_played_note = pattern.note;
@@ -926,7 +926,7 @@ impl ModuleBackend for S3MBackend {
                     channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
                 }
                 13 => { if first_tick { channel.channel_volume = pattern.effect_param.min(64); } }
-                14 => { channel.channel_volume_slide(note_delay_first_tick, pattern.effect_param); }
+                14 => { channel.channel_volume_slide(first_tick, pattern.effect_param); }
                 15 => { // Sample Offset
                     if first_tick {
                         let mut param = pattern.effect_param as u32;
