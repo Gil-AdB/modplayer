@@ -433,10 +433,10 @@ impl ModuleBackend for XmBackend {
             // Volume Column
             match pattern.volume {
                 0x10..=0x50 => { channel.set_volume(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume - 0x10); }
-                0x60..=0x6f => { channel.volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -(pattern.get_volume_param() as i8)); }
-                0x70..=0x7f => { channel.volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() as i8); }
-                0x80..=0x8f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -(pattern.get_volume_param() as i8)); }
-                0x90..=0x9f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() as i8); }
+                0x60..=0x6f => { channel.volume_slide(voice_ref.as_deref_mut(), false, -(pattern.get_volume_param() as i8)); }
+                0x70..=0x7f => { channel.volume_slide(voice_ref.as_deref_mut(), false, pattern.get_volume_param() as i8); }
+                0x80..=0x8f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, -(pattern.get_volume_param() as i8)); }
+                0x90..=0x9f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() as i8); }
                 0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param(), r.old_effects, r.rate, r.frequency_tables); }
                 0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0, r.old_effects, r.rate, r.frequency_tables); }
                 0xd0..=0xdf => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() << 4); }
