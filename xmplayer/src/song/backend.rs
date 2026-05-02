@@ -274,7 +274,6 @@ impl ModuleBackend for ItBackend {
         let global_vol_f32 = r.global_volume.volume as f32 / 128.0;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
             let channel_force_off = r.channels[voice.channel_idx].force_off;
             
             voice.update_envelopes(instruments, r.rate);
@@ -284,7 +283,7 @@ impl ModuleBackend for ItBackend {
             let base = voice.compute_base_volume();
             let inst_vol = voice.instrument_global_volume as f32 / 128.0;
             let sample_vol = voice.sample_global_volume as f32 / 64.0;
-            let output_vol = base * channel_vol_f32 * inst_vol * sample_vol * global_vol_f32;
+            let output_vol = base * inst_vol * sample_vol * global_vol_f32;
             voice.set_output_volume(output_vol);
             
             if channel_force_off {
@@ -535,7 +534,6 @@ impl ModuleBackend for XmBackend {
         let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
             let channel_force_off = r.channels[voice.channel_idx].force_off;
             
             voice.update_envelopes(instruments, r.rate);
@@ -543,7 +541,7 @@ impl ModuleBackend for XmBackend {
             
             // XM formula: fadeout * envelope * channel_vol/64 * global_vol/64
             let base = voice.compute_base_volume();
-            let output_vol = base * channel_vol_f32 * global_vol_f32;
+            let output_vol = base * global_vol_f32;
             voice.set_output_volume(output_vol);
             
             if channel_force_off {
@@ -964,7 +962,6 @@ impl ModuleBackend for S3MBackend {
         let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
             let channel_force_off = r.channels[voice.channel_idx].force_off;
             
             voice.update_envelopes(instruments, r.rate);
@@ -973,7 +970,7 @@ impl ModuleBackend for S3MBackend {
             // S3M formula: fadeout * envelope * channel_vol/64 * global_vol/64
             // S3M has channel_volume and global_volume but no instrument/sample global volume
             let base = voice.compute_base_volume();
-            let output_vol = base * channel_vol_f32 * global_vol_f32;
+            let output_vol = base * global_vol_f32;
             voice.set_output_volume(output_vol);
             
             if channel_force_off {
