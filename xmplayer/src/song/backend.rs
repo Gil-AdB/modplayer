@@ -1,10 +1,8 @@
-use crate::song::{GlobalVolume, BPM, PatternChange, Song};
-use crate::module_reader::{SongData, SongType, is_note_valid};
+use crate::song::{GlobalVolume, BPM, PatternChange};
+use crate::module_reader::{SongData, is_note_valid};
 use crate::channel_state::{ChannelState, Voice};
-use crate::channel_state::channel_state::clamp;
 use crate::tables::AudioTables;
 use crate::instrument::Instrument;
-use std::borrow::Borrow;
 
 pub struct SongPlaybackResources<'a> {
     pub song_position:              &'a mut usize,
@@ -272,16 +270,26 @@ impl ModuleBackend for ItBackend {
             }
         }
 
-        // 2. Process all active voices
-        let divisor = 128.0;
+        // 2. Process all active voices (IT volume formula)
         let global_vol_f32 = r.global_volume.volume as f32 / 128.0;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let mut channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
-            if r.channels[voice.channel_idx].force_off { channel_vol_f32 = 0.0; }
+            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let channel_force_off = r.channels[voice.channel_idx].force_off;
             
             voice.update_envelopes(instruments, r.rate);
-            voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
+            voice.update_fadeout();
+            
+            // IT formula: fadeout * envelope * channel_vol/64 * inst_global/128 * sample_global/64 * global_vol/128
+            let base = voice.compute_base_volume();
+            let inst_vol = voice.instrument_global_volume as f32 / 128.0;
+            let sample_vol = voice.sample_global_volume as f32 / 64.0;
+            let output_vol = base * channel_vol_f32 * inst_vol * sample_vol * global_vol_f32;
+            voice.set_output_volume(output_vol);
+            
+            if channel_force_off {
+                voice.set_output_volume(0.0);
+            }
             
             let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
             if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
@@ -384,7 +392,9 @@ impl ModuleBackend for XmBackend {
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
                                 voice.panning.panning = r.song_data.initial_channel_panning[i];
                                 
-                                voice.trigger_note(instruments, true);
+                                // XM: a note without instrument keeps the current instrument/envelope phase.
+                                // Envelopes reset only when a new instrument is explicitly provided.
+                                voice.trigger_note(instruments, pattern.instrument != 0);
                                 
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
@@ -476,7 +486,7 @@ impl ModuleBackend for XmBackend {
                     match subcommand {
                         0x1 => { channel.fine_porta_up(r.song_data.song_type, first_tick, param); }
                         0x2 => { channel.fine_porta_down(r.song_data.song_type, first_tick, param); }
-                        0x9 => { if first_tick { channel.it_retrig(voice_ref.as_deref_mut(), instruments, *r.tick, param); } }
+                        0x9 => { channel.it_retrig(voice_ref.as_deref_mut(), instruments, *r.tick, param); }
                         0xA => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, param as i8); }
                         0xB => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, -(param as i8)); }
                         0xC => { if *r.tick == param as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
@@ -490,6 +500,29 @@ impl ModuleBackend for XmBackend {
                         else { *r.speed = pattern.effect_param as u32; }
                     }
                 }
+                0x14 => { // Kxx: Key Off at tick xx
+                    if *r.tick == pattern.effect_param as u32 {
+                        if let Some(v) = voice_ref.as_deref_mut() {
+                            v.key_off(instruments, false);
+                        }
+                    }
+                }
+                0x15 => { // Lxx: Set Envelope Position
+                    if first_tick {
+                        if let Some(v) = voice_ref.as_deref_mut() {
+                            let inst = &instruments[v.instrument];
+                            v.volume_envelope_state.set_position(&inst.volume_envelope, pattern.effect_param);
+                            v.panning_envelope_state.set_position(&inst.panning_envelope, pattern.effect_param);
+                            v.pitch_envelope_state.set_position(&inst.pitch_envelope, pattern.effect_param);
+                        }
+                    }
+                }
+                0x19 => { // Pxy: Panning Slide
+                    channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
+                }
+                0x1B => { // Rxy: Multi Retrig Note + Volume Slide
+                    channel.retrig(voice_ref.as_deref_mut(), instruments, *r.tick, pattern.get_y(), pattern.get_x());
+                }
                 _ => {}
             }
 
@@ -498,16 +531,24 @@ impl ModuleBackend for XmBackend {
             }
         }
 
-        // 2. Process all active voices
-        let divisor = 64.0;
-        let global_vol_f32 = r.global_volume.volume as f32 / divisor;
+        // 2. Process all active voices (XM volume formula)
+        let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let mut channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
-            if r.channels[voice.channel_idx].force_off { channel_vol_f32 = 0.0; }
+            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let channel_force_off = r.channels[voice.channel_idx].force_off;
             
             voice.update_envelopes(instruments, r.rate);
-            voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
+            voice.update_fadeout();
+            
+            // XM formula: fadeout * envelope * channel_vol/64 * global_vol/64
+            let base = voice.compute_base_volume();
+            let output_vol = base * channel_vol_f32 * global_vol_f32;
+            voice.set_output_volume(output_vol);
+            
+            if channel_force_off {
+                voice.set_output_volume(0.0);
+            }
             
             let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
             if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
@@ -693,16 +734,24 @@ impl ModuleBackend for ModBackend {
             }
         }
 
-        // 2. Process all active voices
-        let divisor = 64.0;
-        let global_vol_f32 = r.global_volume.volume as f32 / divisor;
+        // 2. Process all active voices (MOD volume formula - no envelope, no inst/sample global vol)
+        let global_vol_f32 = 1.0; // MOD has no global volume
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let mut channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
-            if r.channels[voice.channel_idx].force_off { channel_vol_f32 = 0.0; }
+            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let channel_force_off = r.channels[voice.channel_idx].force_off;
             
-            voice.update_envelopes(instruments, r.rate);
-            voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
+            voice.update_fadeout();
+            
+            // MOD formula: fadeout * channel_vol/64 (no envelope, no inst/sample global vol)
+            let fadeout = voice.volume.fadeout_vol as f32 / 65536.0;
+            let channel_vol = voice.volume.get_volume() as f32 / 64.0;
+            let output_vol = fadeout * channel_vol * global_vol_f32;
+            voice.set_output_volume(output_vol);
+            
+            if channel_force_off {
+                voice.set_output_volume(0.0);
+            }
             
             let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
             if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
@@ -911,17 +960,25 @@ impl ModuleBackend for S3MBackend {
             }
         }
 
-        // 2. Process all active voices
-        let divisor = 64.0;
-        let global_vol_f32 = r.global_volume.volume as f32 / divisor;
-
+        // 2. Process all active voices (S3M volume formula)
+        let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let mut channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
-            if r.channels[voice.channel_idx].force_off { channel_vol_f32 = 0.0; }
+            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let channel_force_off = r.channels[voice.channel_idx].force_off;
             
             voice.update_envelopes(instruments, r.rate);
-            voice.update_output_volume(global_vol_f32, channel_vol_f32, divisor);
+            voice.update_fadeout();
+            
+            // S3M formula: fadeout * envelope * channel_vol/64 * global_vol/64
+            // S3M has channel_volume and global_volume but no instrument/sample global volume
+            let base = voice.compute_base_volume();
+            let output_vol = base * channel_vol_f32 * global_vol_f32;
+            voice.set_output_volume(output_vol);
+            
+            if channel_force_off {
+                voice.set_output_volume(0.0);
+            }
             
             let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
             if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
