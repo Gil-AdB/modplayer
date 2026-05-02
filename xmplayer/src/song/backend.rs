@@ -886,7 +886,10 @@ impl ModuleBackend for S3MBackend {
             // Volume Column (S3M volume range: 0-63, 255 = no volume present)
             if first_tick {
                 match pattern.volume {
-                    0..=64 => { channel.set_volume(voice_ref.as_deref_mut(), true, pattern.volume); }
+                    0..=64 => { 
+                        channel.channel_volume = pattern.volume;
+                        channel.set_volume(voice_ref.as_deref_mut(), true, pattern.volume); 
+                    }
                     _ => {}
                 }
             }
@@ -962,15 +965,18 @@ impl ModuleBackend for S3MBackend {
         let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_force_off = r.channels[voice.channel_idx].force_off;
+            let channel = &r.channels[voice.channel_idx];
+            let channel_force_off = channel.force_off;
             
             voice.update_envelopes(instruments, r.rate);
             voice.update_fadeout();
             
             // S3M formula: fadeout * envelope * channel_vol/64 * global_vol/64
-            // S3M has channel_volume and global_volume but no instrument/sample global volume
-            let base = voice.compute_base_volume();
-            let output_vol = base * global_vol_f32;
+            // S3M uses channel.channel_volume for final volume calculation
+            let fadeout = voice.volume.fadeout_vol as f32 / 65536.0;
+            let envelope = voice.volume.envelope_vol as f32 / 16384.0;
+            let channel_vol = channel.channel_volume as f32 / 64.0;
+            let output_vol = fadeout * envelope * channel_vol * global_vol_f32;
             voice.set_output_volume(output_vol);
             
             if channel_force_off {
