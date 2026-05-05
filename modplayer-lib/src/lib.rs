@@ -114,7 +114,12 @@ extern "C" fn Modplayer_Stop(app_ptr: *mut c_void) {
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
     self_.close_audio();
-    let _ = unsafe { Box::from_raw(self_) };
+    // Don't drop the App. Its AudioOutput owns the sdl2::Sdl context whose
+    // Drop calls SDL_Quit, which on macOS tears down windows via AppKit.
+    // AppKit is main-thread-only and Modplayer_Stop is typically called from
+    // an embedder's worker thread, which crashes with
+    // "Must only be used from the main thread". The host process is exiting
+    // anyway, so leak the App and let the OS reclaim memory.
 }
 
 #[unsafe(no_mangle)]
