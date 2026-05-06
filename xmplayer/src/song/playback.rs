@@ -55,7 +55,12 @@ impl Song {
         self.tick = 0;
         self.speed = self.song_data.tempo as u32;
         self.bpm = BPM::new(self.song_data.bpm as u32, self.rate);
+        // Mirror Song::new: seed global_volume from the loaded song_data so a
+        // reset() during compute_total_duration / PlaybackCmd::Restart doesn't
+        // discard the module's authored global volume.
         self.global_volume = GlobalVolume::new();
+        self.global_volume.volume = self.song_data.global_volume as u32;
+        self.global_volume.song_type = Some(self.song_data.song_type);
         self.pattern_change = PatternChange::new();
         self.total_samples = 0;
         self.last_fps_sample = 0;

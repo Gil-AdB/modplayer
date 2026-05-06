@@ -70,6 +70,29 @@ fn test_it_nna_note_off() {
 }
 
 #[test]
+fn test_it_sample_global_volume_no_double_apply() {
+    // Regression: prior to the fix, the IT formula multiplied by
+    // sample_global_volume/64 once inside compute_base_volume() and again in
+    // the backend, so a sample with global_volume=32 came out at (32/64)^2.
+    let mut builder = MockSongBuilder::new(SongType::IT, 1);
+    builder.add_empty_pattern(64);
+    builder.add_instrument("HalfVol", vec![0.5; 100]);
+    builder.instruments[1].samples[0].global_volume = 32; // half
+    builder.instruments[1].global_volume = 128;            // max IT instrument vol
+    builder.global_volume = 128;                           // max IT song vol
+
+    builder.set_pattern_row(0, 0, 0, Pattern {
+        note: 61, instrument: 1, volume: 64, ..Pattern::new()
+    });
+    let mut tester = SongTester::new(builder.build());
+
+    tester.tick();
+    // Expected: 1.0 (compute_base, after sample_global) * 1.0 (inst) * 1.0 (global) = 0.5
+    // Buggy:    0.5 (compute_base) * 32/64 (sample again) * 1.0 * 1.0 = 0.25
+    tester.assert_voice_volume_near(0, 0.5, 0.001);
+}
+
+#[test]
 fn test_it_volume_scaling() {
     let mut builder = MockSongBuilder::new(SongType::IT, 2);
     builder.add_empty_pattern(64);

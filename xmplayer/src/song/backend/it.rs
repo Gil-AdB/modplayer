@@ -242,11 +242,15 @@ impl ModuleBackend for ItBackend {
             voice.update_envelopes(instruments, r.rate);
             voice.update_fadeout();
             
-            // IT formula: fadeout * envelope * channel_vol/64 * inst_global/128 * sample_global/64 * global_vol/128
+            // IT formula: fadeout * envelope * note_vol/64 + tremolo, clamped,
+            //   * sample_global/64 * inst_global/128 * global_vol/128.
+            // sample_global is already inside compute_base_volume(); don't
+            // multiply by it again here (fixes a regression where samples with
+            // non-default global volume came out attenuated by an extra
+            // sample_global/64 factor).
             let base = voice.compute_base_volume();
             let inst_vol = voice.instrument_global_volume as f32 / 128.0;
-            let sample_vol = voice.sample_global_volume as f32 / 64.0;
-            let output_vol = base * inst_vol * sample_vol * global_vol_f32;
+            let output_vol = base * inst_vol * global_vol_f32;
             voice.set_output_volume(output_vol);
             
             if channel_force_off {
