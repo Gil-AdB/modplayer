@@ -132,18 +132,16 @@ pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
     idx
 }
 
-/// Set the basic voice fields shared by every format's note-trigger path.
-/// Caller is responsible for sample-volume retrig, panning, trigger_note,
-/// envelope reset, and the channel.voice_idx assignment - those vary
-/// per format.
+/// Set the context fields a fresh voice needs before `Voice::trigger_note`
+/// can run (trigger_note reads `instrument` and `sample` to look up
+/// envelopes / global vol / filter / etc.). The playback-state fields
+/// (`on`, `sustained`, `sample_position`, `loop_started`) are owned by
+/// `trigger_note` so the retrig effect path - which calls trigger_note
+/// without going through init_voice_basics - resets them too.
 pub(super) fn init_voice_basics(voice: &mut Voice, channel_idx: usize, instrument: usize, sample: usize) {
-    voice.on = true;
     voice.channel_idx = channel_idx;
     voice.instrument = instrument;
     voice.sample = sample;
-    voice.sustained = true;
-    voice.sample_position = 4.0;
-    voice.loop_started = false;
 }
 
 /// Apply the previous-voice-on-channel handling that runs before alloc_voice
