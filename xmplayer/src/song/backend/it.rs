@@ -1,7 +1,10 @@
 use crate::module_reader::is_note_valid;
 use crate::instrument::Instrument;
 use crate::channel_state::Voice;
-use crate::song::backend::{alloc_voice, set_channel_note, ModuleBackend, SongPlaybackResources};
+use crate::song::backend::{
+    alloc_voice, apply_extended, set_channel_note, ModuleBackend,
+    SongPlaybackResources, IT_S_TABLE,
+};
 
 pub struct ItBackend {}
 
@@ -202,14 +205,14 @@ impl ModuleBackend for ItBackend {
                 0x17 => { r.global_volume.volume_slide(note_delay_first_tick, pattern.effect_param); }
                 0x18 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((pattern.effect_param as i32 * 4).min(255)); } } }
                 0x13 => {
-                    let x = pattern.get_x();
-                    let y = pattern.get_y();
-                    match x {
-                        0x08 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((y << 4) as i32); } } }
-                        0x0C => { if *r.tick == y as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
-                        0x0E => { if first_tick && !r.pattern_change.delay_processed { r.pattern_change.pattern_delay = y as u8; r.pattern_change.delay_processed = true; } }
-                        _ => {}
-                    }
+                    let kind = IT_S_TABLE[pattern.get_x() as usize];
+                    apply_extended(
+                        kind, channel, voice_ref.as_deref_mut(),
+                        r.pattern_change, instruments,
+                        *r.tick, *r.row, first_tick, first_tick,
+                        r.song_data.song_type, r.rate, r.frequency_tables,
+                        pattern.get_y(),
+                    );
                 }
                 0x1A => { // Z: Resonant Filter
                     if first_tick {

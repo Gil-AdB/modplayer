@@ -1,5 +1,8 @@
 use crate::module_reader::{SongType, is_note_valid};
-use crate::song::backend::{alloc_voice, set_channel_note, ModuleBackend, SongPlaybackResources};
+use crate::song::backend::{
+    alloc_voice, apply_extended, set_channel_note, ModuleBackend,
+    SongPlaybackResources, XM_E_TABLE,
+};
 
 pub struct XmBackend {}
 
@@ -176,44 +179,14 @@ impl ModuleBackend for XmBackend {
                 0xC => { if first_tick { channel.set_volume(voice_ref.as_deref_mut(), true, pattern.effect_param); } }
                 0xD => { r.pattern_change.set_break(r.song_data.song_type, first_tick, pattern.effect_param); }
                 0xE => {
-                    let subcommand = pattern.get_x();
-                    let param = pattern.get_y();
-                    match subcommand {
-                        0x1 => { channel.fine_porta_up(r.song_data.song_type, first_tick, param); }
-                        0x2 => { channel.fine_porta_down(r.song_data.song_type, first_tick, param); }
-                        0x3 => { if first_tick { channel.glissando = param != 0; } }
-                        0x4 => { if first_tick { channel.vibrato_waveform = param & 3; channel.vibrato_retrig = (param & 4) == 0; } }
-                        0x5 => { if first_tick { channel.note.finetune = (((param as i16) << 4) - 128) as i8; } }
-                        0x6 => { // E6x: Pattern Loop
-                            if first_tick {
-                                if param == 0 {
-                                    channel.loop_row = *r.row as u8;
-                                } else {
-                                    if channel.loop_count == 0 {
-                                        channel.loop_count = param;
-                                        r.pattern_change.set_loop(channel.loop_row);
-                                    } else {
-                                        channel.loop_count -= 1;
-                                        if channel.loop_count > 0 {
-                                            r.pattern_change.set_loop(channel.loop_row);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        0x7 => { if first_tick { channel.tremolo_waveform = param & 3; channel.tremolo_retrig = (param & 4) == 0; } }
-                        0x9 => { channel.it_retrig(voice_ref.as_deref_mut(), instruments, *r.tick, param); }
-                        0xA => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, param as i8); }
-                        0xB => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, -(param as i8)); }
-                        0xC => { if *r.tick == param as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
-                        0xE => { 
-                            if first_row_tick && !r.pattern_change.delay_processed {
-                                r.pattern_change.pattern_delay = param as u8; 
-                                r.pattern_change.delay_processed = true;
-                            }
-                        }
-                        _ => {}
-                    }
+                    let kind = XM_E_TABLE[pattern.get_x() as usize];
+                    apply_extended(
+                        kind, channel, voice_ref.as_deref_mut(),
+                        r.pattern_change, instruments,
+                        *r.tick, *r.row, first_tick, first_row_tick,
+                        r.song_data.song_type, r.rate, r.frequency_tables,
+                        pattern.get_y(),
+                    );
                 }
                 0x0F => {
                     if first_tick {

@@ -2,8 +2,9 @@
 // the backend/ submodule (one file per format).
 
 use crate::song::{GlobalVolume, BPM, PatternChange};
-use crate::module_reader::SongData;
+use crate::module_reader::{SongData, SongType};
 use crate::channel_state::{ChannelState, Voice};
+use crate::instrument::Instrument;
 use crate::tables::AudioTables;
 
 mod it;
@@ -53,6 +54,234 @@ pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
         }
     }
     idx
+}
+
+/// Kind of extended-subcommand effect (XM `Exy`, S3M `Sxy`, IT `Sxy`).
+///
+/// Each format has its own 16-entry table that maps the high nibble (`x`) of
+/// the param to an `ExtendedCmdKind`. The `y` nibble is the parameter and is
+/// passed to `apply_extended` along with the kind. `None` is "no-op / not
+/// implemented for this format / handled elsewhere (e.g. note delay, which
+/// runs in the note-trigger path)".
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum ExtendedCmdKind {
+    None,
+    FinePortaUp,        // XM E1, MOD E1
+    FinePortaDown,      // XM E2, MOD E2
+    Glissando,          // XM E3
+    VibratoWaveform,    // XM E4
+    SetFinetune,        // XM E5
+    PatternLoop,        // XM E6, MOD E6, S3M SB
+    TremoloWaveform,    // XM E7
+    NoteRetrig,         // XM E9, MOD E9 (extended retrig with no volume change)
+    FineVolSlideUp,     // XM EA, MOD EA
+    FineVolSlideDown,   // XM EB, MOD EB
+    NoteCutAtTick,      // XM EC, MOD EC, S3M SC, IT SC
+    PatternDelay,       // XM EE, MOD EE, S3M SE, IT SE
+    SetExtraPanning,    // S3M S8, IT S8 (param << 4)
+    SetItPanning,       // IT only - 0..255 panning at first tick (currently goes through 0x18)
+}
+
+/// XM's Exy table.
+pub(super) const XM_E_TABLE: [ExtendedCmdKind; 16] = {
+    use ExtendedCmdKind::*;
+    [
+        None,             // E0  set filter (Amiga LED) - not implemented
+        FinePortaUp,      // E1
+        FinePortaDown,    // E2
+        Glissando,        // E3
+        VibratoWaveform,  // E4
+        SetFinetune,      // E5
+        PatternLoop,      // E6
+        TremoloWaveform,  // E7
+        None,             // E8
+        NoteRetrig,       // E9
+        FineVolSlideUp,   // EA
+        FineVolSlideDown, // EB
+        NoteCutAtTick,    // EC
+        None,             // ED  note delay - handled at note-trigger time
+        PatternDelay,     // EE
+        None,             // EF
+    ]
+};
+
+/// MOD's Exy table. Identical to XM except E3/E4/E5/E7 (waveform / glissando /
+/// finetune) are intentionally unimplemented to preserve historical behavior.
+pub(super) const MOD_E_TABLE: [ExtendedCmdKind; 16] = {
+    use ExtendedCmdKind::*;
+    [
+        None,             // E0
+        FinePortaUp,      // E1
+        FinePortaDown,    // E2
+        None,             // E3
+        None,             // E4
+        None,             // E5
+        PatternLoop,      // E6  (was a TODO stub — now wired via the table)
+        None,             // E7
+        None,             // E8
+        NoteRetrig,       // E9
+        FineVolSlideUp,   // EA
+        FineVolSlideDown, // EB
+        NoteCutAtTick,    // EC
+        None,             // ED  note delay
+        PatternDelay,     // EE
+        None,             // EF
+    ]
+};
+
+/// S3M's Sxy table.
+pub(super) const S3M_S_TABLE: [ExtendedCmdKind; 16] = {
+    use ExtendedCmdKind::*;
+    [
+        None,             // S0
+        None,             // S1  set glissando (not implemented)
+        None,             // S2  set finetune (not implemented)
+        None,             // S3  vibrato waveform (not implemented)
+        None,             // S4  tremolo waveform (not implemented)
+        None,             // S5
+        None,             // S6  delay note retrigger
+        None,             // S7  NNA controls
+        SetExtraPanning,  // S8  panning (param * 17)
+        None,             // S9  surround
+        None,             // SA  high sample offset
+        PatternLoop,      // SB
+        NoteCutAtTick,    // SC
+        None,             // SD  note delay
+        PatternDelay,     // SE
+        None,             // SF
+    ]
+};
+
+/// IT's Sxy table — only the subcommands the engine currently honors.
+pub(super) const IT_S_TABLE: [ExtendedCmdKind; 16] = {
+    use ExtendedCmdKind::*;
+    [
+        None,             // S0
+        None,             // S1
+        None,             // S2
+        None,             // S3
+        None,             // S4
+        None,             // S5
+        None,             // S6
+        None,             // S7
+        SetItPanning,     // S8 (param << 4 - 16-step coarse panning)
+        None,             // S9
+        None,             // SA
+        None,             // SB
+        NoteCutAtTick,    // SC
+        None,             // SD  note delay
+        PatternDelay,     // SE
+        None,             // SF
+    ]
+};
+
+/// Apply an extended-subcommand effect. Inputs come from the channel-loop
+/// scope: the caller already holds `&mut ChannelState` and an optional
+/// `&mut Voice`, and supplies the read-only context bits (tick, row, song
+/// type, etc.) by value or shared reference.
+pub(super) fn apply_extended(
+    kind: ExtendedCmdKind,
+    channel: &mut ChannelState,
+    mut voice: Option<&mut Voice>,
+    pattern_change: &mut PatternChange,
+    instruments: &Vec<Instrument>,
+    tick: u32,
+    row: usize,
+    first_tick: bool,
+    first_row_tick: bool,
+    song_type: SongType,
+    rate: f32,
+    frequency_tables: &AudioTables,
+    y: u8,
+) {
+    match kind {
+        ExtendedCmdKind::None => {}
+        ExtendedCmdKind::FinePortaUp => {
+            channel.fine_porta_up(song_type, first_tick, y);
+        }
+        ExtendedCmdKind::FinePortaDown => {
+            channel.fine_porta_down(song_type, first_tick, y);
+        }
+        ExtendedCmdKind::Glissando => {
+            if first_tick { channel.glissando = y != 0; }
+        }
+        ExtendedCmdKind::VibratoWaveform => {
+            if first_tick {
+                channel.vibrato_waveform = y & 3;
+                channel.vibrato_retrig = (y & 4) == 0;
+            }
+        }
+        ExtendedCmdKind::SetFinetune => {
+            if first_tick {
+                channel.note.finetune = (((y as i16) << 4) - 128) as i8;
+            }
+        }
+        ExtendedCmdKind::PatternLoop => {
+            // Per-channel pattern loop. y == 0 marks the loop start row;
+            // y > 0 fires the back-jump up to y times.
+            if first_tick {
+                if y == 0 {
+                    channel.loop_row = row as u8;
+                } else if channel.loop_count == 0 {
+                    channel.loop_count = y;
+                    pattern_change.set_loop(channel.loop_row);
+                } else {
+                    channel.loop_count -= 1;
+                    if channel.loop_count > 0 {
+                        pattern_change.set_loop(channel.loop_row);
+                    }
+                }
+            }
+        }
+        ExtendedCmdKind::TremoloWaveform => {
+            if first_tick {
+                channel.tremolo_waveform = y & 3;
+                channel.tremolo_retrig = (y & 4) == 0;
+            }
+        }
+        ExtendedCmdKind::NoteRetrig => {
+            channel.it_retrig(voice.as_deref_mut(), instruments, tick, y);
+        }
+        ExtendedCmdKind::FineVolSlideUp => {
+            channel.fine_volume_slide(voice.as_deref_mut(), first_tick, y as i8);
+        }
+        ExtendedCmdKind::FineVolSlideDown => {
+            channel.fine_volume_slide(voice.as_deref_mut(), first_tick, -(y as i8));
+        }
+        ExtendedCmdKind::NoteCutAtTick => {
+            if tick == y as u32 {
+                channel.on = false;
+                if let Some(v) = voice.as_deref_mut() { v.on = false; }
+            }
+        }
+        ExtendedCmdKind::PatternDelay => {
+            // XM uses first_row_tick gating; S3M/IT use first_tick.
+            // Both end up at "set once at the row's first tick".
+            let gate = match song_type { SongType::XM => first_row_tick, _ => first_tick };
+            if gate && !pattern_change.delay_processed {
+                pattern_change.pattern_delay = y;
+                pattern_change.delay_processed = true;
+            }
+        }
+        ExtendedCmdKind::SetExtraPanning => {
+            // S3M S8x: y nibble * 17 maps 0..15 to 0..255.
+            if first_tick {
+                if let Some(v) = voice.as_deref_mut() {
+                    v.panning.set_panning(((y as i32) * 17).min(255));
+                }
+            }
+        }
+        ExtendedCmdKind::SetItPanning => {
+            // IT S8x: y << 4 — 16-step coarse panning.
+            if first_tick {
+                if let Some(v) = voice.as_deref_mut() {
+                    v.panning.set_panning((y << 4) as i32);
+                }
+            }
+        }
+    }
+
+    let _ = (frequency_tables, rate); // currently only fine_porta_* uses these via channel methods
 }
 
 /// Compute real_note (mapped_note + sample.relative_note clamped) and push

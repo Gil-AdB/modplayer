@@ -1,5 +1,8 @@
 use crate::module_reader::{SongType, is_note_valid};
-use crate::song::backend::{alloc_voice, set_channel_note, ModuleBackend, SongPlaybackResources};
+use crate::song::backend::{
+    alloc_voice, apply_extended, set_channel_note, ModuleBackend,
+    SongPlaybackResources, S3M_S_TABLE,
+};
 
 pub struct S3MBackend {}
 impl S3MBackend {
@@ -173,32 +176,14 @@ impl ModuleBackend for S3MBackend {
                 16 => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param, r.song_data.song_type); }
                 17 => { channel.it_retrig(voice_ref.as_deref_mut(), instruments, *r.tick, pattern.effect_param); }
                 19 => {
-                    let x = pattern.get_x();
-                    let y = pattern.get_y();
-                    match x {
-                        0x8 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((y as i32 * 17).min(255)); } } }
-                        0xB => { // SBx: Pattern Loop
-                            if first_tick {
-                                if y == 0 {
-                                    channel.loop_row = *r.row as u8;
-                                } else {
-                                    if channel.loop_count == 0 {
-                                        channel.loop_count = y;
-                                        r.pattern_change.set_loop(channel.loop_row);
-                                    } else {
-                                        channel.loop_count -= 1;
-                                        if channel.loop_count > 0 {
-                                            r.pattern_change.set_loop(channel.loop_row);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        0xC => { if *r.tick == y as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
-                        0xE => { if first_tick && !r.pattern_change.delay_processed { r.pattern_change.pattern_delay = y as u8; r.pattern_change.delay_processed = true; } }
-
-                        _ => {}
-                    }
+                    let kind = S3M_S_TABLE[pattern.get_x() as usize];
+                    apply_extended(
+                        kind, channel, voice_ref.as_deref_mut(),
+                        r.pattern_change, instruments,
+                        *r.tick, *r.row, first_tick, first_tick,
+                        r.song_data.song_type, r.rate, r.frequency_tables,
+                        pattern.get_y(),
+                    );
                 }
                 20 => { if first_tick { r.bpm.update(pattern.effect_param as u32, r.rate); } }
                 22 => { r.global_volume.set_volume(note_delay_first_tick, pattern.effect_param); }
