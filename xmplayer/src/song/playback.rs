@@ -8,8 +8,8 @@ use std::sync::mpsc::Receiver;
 use crate::channel_state::{ChannelState, Voice};
 use crate::module_reader::SongType;
 use crate::song::backend::{
-    apply_extended, apply_flow_control_effect, ExtendedCmdKind, SongPlaybackResources,
-    IT_S_TABLE, MOD_E_TABLE, S3M_S_TABLE, XM_E_TABLE,
+    apply_extended, apply_flow_control_effect, EffectCtx, ExtendedCmdKind,
+    SongPlaybackResources, IT_S_TABLE, MOD_E_TABLE, S3M_S_TABLE, XM_E_TABLE,
 };
 use crate::song::{
     BPM, BufferAdapter, BufferState, CallbackState, GlobalVolume, InterleavedBufferAdaptar,
@@ -304,16 +304,18 @@ impl Song {
                     // touch voices we're not running. apply_extended is
                     // safe to call with voice = None for the flow ones.
                     if matches!(kind, ExtendedCmdKind::PatternLoop | ExtendedCmdKind::PatternDelay) {
-                        apply_extended(
-                            kind,
-                            &mut self.channels[i],
-                            None,
-                            &mut self.pattern_change,
-                            &self.song_data.instruments,
-                            self.tick, row, first_tick, first_tick,
-                            song_type, rate, self.frequency_tables,
-                            pat.get_y(),
-                        );
+                        let mut ctx = EffectCtx {
+                            pattern_change: &mut self.pattern_change,
+                            instruments: &self.song_data.instruments,
+                            frequency_tables: self.frequency_tables,
+                            tick: self.tick,
+                            row,
+                            first_tick,
+                            first_row_tick: first_tick,
+                            song_type,
+                            rate,
+                        };
+                        apply_extended(kind, &mut self.channels[i], None, &mut ctx, pat.get_y());
                     }
                 }
             }

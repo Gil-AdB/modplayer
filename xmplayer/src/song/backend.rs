@@ -311,25 +311,46 @@ pub(super) const IT_S_TABLE: [ExtendedCmdKind; 16] = {
     ]
 };
 
-/// Apply an extended-subcommand effect. Inputs come from the channel-loop
-/// scope: the caller already holds `&mut ChannelState` and an optional
-/// `&mut Voice`, and supplies the read-only context bits (tick, row, song
-/// type, etc.) by value or shared reference.
+/// Bundle of borrow-split context that the per-channel effect helpers
+/// share. Constructed once per channel iteration. Lets shared helpers
+/// take `(channel, voice, ctx)` instead of stretching out into 10+
+/// individual arguments, and keeps the lifetime story explicit.
+#[allow(dead_code)] // frequency_tables / rate are part of the canonical context
+                    // bundle; kept available for future helpers that need them.
+pub(super) struct EffectCtx<'a> {
+    pub pattern_change: &'a mut PatternChange,
+    pub instruments:    &'a Vec<Instrument>,
+    pub frequency_tables: &'a AudioTables,
+    pub tick:           u32,
+    pub row:            usize,
+    pub first_tick:     bool,
+    pub first_row_tick: bool,
+    pub song_type:      SongType,
+    pub rate:           f32,
+}
+
+/// Apply an extended-subcommand effect. Operates on the channel/voice the
+/// caller has already borrowed mutably for this iteration; everything
+/// else (pattern_change, instruments, tick, etc.) comes through the
+/// shared `EffectCtx`.
 pub(super) fn apply_extended(
     kind: ExtendedCmdKind,
     channel: &mut ChannelState,
     mut voice: Option<&mut Voice>,
-    pattern_change: &mut PatternChange,
-    instruments: &Vec<Instrument>,
-    tick: u32,
-    row: usize,
-    first_tick: bool,
-    first_row_tick: bool,
-    song_type: SongType,
-    rate: f32,
-    frequency_tables: &AudioTables,
+    ctx: &mut EffectCtx<'_>,
     y: u8,
 ) {
+    // Pull frequently-read fields out so the body keeps reading like
+    // the inline match did before the bundle was introduced.
+    let pattern_change   = &mut *ctx.pattern_change;
+    let instruments      = ctx.instruments;
+    let tick             = ctx.tick;
+    let row              = ctx.row;
+    let first_tick       = ctx.first_tick;
+    let first_row_tick   = ctx.first_row_tick;
+    let song_type        = ctx.song_type;
+    // ctx.rate / ctx.frequency_tables aren't read directly here; the
+    // channel.fine_porta_* paths reach period tables through SongType.
     match kind {
         ExtendedCmdKind::None => {}
         ExtendedCmdKind::FinePortaUp => {
@@ -417,7 +438,6 @@ pub(super) fn apply_extended(
         }
     }
 
-    let _ = (frequency_tables, rate); // currently only fine_porta_* uses these via channel methods
 }
 
 /// Compute real_note (mapped_note + sample.relative_note clamped) and push

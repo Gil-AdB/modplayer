@@ -3,8 +3,8 @@ use crate::channel_state::Voice;
 use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_extended, apply_flow_control_effect, init_voice_basics,
-    mute_silent_voices, set_channel_note, ModuleBackend, SongPlaybackResources,
-    IT_S_TABLE,
+    mute_silent_voices, set_channel_note, EffectCtx, ModuleBackend,
+    SongPlaybackResources, IT_S_TABLE,
 };
 
 pub struct ItBackend {}
@@ -220,13 +220,18 @@ impl ModuleBackend for ItBackend {
                 0x18 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((pattern.effect_param as i32 * 4).min(255)); } } }
                 0x13 => {
                     let kind = IT_S_TABLE[pattern.get_x() as usize];
-                    apply_extended(
-                        kind, channel, voice_ref.as_deref_mut(),
-                        r.pattern_change, instruments,
-                        *r.tick, *r.row, first_tick, first_tick,
-                        r.song_data.song_type, r.rate, r.frequency_tables,
-                        pattern.get_y(),
-                    );
+                    let mut ctx = EffectCtx {
+                        pattern_change: r.pattern_change,
+                        instruments,
+                        frequency_tables: r.frequency_tables,
+                        tick: *r.tick,
+                        row: *r.row,
+                        first_tick,
+                        first_row_tick: first_tick,
+                        song_type: r.song_data.song_type,
+                        rate: r.rate,
+                    };
+                    apply_extended(kind, channel, voice_ref.as_deref_mut(), &mut ctx, pattern.get_y());
                 }
                 0x1A => { // Z: Resonant Filter
                     if first_tick {
