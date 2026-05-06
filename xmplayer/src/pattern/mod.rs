@@ -55,25 +55,6 @@ impl Pattern {
         }
     }
 
-    pub(crate) fn has_vibrato(&self, song_type: SongType) -> bool {
-        match song_type {
-            SongType::IT => {
-                self.effect == 0x08 || self.effect == 0x06 || (self.volume >= 203 && self.volume <= 212)
-            }
-            _ => {
-                let vol_eff = self.get_volume_effect();
-                vol_eff == 0x0a || vol_eff == 0x0b || self.effect == 0x04 || self.effect == 0x06
-            }
-        }
-    }
-
-    pub(crate) fn has_tremolo(&self, song_type: SongType) -> bool {
-        match song_type {
-            SongType::IT => self.effect == 0x12, // R? No, IT has different Tremolo.
-            _ => self.effect == 0x7
-        }
-    }
-
     pub(crate) fn get_x(&self) -> u8 {
         self.effect_param >> 4
     }
@@ -82,23 +63,8 @@ impl Pattern {
         self.effect_param & 0xf
     }
 
-    fn get_volume_effect(&self) -> u8 {
-        (self.volume & 0xf0) >> 4
-    }
     pub(crate) fn get_volume_param(&self) -> u8 {
         self.volume & 0xf
-    }
-
-    pub(crate) fn get_vibrato_speed(&self) -> u8 {
-        if self.effect == 0x4 { self.get_x() }
-        else if (self.volume & 0xf0) == 0xb0 { self.get_volume_param() }
-        else { 0 }
-    }
-
-    pub(crate) fn get_vibrato_depth(&self) -> u8 {
-        if self.effect == 0x4 { self.get_y() }
-        else if (self.volume & 0xf0) == 0xa0 { self.get_volume_param() }
-        else { 0 }
     }
 }
 

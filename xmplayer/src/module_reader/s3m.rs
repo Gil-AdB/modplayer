@@ -83,7 +83,6 @@
         let signature = file.read_string(4);
 
         if signature != "SCRM" {
-            dbg!(&signature);
             return Err(SimpleError::new("Unknown s3m format - signature"));
         }
 
@@ -91,13 +90,11 @@
         let speed = file.read_u8()?;
         let bpm = file.read_u8()?;
         let master_volume = file.read_u8()?;
-        dbg!(global_volume, speed, bpm, master_volume);
         let _ultra_click_removal = file.read_u8()?;
         let default_panning_present = file.read_u8()?;
         file.seek(SeekFrom::Current(10))?;
 
         let channel_data = file.read_bytes(32)?;
-        dbg!(&channel_data);
         let mut channel_map = [255u8; 32];
 
         for i in 0..channel_data.len() {
@@ -109,16 +106,25 @@
 
         let mut pattern_order = file.read_bytes(song_length as usize)?;
         truncate_patterns(&mut pattern_order);
-        dbg!(&pattern_order);
 
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize)?;
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize)?;
-        dbg!(&instrument_ptrs, &pattern_ptrs);
+
+        let channel_volumes = file.read_bytes(32)?;
+        let mut initial_channel_volume = [64u8; 64];
+        for i in 0..32 {
+            if channel_map[i] != 255 {
+                let vol = channel_volumes[i];
+                initial_channel_volume[channel_map[i] as usize] = if vol > 64 { 64 } else { vol };
+            }
+        }
 
         let mut initial_channel_panning = [128u8; 64];
+        /* 
         for i in 0..32 {
             initial_channel_panning[i] = if i % 2 == 0 { 51 } else { 204 };
         }
+        */
         
         if default_panning_present == 252 {
             let panning_data = file.read_bytes(32)?;
@@ -171,7 +177,7 @@
             instruments,
             use_amiga: true,
             song_message: "".to_string(),
-            initial_channel_volume: [64; 64],
+            initial_channel_volume,
             initial_channel_panning,
             global_volume,
             master_volume,
@@ -196,7 +202,6 @@
     }
 
     fn read_patterns<R: Read + Seek>(file: &mut R, pattern_ptrs: &Vec<u16>, channel_count: usize, channel_map: &[u8; 32]) -> SimpleResult<Vec<Patterns>> {
-        dbg!(pattern_ptrs.len());
         let pattern_count = pattern_ptrs.len();
         let mut patterns: Vec<Patterns> = vec![];
         patterns.reserve_exact(pattern_count);
@@ -257,11 +262,20 @@
                     if channel_map[channel_num as usize] == 255 { continue; }
                     let channel = &mut channels[channel_id];
 
-                    channel.note = note;
-                    channel.instrument = instrument;
-                    channel.volume = volume;
-                    channel.effect = effect;
-                    channel.effect_param = effect_param;
+                    // Packed S3M: each cell carries a subset of fields (see docs/s3m.txt bits 32/64/128).
+                    // Subsequent cells on the same row merge into that channel — do not wipe fields
+                    // that this cell omitted (fixes wrong volumes / lost notes vs ST3/OpenMPT).
+                    if pattern_data & 32 != 0 {
+                        channel.note = note;
+                        channel.instrument = instrument;
+                    }
+                    if pattern_data & 64 != 0 {
+                        channel.volume = volume;
+                    }
+                    if pattern_data & 128 != 0 {
+                        channel.effect = effect;
+                        channel.effect_param = effect_param;
+                    }
                 }
             }
             patterns.push(pattern)
@@ -271,7 +285,6 @@
     }
 
     fn read_instruments<R: Read + Seek>(file: &mut R, instrument_ptrs: &Vec<u16>) -> SimpleResult<Vec<Instrument>> {
-        dbg!(instrument_ptrs.len());
         let mut instruments: Vec<Instrument> = vec![];
         let instrument_count = instrument_ptrs.len();
 
@@ -281,7 +294,6 @@
         instruments.push(Instrument::new());
 
         for (instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
-            dbg!(instrument_idx, instrument_ptr);
             let mut instrument = Instrument::new();
             file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16))?;
             let _type_ = file.read_u8()?;

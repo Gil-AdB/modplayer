@@ -120,4 +120,35 @@ mod tests {
         assert!(!tester.song.voices[0].on);
         assert_eq!(tester.song.voices[0].volume.fadeout_vol, 0);
     }
+
+    #[test]
+    fn test_xm_note_without_instrument_keeps_envelope_position() {
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(2);
+
+        // Enable a simple envelope so we can observe phase continuity.
+        builder.instruments[1].volume_envelope.on = true;
+        builder.instruments[1].volume_envelope.points[0].frame = 0;
+        builder.instruments[1].volume_envelope.points[0].value = 64;
+        builder.instruments[1].volume_envelope.points[1].frame = 40;
+        builder.instruments[1].volume_envelope.points[1].value = 32;
+        builder.instruments[1].volume_envelope.size = 2;
+
+        // Row 0: note + instrument (starts envelope)
+        builder.add_pattern_row(0, 0, 48, 1, 255, 0x0, 0x00);
+        // Row 1: note without instrument (XM should NOT reset envelope)
+        builder.add_pattern_row(0, 1, 50, 0, 255, 0x0, 0x00);
+
+        let mut tester = builder.get_tester();
+
+        // Advance through row 0 so envelope position grows.
+        tester.step_to_row(1);
+        let env_before = tester.song.voices[0].volume_envelope_state.frame;
+        assert!(env_before > 0);
+
+        // Process row 1 tick 0 note event; envelope should continue, not jump back to 0.
+        tester.tick();
+        let env_after = tester.song.voices[0].volume_envelope_state.frame;
+        assert!(env_after >= env_before, "Envelope reset unexpectedly: before={}, after={}", env_before, env_after);
+    }
 }

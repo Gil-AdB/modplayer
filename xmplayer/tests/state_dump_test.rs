@@ -1,6 +1,4 @@
 use xmplayer::song_state::SongState;
-use xmplayer::song::InterleavedBufferAdaptar;
-use xmplayer::song::CallbackState;
 use xmplayer::song::test_dump::dump_tick;
 use std::fs::File;
 use std::io::Write;
@@ -13,17 +11,17 @@ fn generate_state_dump(path: &str, output_filename: &str, max_ticks: usize) {
 
     let mut output_file = File::create(output_filename).expect("Failed to create dump file");
 
-    let mut dummy_buffer = vec![0.0f32; 1000000];
+    let _dummy_buffer = vec![0.0f32; 1000000];
     
     let mut ticks = 0;
     
     while ticks < max_ticks {
         let mut song = song_handle.get_song().lock().unwrap();
         
+        song.process_tick();
         let dump = dump_tick(&song);
         writeln!(output_file, "{}", dump.to_string()).unwrap();
 
-        song.process_tick();
         if !song.next_tick() {
             break;
         }
@@ -54,4 +52,14 @@ fn test_dump_strshine() {
 #[test]
 fn test_dump_2nd_reality() {
     generate_state_dump("/Users/gil-ad/Downloads/mods/2nd_reality.s3m", "test_data/2nd_reality_refactor.txt", 1000);
+}
+
+#[test]
+fn test_dump_2nd_pm_xm() {
+    generate_state_dump("/Users/gil-ad/work/modplayer/2ND_PM.xm", "/Users/gil-ad/work/modplayer/2ND_PM_xm_refactor.txt", 2000);
+}
+
+#[test]
+fn test_dump_2nd_pm_s3m() {
+    generate_state_dump("/Users/gil-ad/work/modplayer/2ND_PM.S3M", "/Users/gil-ad/work/modplayer/2ND_PM_s3m_refactor.txt", 2000);
 }

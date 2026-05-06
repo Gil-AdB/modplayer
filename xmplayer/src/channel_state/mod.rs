@@ -1,4 +1,4 @@
-use crate::channel_state::channel_state::{EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState};
+use crate::channel_state::channel_state::{EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState, WaveControl};
 use crate::instrument::Instruments;
 use crate::tables::AudioTables;
 use crate::module_reader::SongType;
@@ -50,34 +50,35 @@ impl SplineData {
 
 #[derive(Clone,Copy,Debug)]
 pub struct Voice {
-    pub(crate) instrument:                     usize,
-    pub(crate) sample:                         usize,
-    pub(crate) frequency:                      f32,
-    pub(crate) du:                             f32,
-    pub(crate) volume:                         Volume,
-    pub(crate) sample_position:                f32,
-    pub(crate) loop_started:                   bool,
+    pub        instrument:                     usize,
+    pub        sample:                         usize,
+    pub        frequency:                      f32,
+    pub        du:                             f32,
+    pub        volume:                         Volume,
+    pub        sample_position:                f32,
+    pub        loop_started:                   bool,
     pub(crate) ping:                           bool,
     pub        sustained:                      bool,
     pub(crate) spline_data:                    SplineData,
     
     // Playback state moved from ChannelState
-    pub(crate) volume_envelope_state:          EnvelopeState,
-    pub(crate) panning_envelope_state:         EnvelopeState,
-    pub(crate) pitch_envelope_state:           EnvelopeState,
-    pub(crate) vibrato_envelope_state:         VibratoEnvelopeState,
-    pub(crate) vibrato_state:                  VibratoState,
-    pub(crate) tremolo_state:                  TremoloState,
-    pub(crate) frequency_shift:                f32,
-    pub(crate) panning:                        Panning,
+    pub volume_envelope_state:          EnvelopeState,
+    pub panning_envelope_state:         EnvelopeState,
+    pub pitch_envelope_state:           EnvelopeState,
+    pub vibrato_envelope_state:         VibratoEnvelopeState,
+    pub vibrato_state:                  VibratoState,
+    pub tremolo_state:                  TremoloState,
+    pub tremolo_shift:                  f32,
+    pub frequency_shift:                f32,
+    pub        panning:                        Panning,
     pub(crate) instrument_global_volume:       u8,
     pub(crate) sample_global_volume:           u8,
     pub(crate) filter_cutoff:                  u8,
     pub(crate) filter_resonance:               u8,
     pub(crate) filter_state:                   ResonantFilter,
-    pub(crate) on:                             bool,
-    pub(crate) surround:                       bool,
-    pub(crate) channel_idx:                    usize, // The logical channel that "owns" or "started" this voice
+    pub on:                             bool,
+    pub surround:                       bool,
+    pub channel_idx:                    usize, 
     pub(crate) last_played_note:               u8,
 }
 
@@ -119,6 +120,7 @@ impl Voice {
             vibrato_envelope_state: VibratoEnvelopeState::new(),
             vibrato_state: VibratoState::new(),
             tremolo_state: TremoloState::new(),
+            tremolo_shift: 0.0,
             frequency_shift: 0.0,
             panning: Panning::new(),
             instrument_global_volume: 64,
@@ -134,7 +136,7 @@ impl Voice {
     }
 
 
-    pub(crate) fn key_off(&mut self, instruments: &Instruments, _is_note_delay: bool) -> bool {
+    pub fn key_off(&mut self, instruments: &Instruments, _is_note_delay: bool) -> bool {
         let instrument = &instruments[self.instrument];
         self.sustained = false;
         self.volume_envelope_state.key_off(&instrument.volume_envelope);
@@ -187,8 +189,7 @@ impl Voice {
         // Auto-vibrato
         let auto_vibrato = self.vibrato_envelope_state.handle(&instrument.vibrato_envelope, self.sustained);
         if auto_vibrato != 0 {
-            // auto_vibrato is i16 from handle
-            let vib_shift = (auto_vibrato as f32 / 256.0) * 0.05; // Adjust scaling as needed
+            let vib_shift = (auto_vibrato as f32 / 16384.0) * 0.05946; 
             self.frequency_shift += self.frequency * vib_shift;
         }
 
@@ -196,26 +197,46 @@ impl Voice {
     }
 
     pub(crate) fn update_filter(&mut self, rate: f32, cutoff: u8) {
-        if cutoff >= 127 {
+        if cutoff >= 127 && self.filter_resonance == 0 {
             self.filter_state.a = 1.0;
             self.filter_state.b = 0.0;
             self.filter_state.c = 0.0;
             return;
         }
 
-        // IT cutoff scale is roughly logarithmic. 
-        // We'll map 0..127 to roughly 100Hz .. 10kHz
-        let cutoff_freq = 110.0 * (2.0f32).powf(cutoff as f32 * 5.0 / 127.0);
+        // IT cutoff scale mapping: 0..127 -> roughly 100Hz .. 15kHz
+        // Using a logarithmic scale
+        let cutoff_freq = 100.0 * (150.0f32).powf(cutoff as f32 / 127.0);
+        
+        // SVF p coefficient: 2 * sin(pi * f / rate)
         let p = 2.0 * (std::f32::consts::PI * cutoff_freq / rate).sin();
-        let r = 1.0 - (self.filter_resonance as f32 / 128.0); // Simple damping
+        
+        // SVF r coefficient (damping): 2.0 * 10^(-resonance_db / 20)
+        // IT resonance 0..127 maps to roughly 0..24dB
+        let resonance_db = (self.filter_resonance as f32 / 127.0) * 24.0;
+        let r = 2.0 * 10.0f32.powf(-resonance_db / 20.0);
 
-        // State Variable Filter coefficients
-        // We'll store them in a, b, c for the mixing loop
-        self.filter_state.a = p;
+        self.filter_state.a = p.min(1.99); // Stability limit
         self.filter_state.b = r;
     }
 
-    pub(crate) fn update_output_volume(&mut self, global_volume: f32, channel_volume: f32, divisor: f32) {
+
+    pub(crate) fn compute_base_volume(&self) -> f32 {
+        let mut vol = (self.volume.fadeout_vol as f32 / 65536.0) * 
+        (self.volume.envelope_vol as f32 / 16384.0) * 
+        (self.volume.get_volume() as f32 / 64.0) + self.tremolo_shift;
+        
+        if vol < 0.0 { vol = 0.0; }
+        if vol > 1.0 { vol = 1.0; }
+        
+        vol * (self.sample_global_volume as f32 / 64.0)
+    }
+
+    pub(crate) fn set_output_volume(&mut self, volume: f32) {
+        self.volume.output_volume = volume;
+    }
+
+    pub(crate) fn update_fadeout(&mut self) {
         if !self.sustained {
             if self.volume.fadeout_vol - self.volume.fadeout_speed < 0 {
                 self.volume.fadeout_vol = 0;
@@ -223,25 +244,17 @@ impl Voice {
                 self.volume.fadeout_vol -= self.volume.fadeout_speed;
             }
         }
-
-        self.volume.output_volume = (self.volume.fadeout_vol as f32 / 65536.0) * 
-                                    (self.volume.envelope_vol as f32 / 16384.0) * 
-                                    (self.volume.get_volume() as f32 / 64.0) * 
-                                    (self.instrument_global_volume as f32 / divisor) * 
-                                    (self.sample_global_volume as f32 / 64.0) *
-                                    channel_volume *
-                                    global_volume;
     }
 
-    pub(crate) fn trigger_note(&mut self, instruments: &Instruments, reset_envelopes: bool) {
+    pub(crate) fn trigger_note(&mut self, instruments: &Instruments, reset_envelopes: bool, vibrato_retrig: bool, tremolo_retrig: bool) {
         self.sample_position = 4.0;
         self.loop_started = false;
         self.ping = true;
         self.sustained = true;
         self.on = true;
-        self.on = true;
         
         self.volume.fadeout_vol = 65536;
+        self.volume.fadeout_speed = instruments[self.instrument].volume_fadeout as i32;
         
         let instrument = &instruments[self.instrument];
         self.instrument_global_volume = instrument.global_volume;
@@ -255,7 +268,11 @@ impl Voice {
             self.volume_envelope_state.reset(0, &instrument.volume_envelope);
             self.panning_envelope_state.reset(0, &instrument.panning_envelope);
             self.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
+            self.vibrato_envelope_state.reset(&instrument.vibrato_envelope);
         }
+        
+        if vibrato_retrig { self.vibrato_state.pos = 0; }
+        if tremolo_retrig { self.tremolo_state.pos = 0; }
     }
 }
 
@@ -281,20 +298,34 @@ pub struct ChannelState {
     pub last_panning_speed:             u8,
     pub force_off:                      bool,
     pub(crate) glissando:                      bool,
-    pub(crate) vibrato_control:                u8,
-    pub(crate) tremolo_control:                u8,
+    #[allow(dead_code)] pub(crate) vibrato_control:                u8,
+    #[allow(dead_code)] pub(crate) tremolo_control:                u8,
     pub(crate) tremor:                         u8,
     pub(crate) tremor_count:                   u32,
-    pub(crate) multi_retrig_count:             u8,
-    pub(crate) multi_retrig_volume:            u8,
+    #[allow(dead_code)] pub(crate) multi_retrig_count:             u8,
+    #[allow(dead_code)] pub(crate) multi_retrig_volume:            u8,
     pub(crate) period_shift:                   i16,
     pub(crate) last_played_note:               u8,
-    pub(crate) last_it_slide_speed:            u8,
+    pub(crate) last_it_porta_up:               u8,
+    pub(crate) last_it_porta_down:             u8,
+    pub(crate) last_it_vol_col_vol_slide:      u8,
+    pub(crate) last_it_vol_col_fine_vol_slide: u8,
+    pub(crate) last_it_vol_col_porta:          u8,
+    #[allow(dead_code)] pub(crate) last_it_slide_speed:            u8,
     pub(crate) last_it_vol_slide:              u8,
-    pub(crate) last_vibrato_param:             u8,
-    pub(crate) last_tremolo_param:             u8,
-    pub(crate) last_tremor_param:              u8,
+    #[allow(dead_code)] pub(crate) last_vibrato_param:             u8,
+    #[allow(dead_code)] pub(crate) last_tremolo_param:             u8,
+    #[allow(dead_code)] pub(crate) last_tremor_param:              u8,
     pub(crate) last_panning_slide:             u8,
+    pub(crate) last_vibrato_speed:             u8,
+    pub(crate) last_vibrato_depth:             u8,
+    pub(crate) last_tremolo_speed:             u8,
+    pub(crate) last_tremolo_depth:             u8,
+    pub(crate) vibrato_waveform:               u8,
+    pub(crate) tremolo_waveform:               u8,
+    pub(crate) vibrato_retrig:                 bool,
+    pub(crate) tremolo_retrig:                 bool,
+    pub(crate) last_arpeggio_param:            u8,
     pub(crate) last_samples:                   [f32; 512], // Standardized to 512 for UI
     pub(crate) last_samples_pos:               usize,
     pub(crate) loop_row:                       u8,
@@ -333,12 +364,26 @@ impl ChannelState {
             multi_retrig_volume: 0,
             period_shift: 0,
             last_played_note: 0,
+            last_it_porta_up: 0,
+            last_it_porta_down: 0,
+            last_it_vol_col_vol_slide: 0,
+            last_it_vol_col_fine_vol_slide: 0,
+            last_it_vol_col_porta: 0,
             last_it_slide_speed: 0,
             last_it_vol_slide: 0,
             last_vibrato_param: 0,
             last_tremolo_param: 0,
             last_tremor_param: 0,
             last_panning_slide: 0,
+            last_arpeggio_param: 0,
+            last_vibrato_speed:     0,
+            last_vibrato_depth:     0,
+            last_tremolo_speed:     0,
+            last_tremolo_depth:     0,
+            vibrato_waveform:       0,
+            tremolo_waveform: 0,
+            vibrato_retrig:         true,
+            tremolo_retrig:         true,
             last_samples: [0.0; 512],
             last_samples_pos: 0,
             loop_row: 0,
@@ -346,58 +391,33 @@ impl ChannelState {
         }
     }
 
-    fn set_note(&mut self, note: u8, fine_tune: i8, original_note: u8, frequency_tables: &AudioTables) {
-        self.note.set_note(note, fine_tune, original_note, frequency_tables);
-        self.period_shift = 0;
-        self.frequency = self.note.frequency(self.period_shift, false, frequency_tables);
-    }
-
-    pub(crate) fn key_off(&mut self, _instruments: &Instruments, _is_note_delay: bool) -> bool {
-        // Channel-level note-off. Actual key-off logic for active voices is handled in the backend
-        // by calling Voice::key_off directly.
-        self.on = false;
-        true
-    }
-
-    pub(crate) fn update_frequency(&mut self, _rate: f32, _semitone: bool, _frequency_tables: &AudioTables) {
-        // Monolithic update_frequency is deprecated. Backends should call update_frequency_voice.
-    }
-
-    pub(crate) fn reset_envelopes(&mut self, _instruments: &Instruments) {
-        // Envelopes have been moved to Voice and are handled during note triggering/updates there.
-        // If we strictly need to reset something channel-level, do it here.
-    }
-
-
-    pub(crate) fn trigger_note(&mut self, _instruments: &Instruments, note: u8, _rate: f32, frequency_tables: &AudioTables) {
-        if note >= 1 && note < 97 { // trigger note
-            // Channel-level note update. actual Voice triggering happens in the backend.
-            self.on = true;
-            self.period_shift = 0;
-            self.tremor_count = 0;
-
-            // Find sample index to get fine_tune for set_note
-            // Note: This is an XM-ism that might need generalization for IT.
-            // For now, keeping it basic for compilation.
-            self.set_note(note, 0, note, frequency_tables);
-        }
-    }
 
     pub(crate) fn update_frequency_voice(&mut self, voice: &mut Voice, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
-        self.frequency = self.note.frequency(self.period_shift, semitone, frequency_tables) + voice.frequency_shift;
+        let vib_shift = voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform));
+        self.frequency = self.note.frequency(self.period_shift, vib_shift, semitone, frequency_tables) + voice.frequency_shift;
         voice.set_frequency(self.frequency, rate)
     }
 
-    pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, rate: f32, tables: &AudioTables) {
+    pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
+        if song_type == SongType::XM || song_type == SongType::MOD {
+            if speed != 0 || depth != 0 {
+                self.last_vibrato_param = (speed << 4) | depth;
+                self.last_vibrato_speed = speed;
+                self.last_vibrato_depth = depth;
+            } else {
+                self.last_vibrato_speed = self.last_vibrato_param >> 4;
+                self.last_vibrato_depth = self.last_vibrato_param & 0x0F;
+            }
+        } else {
+            if speed != 0 { self.last_vibrato_speed = speed; }
+            if depth != 0 { self.last_vibrato_depth = depth; }
+        }
+
         if let Some(v) = voice {
             if first_tick {
-                if speed != 0 {
-                    v.vibrato_state.speed = speed as i8;
-                }
-                if depth != 0 {
-                    let multiplier = if old_effects { 8 } else { 4 };
-                    v.vibrato_state.depth = ((depth as u16) * multiplier) as i16;
-                }
+                v.vibrato_state.speed = self.last_vibrato_speed as i8;
+                let multiplier = if old_effects { 8 } else { 4 };
+                v.vibrato_state.depth = ((self.last_vibrato_depth as u16) * multiplier) as i16;
             } else {
                 v.vibrato_state.next_tick();
             }
@@ -405,50 +425,88 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn tremolo(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8) {
-        if first_tick {
-            if let Some(v) = voice {
-                v.tremolo_state.set_speed(speed as i8);
-                v.tremolo_state.set_depth(depth as i8);
+    pub(crate) fn tremolo(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, song_type: SongType) {
+        if song_type == SongType::XM || song_type == SongType::MOD {
+            if speed != 0 || depth != 0 {
+                self.last_tremolo_param = (speed << 4) | depth;
+                self.last_tremolo_speed = speed;
+                self.last_tremolo_depth = depth;
+            } else {
+                self.last_tremolo_speed = self.last_tremolo_param >> 4;
+                self.last_tremolo_depth = self.last_tremolo_param & 0x0F;
             }
         } else {
-            if let Some(v) = voice {
+            if speed != 0 { self.last_tremolo_speed = speed; }
+            if depth != 0 { self.last_tremolo_depth = depth; }
+        }
+
+        if let Some(v) = voice {
+            if first_tick {
+                v.tremolo_state.speed = self.last_tremolo_speed as i8;
+                v.tremolo_state.depth = self.last_tremolo_depth as i16;
+            } else {
                 v.tremolo_state.next_tick();
             }
+            let shift = v.tremolo_state.get_volume_shift(WaveControl::from(self.tremolo_waveform));
+            v.tremolo_shift = shift as f32 / 64.0;
         }
     }
 
-    pub(crate) fn arpeggio(&mut self, tick: u32, x: u8, y: u8) {
-        match tick % 3 {
-            0 => { self.period_shift = 0; }
-            1 => { self.period_shift = x as i16; }
-            2 => { self.period_shift = y as i16; }
-            _ => {}
+    pub(crate) fn arpeggio(&mut self, tick: u32, x: u8, y: u8, has_memory: bool) {
+        if has_memory {
+            if x != 0 || y != 0 {
+                self.last_arpeggio_param = (x << 4) | y;
+            }
+            let actual_x = self.last_arpeggio_param >> 4;
+            let actual_y = self.last_arpeggio_param & 0x0F;
+            match tick % 3 {
+                0 => { self.period_shift = 0; }
+                1 => { self.period_shift = -(actual_x as i16 * 64); }
+                2 => { self.period_shift = -(actual_y as i16 * 64); }
+                _ => {}
+            }
+        } else {
+            match tick % 3 {
+                0 => { self.period_shift = 0; }
+                1 => { self.period_shift = -(x as i16 * 64); }
+                2 => { self.period_shift = -(y as i16 * 64); }
+                _ => {}
+            }
         }
     }
 
     pub(crate) fn porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        if song_type == SongType::IT {
-            if amount >= 0xF0 { // Extra Fine
+        let mut actual_amount = amount;
+        if song_type == SongType::IT || song_type == SongType::S3M {
+            if actual_amount == 0 {
+                actual_amount = self.last_it_porta_up;
+            } else {
+                self.last_it_porta_up = actual_amount;
+            }
+            if song_type == SongType::S3M { self.last_it_porta_down = actual_amount; } // Share memory for S3M
+        }
+
+        if song_type == SongType::IT || (song_type == SongType::S3M && actual_amount >= 0xE0) {
+            if actual_amount >= 0xF0 { // Extra Fine
                 if first_tick {
-                    let val = (amount & 0x0F) as u16;
+                    let val = (actual_amount & 0x0F) as u16;
                     self.note.period = self.note.period.saturating_sub(val);
                 }
-            } else if amount >= 0xE0 { // Fine
+            } else if actual_amount >= 0xE0 { // Fine
                 if first_tick {
-                    let val = ((amount & 0x0F) as u16) << 2;
+                    let val = ((actual_amount & 0x0F) as u16) << 2;
                     self.note.period = self.note.period.saturating_sub(val);
                 }
             } else { // Normal
                 if !first_tick {
-                    let val = (amount as u16) << 2;
+                    let val = (actual_amount as u16) << 2;
                     self.note.period = self.note.period.saturating_sub(val);
                 }
             }
         } else {
             if first_tick {
-                if amount != 0 {
-                    self.last_porta_up = (amount as u16) * 4;
+                if actual_amount != 0 {
+                    self.last_porta_up = (actual_amount as u16) * 4;
                 }
             } else {
                 self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(self.last_porta_up)).0;
@@ -461,6 +519,7 @@ impl ChannelState {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn tremor(&mut self, tick: u32, param: u8) {
         if tick == 0 {
             if param != 0 {
@@ -489,27 +548,37 @@ impl ChannelState {
     }
 
     pub(crate) fn porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        if song_type == SongType::IT {
-            if amount >= 0xF0 { // Extra Fine
+        let mut actual_amount = amount;
+        if song_type == SongType::IT || song_type == SongType::S3M {
+            if actual_amount == 0 {
+                actual_amount = self.last_it_porta_down;
+            } else {
+                self.last_it_porta_down = actual_amount;
+            }
+            if song_type == SongType::S3M { self.last_it_porta_up = actual_amount; } // Share memory for S3M
+        }
+
+        if song_type == SongType::IT || (song_type == SongType::S3M && actual_amount >= 0xE0) {
+            if actual_amount >= 0xF0 { // Extra Fine
                 if first_tick {
-                    let val = (amount & 0x0F) as u16;
+                    let val = (actual_amount & 0x0F) as u16;
                     self.note.period = self.note.period.saturating_add(val);
                 }
-            } else if amount >= 0xE0 { // Fine
+            } else if actual_amount >= 0xE0 { // Fine
                 if first_tick {
-                    let val = ((amount & 0x0F) as u16) << 2;
+                    let val = ((actual_amount & 0x0F) as u16) << 2;
                     self.note.period = self.note.period.saturating_add(val);
                 }
             } else { // Normal
                 if !first_tick {
-                    let val = (amount as u16) << 2;
+                    let val = (actual_amount as u16) << 2;
                     self.note.period = self.note.period.saturating_add(val);
                 }
             }
         } else {
             if first_tick {
-                if amount != 0 {
-                    self.last_porta_down = (amount as u16) * 4;
+                if actual_amount != 0 {
+                    self.last_porta_down = (actual_amount as u16) * 4;
                 }
             } else {
                 self.note.period += self.last_porta_down;
@@ -579,10 +648,40 @@ impl ChannelState {
             }
         } else {
             self.porta_to_note.next_tick(&mut self.note);
+            if self.glissando {
+                self.note.snap_to_semitone(tables);
+            }
         }
         if let Some(v) = voice {
             self.update_frequency_voice(v, rate, true, tables);
         }
+    }
+
+    pub(crate) fn it_vol_col_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut amount: i8) {
+        if amount == 0 {
+            amount = self.last_it_vol_col_vol_slide as i8;
+        } else {
+            self.last_it_vol_col_vol_slide = amount.abs() as u8;
+        }
+        self.volume_slide(voice, first_tick, amount);
+    }
+
+    pub(crate) fn it_vol_col_fine_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut amount: i8) {
+        if amount == 0 {
+            amount = self.last_it_vol_col_fine_vol_slide as i8;
+        } else {
+            self.last_it_vol_col_fine_vol_slide = amount.abs() as u8;
+        }
+        self.fine_volume_slide(voice, first_tick, amount);
+    }
+
+    pub(crate) fn it_vol_col_porta_to_note(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut speed: u8, compatible_g: bool, rate: f32, tables: &AudioTables) {
+        if speed == 0 {
+            speed = self.last_it_vol_col_porta;
+        } else {
+            self.last_it_vol_col_porta = speed;
+        }
+        self.porta_to_note(SongType::IT, voice, first_tick, speed, compatible_g, rate, tables);
     }
 
     pub(crate) fn it_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut param: u8) {
@@ -604,8 +703,8 @@ impl ChannelState {
     }
 
     pub(crate) fn it_retrig(&mut self, voice: Option<&mut Voice>, instruments: &Instruments, tick: u32, param: u8) {
-        let y = param & 0x0F;
         let x = param >> 4;
+        let y = param & 0x0F;
         if y == 0 { return; }
         if tick % (y as u32) == 0 {
             if tick > 0 {
@@ -614,11 +713,12 @@ impl ChannelState {
         }
     }
 
+
     pub(crate) fn retrig(&mut self, voice: Option<&mut Voice>, instruments: &Instruments, tick: u32, amount: u8, volume_change: u8) {
         if amount == 0 { return; }
         if tick % (amount as u32) == 0 {
             if let Some(v) = voice {
-                v.trigger_note(instruments, true);
+                v.trigger_note(instruments, true, self.vibrato_retrig, self.tremolo_retrig);
                 match volume_change {
                     1 => { v.volume.set_volume(v.volume.get_volume() as i32 - 1); }
                     2 => { v.volume.set_volume(v.volume.get_volume() as i32 - 2); }
@@ -673,7 +773,7 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn panning_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
+    pub(crate) fn panning_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8, song_type: SongType) {
         let mut actual_param = param;
         if actual_param == 0 {
             actual_param = self.last_panning_slide;
@@ -681,26 +781,29 @@ impl ChannelState {
             self.last_panning_slide = actual_param;
         }
 
+        let right = (actual_param >> 4) as i32;
+        let left = (actual_param & 0xf) as i32;
+        let (r_shift, l_shift) = match song_type {
+            SongType::XM | SongType::MOD => (right, left),
+            _ => (right << 2, left << 2),
+        };
+
         if first_tick {
-            let right = (actual_param >> 4) as i32;
-            let left = (actual_param & 0xf) as i32;
             if right == 0xf && left != 0 {
                 if let Some(v) = voice {
-                    v.panning.set_panning(v.panning.panning as i32 - (left << 2));
+                    v.panning.set_panning(v.panning.panning as i32 - l_shift);
                 }
             } else if left == 0xf && right != 0 {
                 if let Some(v) = voice {
-                    v.panning.set_panning(v.panning.panning as i32 + (right << 2));
+                    v.panning.set_panning(v.panning.panning as i32 + r_shift);
                 }
             }
         } else {
-            let right = (actual_param >> 4) as i32;
-            let left = (actual_param & 0xf) as i32;
             if let Some(v) = voice {
                 if right != 0 && right != 0xf && left == 0 {
-                    v.panning.set_panning(v.panning.panning as i32 + (right << 2));
+                    v.panning.set_panning(v.panning.panning as i32 + r_shift);
                 } else if left != 0 && left != 0xf && right == 0 {
-                    v.panning.set_panning(v.panning.panning as i32 - (left << 2));
+                    v.panning.set_panning(v.panning.panning as i32 - l_shift);
                 }
             }
         }

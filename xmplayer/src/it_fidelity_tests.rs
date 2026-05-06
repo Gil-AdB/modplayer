@@ -187,8 +187,31 @@ fn test_xm_note_limit_rejection() {
 }
 
 #[test]
+fn test_xm_relative_note_uses_pattern_note() {
+    use crate::module_reader::is_note_valid;
+    use crate::test_utils::{MockSongBuilder, SongTester};
+    assert!(is_note_valid(49, SongType::XM));
+    let mut builder = MockSongBuilder::new(SongType::XM, 1);
+    builder.instruments[1].samples[0].relative_note = 12;
+    builder.add_pattern_row(0, 0, 49, 1, 255, 0, 0);
+    let mut tester = SongTester::new(builder.build());
+    tester.tick();
+    // XM: RealNote = PatternNote + RelativeTone (49 + 12), not (key_index + RelativeTone).
+    assert_eq!(tester.song.channels[0].note.note, 61);
+    assert_eq!(tester.song.channels[0].note.original_note, 49);
+}
+
+#[test]
 fn test_mod_note_limit_rejection() {
     use crate::module_reader::is_note_valid;
     assert!(is_note_valid(96, SongType::MOD));
     assert!(!is_note_valid(97, SongType::MOD));
+}
+
+#[test]
+fn test_s3m_note_above_96_is_valid() {
+    use crate::module_reader::is_note_valid;
+    // S3M packs octave in the high nybble; decoded values may exceed 96.
+    assert!(is_note_valid(100, SongType::S3M));
+    assert!(!is_note_valid(121, SongType::S3M));
 }

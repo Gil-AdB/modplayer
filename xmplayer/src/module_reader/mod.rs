@@ -38,6 +38,9 @@ pub enum FrequencyType {
 pub(crate) fn is_note_valid(note: u8, song_type: SongType) -> bool {
     match song_type {
         SongType::IT => note > 0 && note <= 120,
+        // S3M encodes octave in the high nybble; decoded values can exceed the XM-ish 96 range.
+        // Engine period tables clamp through note_to_period; skip only special/control values.
+        SongType::S3M => note > 0 && note <= 120,
         _ => note > 0 && note <= 96,
     }
 }
@@ -161,6 +164,7 @@ impl SongData {
         &self.instruments[voice.instrument].samples[voice.sample]
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_instrument(&self, voice: &Voice) -> &Instrument {
         &self.instruments[voice.instrument]
     }

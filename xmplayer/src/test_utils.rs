@@ -26,6 +26,7 @@ impl MockSongBuilder {
                 let mut sample = Sample::new();
                 sample.data = vec![0.0; 100];
                 sample.length = 100;
+                sample.volume = 64;
                 inst.samples.push(sample);
                 for i in 0..120 { inst.sample_indexes[i] = (i as u8, 1); }
                 vec![Instrument::new(), inst]
@@ -78,6 +79,13 @@ impl MockSongBuilder {
             instrument.sample_indexes[i] = (i as u8, 1);
         }
         self.instruments.push(instrument);
+        self
+    }
+
+    pub fn set_nna(&mut self, inst_idx: usize, nna: u8) -> &mut Self {
+        if inst_idx < self.instruments.len() {
+            self.instruments[inst_idx].nna = nna;
+        }
         self
     }
 
@@ -159,6 +167,15 @@ impl SongTester {
             .collect()
     }
 
+    pub fn get_channel_period(&self, channel: usize) -> u16 {
+        self.song.channels[channel].note.period
+    }
+
+    pub fn get_channel_vibrato(&self, channel: usize) -> (u8, u8) {
+        let c = &self.song.channels[channel];
+        (c.last_vibrato_speed, c.last_vibrato_depth)
+    }
+
     pub fn assert_voice_on(&self, voice_idx: usize, on: bool) {
         assert_eq!(self.song.voices[voice_idx].on, on, "Voice {} on state mismatch", voice_idx);
     }
@@ -181,5 +198,33 @@ impl SongTester {
         while self.song.row < row {
             self.step_row();
         }
+    }
+
+    pub fn assert_pitch_near(&self, voice_idx: usize, expected_hz: f32, tolerance: f32) {
+        let actual = self.song.voices[voice_idx].frequency;
+        assert!((actual - expected_hz).abs() < tolerance, "Voice {} pitch mismatch: expected {} Hz, got {} Hz", voice_idx, expected_hz, actual);
+    }
+
+    pub fn run_row(&mut self) {
+        let start_row = self.song.row;
+        let start_pos = self.song.song_position;
+        while self.song.row == start_row && self.song.song_position == start_pos {
+            self.tick();
+        }
+    }
+
+    pub fn run_ticks(&mut self, ticks: u32) {
+        for _ in 0..ticks {
+            self.tick();
+        }
+    }
+
+    pub fn assert_sample_pos(&self, voice_idx: usize, expected_pos: f32) {
+        let actual = self.song.voices[voice_idx].sample_position;
+        assert!((actual - expected_pos).abs() < 0.01, "Voice {} sample pos mismatch: expected {}, got {}", voice_idx, expected_pos, actual);
+    }
+
+    pub fn assert_voice_playing(&self, voice_idx: usize, is_playing: bool) {
+        assert_eq!(self.song.voices[voice_idx].on, is_playing, "Voice {} playing state mismatch: expected {}, got {}", voice_idx, is_playing, self.song.voices[voice_idx].on);
     }
 }

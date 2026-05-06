@@ -288,6 +288,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                     points,
                     size,
                     sustain_start_point,
+                    sustain_start_point, // IT sustain start
+                    _sustain_end_point,   // IT sustain end
                     loop_start_point,
                     loop_end_point,
                     flags

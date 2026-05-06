@@ -50,7 +50,7 @@ impl Sample {
             loop_start: 0,
             loop_end: 0,
             loop_len: 0,
-            volume: 0,
+            volume: 64,
             finetune: 0,
             loop_type: LoopType::NoLoop,
             bitness: 0,

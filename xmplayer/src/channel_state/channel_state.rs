@@ -97,21 +97,6 @@ impl VibratoState {
         }
     }
 
-    pub(crate) fn set_speed(&mut self, speed: i8) {
-        if speed != 0 {
-            self.speed = speed;
-        }
-    }
-
-    pub(crate) fn set_depth(&mut self, depth: i8) {
-        if depth != 0 {
-            self.depth = depth as i16;
-        }
-    }
-
-    pub(crate) fn set_pos(&mut self, pos: i8) {
-        self.pos = pos;
-    }
 
     pub(crate) fn get_frequency_shift(&mut self, wave_control: WaveControl) -> i32 {
         let delta;
@@ -151,21 +136,6 @@ impl TremoloState {
         }
     }
 
-    pub(crate) fn set_speed(&mut self, speed: i8) {
-        if speed != 0 {
-            self.speed = speed;
-        }
-    }
-
-    pub(crate) fn set_depth(&mut self, depth: i8) {
-        if depth != 0 {
-            self.depth = depth as i16;
-        }
-    }
-
-    pub(crate) fn set_pos(&mut self, pos: i8) {
-        self.pos = pos;
-    }
 
     pub(crate) fn get_volume_shift(&mut self, wave_control: WaveControl) -> i32 {
         let delta;
@@ -209,44 +179,53 @@ impl EnvelopeState {
     }
 
     pub(crate) fn handle(&mut self, env: &Envelope, channel_sustained: bool, default: u16, sticky_sustain: bool) -> u16 {
-        if !env.on || env.size < 1 { return default * 256;} // bail out
+        if !env.on || env.size < 1 { return default * 256; }
+        if env.size == 1 { return env.points[0].value * 256; }
 
-        if env.size == 1 { // whatever
-            return env.points[0].value * 256
-        }
-
-        // loop
-        if  (!env.sustain || channel_sustained) && env.has_loop && self.frame == env.points[env.loop_end_point as usize].frame {
-            // self.looped = true;
-            self.idx = env.loop_start_point as usize;
-            self.frame = env.points[self.idx].frame;
-        }
-
-        // reached the end
-        if self.idx == (env.size - 2) as usize && self.frame == env.points[self.idx + 1].frame {
-            return env.points[self.idx + 1].value * 256
-        }
-
-        // set sustained if channel_state is sustained, we have a sustain point and we reached the sustain point
-        // I did all my testing on the panning envelope, and caught this,
-        // but later realized that volume envelopes works differently, and "fixed it". Oh, Well... xm...
-        if !self.sustained && env.sustain && channel_sustained && self.frame == env.points[env.sustain_point as usize].frame {
+        // Handle Sustain Loop (IT)
+        let in_sustain_loop = env.has_sustain_loop && channel_sustained;
+        
+        // Sustain Point (XM)
+        if !env.has_sustain_loop && env.sustain && channel_sustained && self.frame == env.points[env.sustain_point as usize].frame {
             self.sustained = true;
         }
 
-        // if sustain was triggered, it's sticky if panning envelope
-        if self.sustained && (channel_sustained || sticky_sustain) {
-            return env.points[env.sustain_point as usize].value * 256
+        if !env.has_sustain_loop && self.sustained && (channel_sustained || sticky_sustain) {
+            return env.points[env.sustain_point as usize].value * 256;
         }
-
 
         let retval = EnvelopeState::lerp(self.frame, &env.points[self.idx], &env.points[self.idx + 1]);
 
-        if self.frame < env.points[(env.size - 1) as usize].frame {
+        // Increment frame
+        let can_normal_loop = (!env.sustain || !channel_sustained) && env.has_loop;
+        
+        let mut loop_end_frame = 65535;
+        if in_sustain_loop {
+            loop_end_frame = env.points[env.sustain_loop_end_point as usize].frame;
+        } else if can_normal_loop {
+            loop_end_frame = env.points[env.loop_end_point as usize].frame;
+        }
+
+        let end_frame = env.points[(env.size - 1) as usize].frame;
+
+        if self.frame < end_frame || (in_sustain_loop && self.frame < loop_end_frame + 1) || (can_normal_loop && self.frame < loop_end_frame + 1) {
             self.frame += 1;
-            if self.idx < (env.size - 2) as usize && self.frame == env.points[self.idx + 1].frame {
+            
+            // Handle Index update
+            if self.idx < (env.size - 2) as usize && self.frame >= env.points[self.idx + 1].frame {
                 self.idx += 1;
             }
+        }
+
+        // Handle Sustain Loop jump
+        if in_sustain_loop && self.frame > loop_end_frame {
+            self.idx = env.sustain_loop_start_point as usize;
+            self.frame = env.points[self.idx].frame;
+        }
+        // Handle Normal Loop jump
+        else if can_normal_loop && self.frame > loop_end_frame {
+            self.idx = env.loop_start_point as usize;
+            self.frame = env.points[self.idx].frame;
         }
 
         retval
@@ -363,8 +342,7 @@ impl EnvelopeState {
 }
 
 #[derive(Clone,Copy,Debug)]
-#[allow(dead_code)]
-pub(crate) struct VibratoEnvelopeState {
+pub struct VibratoEnvelopeState {
     pub vibrato_sweep:  u16,
     pub vibrato_amp:    u16,
     pub vibrato_pos:    u16,
@@ -379,21 +357,32 @@ impl VibratoEnvelopeState {
         }
     }
 
+    pub(crate) fn reset(&mut self, env: &VibratoEnvelope) {
+        self.vibrato_pos = 0;
+        if env.vibrato_sweep > 0 {
+            self.vibrato_sweep = env.vibrato_sweep as u16;
+            self.vibrato_amp = 0;
+        } else {
+            self.vibrato_sweep = 0;
+            self.vibrato_amp = (env.vibrato_depth as u16) << 8;
+        }
+    }
+
     // This probably makes sense somehow, but I'm too tired to care
     // taken from ft2-clone
     #[allow(dead_code)]
-    pub(crate) fn handle(&mut self, env: &VibratoEnvelope, channel_sustained: bool) -> u16 {
+    pub(crate) fn handle(&mut self, env: &VibratoEnvelope, channel_sustained: bool) -> i16 {
         let mut _auto_vibrato_amp;
         if env.vibrato_depth > 0 {
             if self.vibrato_sweep > 0 {
-                _auto_vibrato_amp = self.vibrato_sweep;
+                _auto_vibrato_amp = self.vibrato_amp;
                 if channel_sustained {
-                    _auto_vibrato_amp += self.vibrato_amp;
-                    if (_auto_vibrato_amp >> 8) as u8 > env.vibrato_depth {
-                        _auto_vibrato_amp = (env.vibrato_depth as u16) << 8;
+                    let mut next_amp = self.vibrato_amp + self.vibrato_sweep;
+                    if (next_amp >> 8) as u8 > env.vibrato_depth {
+                        next_amp = (env.vibrato_depth as u16) << 8;
                         self.vibrato_sweep = 0;
                     }
-                    self.vibrato_amp = _auto_vibrato_amp;
+                    self.vibrato_amp = next_amp;
                 }
             } else {
                 _auto_vibrato_amp = self.vibrato_amp;
@@ -411,7 +400,7 @@ impl VibratoEnvelopeState {
                 _auto_vibrato_value = tables::VIB_SINE_TAB[self.vibrato_pos as usize] as i16;
             }
 
-            (_auto_vibrato_value as i32 * _auto_vibrato_amp as i32 / 64) as u16
+            (_auto_vibrato_value as i32 * _auto_vibrato_amp as i32 / 64) as i16
         } else {
             0
         }
@@ -455,7 +444,21 @@ impl Note {
         frequency_tables.periods[idx as usize]
     }
 
+    pub(crate) fn snap_to_semitone(&mut self, frequency_tables: &AudioTables) {
+        let mut best_idx = 0;
+        let mut best_diff = 65535;
+        for i in (0..frequency_tables.periods.len()).step_by(16) {
+            let diff = (frequency_tables.periods[i] as i32 - self.period as i32).abs();
+            if diff < best_diff {
+                best_diff = diff;
+                best_idx = i;
+            }
+        }
+        self.period = frequency_tables.periods[best_idx];
+    }
 
+
+    #[allow(dead_code)]
     pub(crate) fn get_tone(note: u8, relative_note: i8) -> Result<u8, bool> {
         let tone = note as i8 + relative_note;
         if tone > 12 * 10 || tone < 0 {
@@ -503,6 +506,7 @@ impl Note {
     // }
 
     // for arpeggio and portamento (semitone-slide mode). Lifted directly from ft2-clone. I'll have to write it from scratch one day
+    #[allow(dead_code)]
     fn relocate_ton(&self, period: u16, arp_note: u8, frequency_tables: &AudioTables) -> u16 {
         // int32_t fine_tune, lo_period, hi_period, tmp_period, tableIndex;
         let fine_tune: u32 = (((self.finetune >> 3) + 16) << 1) as u32;
@@ -619,23 +623,14 @@ impl Note {
         tables.d_period2hz_tab[self.base_period as usize] as f32
     }
 
-    pub(crate) fn frequency(&self, period_shift: i16, _semitone: bool, frequency_tables: &AudioTables) -> f32 {
-        // let period = 10.0 * 12.0 * 16.0 * 4.0 - ((self.note - period_shift) * 16.0 * 4.0)  - self.finetune / 2.0;
-        // if semitone {
-        let period: u16;
-        if period_shift != 0 {
-            period = self.relocate_ton(self.period, period_shift as u8, frequency_tables);
-        } else {
-            period = self.period;
+    pub(crate) fn frequency(&self, period_shift: i16, period_offset: i32, semitone: bool, frequency_tables: &AudioTables) -> f32 {
+        let mut period = self.period as i32 + period_shift as i32 + period_offset;
+        
+        if semitone {
+            period = ((period + 32) / 64) * 64;
         }
-        // }
 
-        //period = clamp(period, 0, 65535);
-
-        return frequency_tables.d_period2hz_tab[period as usize] as f32;
-        // let two = 2.0f32;
-        // let freq = 8363.0 * two.powf((6 * 12 * 16 * 4 - period) as f32 / (12 * 16 * 4) as f32);
-        // return freq
+        return frequency_tables.d_period2hz_tab[period.clamp(0, 65535) as usize] as f32;
     }
 
     const NOTES: [&'static str;12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
@@ -756,7 +751,7 @@ impl Volume {
         }
     }
 
-    pub(crate) fn get_volume(&self) -> u8 {
+    pub fn get_volume(&self) -> u8 {
         let outvol = self.volume as i32 + self.volume_shift;
         if outvol > 64 {64} else if outvol < 0 {0} else {outvol as u8}
     }
@@ -767,7 +762,7 @@ impl Volume {
         self.fadeout_speed = 0;
     }
 
-    pub(crate) fn set_volume(&mut self, vol: i32) {
+    pub fn set_volume(&mut self, vol: i32) {
         self.volume = if vol > 64 { 64 } else if vol < 0 { 0 } else { vol } as u8;
     }
 }

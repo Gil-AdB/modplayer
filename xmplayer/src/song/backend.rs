@@ -1,5 +1,5 @@
 use crate::song::{GlobalVolume, BPM, PatternChange};
-use crate::module_reader::{SongData, is_note_valid};
+use crate::module_reader::{SongData, SongType, is_note_valid};
 use crate::channel_state::{ChannelState, Voice};
 use crate::tables::AudioTables;
 use crate::instrument::Instrument;
@@ -14,10 +14,10 @@ pub struct SongPlaybackResources<'a> {
     pub channels:                   &'a mut [ChannelState],
     pub voices:                     &'a mut [Voice],
     pub pattern_change:             &'a mut PatternChange,
-    pub row_delay:                  &'a mut usize,
     pub bpm:                        &'a mut BPM,
     pub frequency_tables:           &'a AudioTables,
     pub rate:                       f32,
+    pub first_row_tick:             bool,
     pub old_effects:                bool,
     pub compatible_g:               bool,
 }
@@ -157,7 +157,7 @@ impl ModuleBackend for ItBackend {
                                     voice.panning.panning = r.song_data.initial_channel_panning[i];
                                 }
                                 
-                                voice.trigger_note(instruments, pattern.instrument != 0);
+                                voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
                                 
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
@@ -205,15 +205,15 @@ impl ModuleBackend for ItBackend {
             // Volume Column
             match pattern.volume {
                 0..=64 => { channel.set_volume(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume); }
-                65..=74 => { channel.fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, (pattern.volume - 65) as i8); }
-                75..=84 => { channel.fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -((pattern.volume - 75) as i8)); }
-                85..=94 => { channel.volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, (pattern.volume - 85) as i8); }
-                95..=104 => { channel.volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -((pattern.volume - 95) as i8)); }
+                65..=74 => { channel.it_vol_col_fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, (pattern.volume - 65) as i8); }
+                75..=84 => { channel.it_vol_col_fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -((pattern.volume - 75) as i8)); }
+                85..=94 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, (pattern.volume - 85) as i8); }
+                95..=104 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -((pattern.volume - 95) as i8)); }
                 105..=114 => { channel.porta_up(r.song_data.song_type, first_tick, (pattern.volume - 105) << 2); }
                 115..=124 => { channel.porta_down(r.song_data.song_type, first_tick, (pattern.volume - 115) << 2); }
                 128..=192 => { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(((pattern.volume - 128) << 2) as i32); } }
-                193..=202 => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume - 193, r.compatible_g, r.rate, r.frequency_tables); }
-                203..=212 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.volume - 203, r.old_effects, r.rate, r.frequency_tables); }
+                193..=202 => { channel.it_vol_col_porta_to_note(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume - 193, r.compatible_g, r.rate, r.frequency_tables); }
+                203..=212 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.volume - 203, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
                 _ => {}
             }
 
@@ -226,12 +226,13 @@ impl ModuleBackend for ItBackend {
                 0x05 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); }
                 0x06 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
                 0x07 => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables); }
-                0x08 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables); }
-                0x0A => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y()); }
+                0x08 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
+                0x0A => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y(), true); }
                 0x0B => { 
-                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables);
+                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type);
                     channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
                 }
+
                 0x0C => { 
                     channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables);
                     channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
@@ -247,7 +248,7 @@ impl ModuleBackend for ItBackend {
                     match x {
                         0x08 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((y << 4) as i32); } } }
                         0x0C => { if *r.tick == y as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
-                        0x0E => { if first_tick { *r.row_delay = y as usize; } }
+                        0x0E => { if first_tick && !r.pattern_change.delay_processed { r.pattern_change.pattern_delay = y as u8; r.pattern_change.delay_processed = true; } }
                         _ => {}
                     }
                 }
@@ -311,6 +312,8 @@ impl XmBackend {
 impl ModuleBackend for XmBackend {
     fn process_tick(&mut self, r: &mut SongPlaybackResources) {
         let first_tick = *r.tick == 0;
+        let first_row_tick = r.first_row_tick && first_tick;
+
         let instruments = &r.song_data.instruments;
 
         // 1. Process channels
@@ -336,7 +339,7 @@ impl ModuleBackend for XmBackend {
                             let sample_idx = it_mapping.1 as usize;
                             if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
                                 let sample = &instruments[inst_idx].samples[sample_idx - 1];
-                                let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(0, 119) as u8;
+                                let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                                 channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
                             }
                         }
@@ -356,7 +359,19 @@ impl ModuleBackend for XmBackend {
                                 // XM usually only has one voice per channel, but we use the voice pool for NNAs
                                 let mut voice_idx = channel.voice_idx.unwrap_or(i);
                                 if r.voices[voice_idx].on && r.voices[voice_idx].channel_idx == i {
-                                    r.voices[voice_idx].on = false;
+                                    match r.song_data.song_type {
+                                        SongType::XM | SongType::MOD => { r.voices[voice_idx].on = false; }
+                                        _ => {
+                                            let old_inst = &instruments[r.voices[voice_idx].instrument];
+                                            match old_inst.nna {
+                                                0 => { r.voices[voice_idx].on = false; } // Cut
+                                                1 => { /* Continue */ }
+                                                2 => { r.voices[voice_idx].key_off(instruments, false); } // Note Off
+                                                3 => { r.voices[voice_idx].sustained = false; } // Fade
+                                                _ => { r.voices[voice_idx].on = false; }
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // Find a free voice
@@ -393,11 +408,12 @@ impl ModuleBackend for XmBackend {
                                 
                                 // XM: a note without instrument keeps the current instrument/envelope phase.
                                 // Envelopes reset only when a new instrument is explicitly provided.
-                                voice.trigger_note(instruments, pattern.instrument != 0);
+                                voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
                                 
                                 let sample = &instrument.samples[final_sample_idx];
-                                let mapped_note = it_mapping.0 + 1;
-                                let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
+                                let mapped_note = pattern.note;
+                                // XM spec: RealNote = PatternNote + RelativeTone.
+                                let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                                 channel.note.set_note(real_note, sample.finetune, mapped_note, r.frequency_tables);
                                 channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
                                 voice.last_played_note = pattern.note;
@@ -436,11 +452,12 @@ impl ModuleBackend for XmBackend {
                 0x70..=0x7f => { channel.volume_slide(voice_ref.as_deref_mut(), false, pattern.get_volume_param() as i8); }
                 0x80..=0x8f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, -(pattern.get_volume_param() as i8)); }
                 0x90..=0x9f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() as i8); }
-                0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param(), r.old_effects, r.rate, r.frequency_tables); }
-                0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0, r.old_effects, r.rate, r.frequency_tables); }
-                0xd0..=0xdf => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() << 4); }
-                0xe0..=0xef => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param()); }
-                0xf0..=0xff => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param(), r.compatible_g, r.rate, r.frequency_tables); }
+                0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
+                0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
+                0xc0..=0xcf => { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(((pattern.get_volume_param() as i32) * 17).min(255)); } }
+                0xd0..=0xdf => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() << 4, r.song_data.song_type); }
+                0xe0..=0xef => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param(), r.song_data.song_type); }
+                0xf0..=0xfe => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param(), r.compatible_g, r.rate, r.frequency_tables); }
                 _ => {}
             }
 
@@ -448,22 +465,24 @@ impl ModuleBackend for XmBackend {
             match pattern.effect {
                 0x0 => { // Arpeggio
                     if pattern.effect_param != 0 {
-                        channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y());
+                        channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y(), false);
+                    } else {
+                        channel.period_shift = 0;
                     }
                 }
-                0x1 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
-                0x2 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); }
+                0x1 => { channel.period_shift = 0; channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
+                0x2 => { channel.period_shift = 0; channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); }
                 0x3 => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables); }
-                0x4 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables); }
+                0x4 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
                 0x5 => { 
                     channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables); 
                     channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); 
                 }
                 0x6 => { 
-                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables); 
+                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); 
                     channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); 
                 }
-                0x7 => { channel.tremolo(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y()); }
+                0x7 => { channel.tremolo(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.song_data.song_type); }
                 0x8 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(pattern.effect_param as i32); } } }
                 0x9 => { // Sample Offset
                     if first_tick {
@@ -485,11 +504,37 @@ impl ModuleBackend for XmBackend {
                     match subcommand {
                         0x1 => { channel.fine_porta_up(r.song_data.song_type, first_tick, param); }
                         0x2 => { channel.fine_porta_down(r.song_data.song_type, first_tick, param); }
+                        0x3 => { if first_tick { channel.glissando = param != 0; } }
+                        0x4 => { if first_tick { channel.vibrato_waveform = param & 3; channel.vibrato_retrig = (param & 4) == 0; } }
+                        0x5 => { if first_tick { channel.note.finetune = (((param as i16) << 4) - 128) as i8; } }
+                        0x6 => { // E6x: Pattern Loop
+                            if first_tick {
+                                if param == 0 {
+                                    channel.loop_row = *r.row as u8;
+                                } else {
+                                    if channel.loop_count == 0 {
+                                        channel.loop_count = param;
+                                        r.pattern_change.set_loop(channel.loop_row);
+                                    } else {
+                                        channel.loop_count -= 1;
+                                        if channel.loop_count > 0 {
+                                            r.pattern_change.set_loop(channel.loop_row);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        0x7 => { if first_tick { channel.tremolo_waveform = param & 3; channel.tremolo_retrig = (param & 4) == 0; } }
                         0x9 => { channel.it_retrig(voice_ref.as_deref_mut(), instruments, *r.tick, param); }
                         0xA => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, param as i8); }
                         0xB => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, -(param as i8)); }
                         0xC => { if *r.tick == param as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
-                        0xE => { if first_tick { *r.row_delay = param as usize; } }
+                        0xE => { 
+                            if first_row_tick && !r.pattern_change.delay_processed {
+                                r.pattern_change.pattern_delay = param as u8; 
+                                r.pattern_change.delay_processed = true;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -516,8 +561,14 @@ impl ModuleBackend for XmBackend {
                         }
                     }
                 }
+                0x10 => { // Gxx: Set Global Volume
+                    r.global_volume.set_volume(first_tick, pattern.effect_param);
+                }
+                0x11 => { // Hxy: Global Volume Slide
+                    r.global_volume.volume_slide(first_tick, pattern.effect_param);
+                }
                 0x19 => { // Pxy: Panning Slide
-                    channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
+                    channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param, r.song_data.song_type);
                 }
                 0x1B => { // Rxy: Multi Retrig Note + Volume Slide
                     channel.retrig(voice_ref.as_deref_mut(), instruments, *r.tick, pattern.get_y(), pattern.get_x());
@@ -526,6 +577,10 @@ impl ModuleBackend for XmBackend {
             }
 
             if let Some(v) = voice_ref.as_deref_mut() {
+                // If effect is not Arpeggio, reset period_shift
+                if pattern.effect != 0 {
+                    channel.period_shift = 0;
+                }
                 channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
             }
         }
@@ -535,9 +590,9 @@ impl ModuleBackend for XmBackend {
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
             let channel_force_off = r.channels[voice.channel_idx].force_off;
-            
-            voice.update_envelopes(instruments, r.rate);
-            voice.update_fadeout();
+        
+        voice.update_envelopes(instruments, r.rate);
+        voice.update_fadeout();
             
             // XM formula: fadeout * envelope * channel_vol/64 * global_vol/64
             let base = voice.compute_base_volume();
@@ -596,7 +651,19 @@ impl ModuleBackend for ModBackend {
                         let sample_idx = 0;
                         let mut voice_idx = channel.voice_idx.unwrap_or(i);
                         if r.voices[voice_idx].on && r.voices[voice_idx].channel_idx == i {
-                            r.voices[voice_idx].on = false;
+                            match r.song_data.song_type {
+                                SongType::XM | SongType::MOD => { r.voices[voice_idx].on = false; }
+                                _ => {
+                                    let old_inst = &instruments[r.voices[voice_idx].instrument];
+                                    match old_inst.nna {
+                                        0 => { r.voices[voice_idx].on = false; } // Cut
+                                        1 => { /* Continue */ }
+                                        2 => { r.voices[voice_idx].key_off(instruments, false); } // Note Off
+                                        3 => { r.voices[voice_idx].sustained = false; } // Fade
+                                        _ => { r.voices[voice_idx].on = false; }
+                                    }
+                                }
+                            }
                         }
 
                         // Find a free voice
@@ -631,7 +698,7 @@ impl ModuleBackend for ModBackend {
                                 voice.panning.panning = r.song_data.initial_channel_panning[i];
                             }
                         }
-                        voice.trigger_note(instruments, pattern.instrument != 0);
+                        voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
                         
                         let sample = &instruments[inst_idx].samples[sample_idx];
                         let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(0, 119) as u8;
@@ -676,20 +743,20 @@ impl ModuleBackend for ModBackend {
 
             // Effect Column (MOD effects 0-F)
             match pattern.effect {
-                0x00 => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y()); }
+                0x00 => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y(), false); }
                 0x01 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
                 0x02 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); }
                 0x03 => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables); }
-                0x04 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables); }
+                0x04 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
                 0x05 => { 
                     channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables);
                     channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param);
                 }
                 0x06 => { 
-                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables);
+                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type);
                     channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param);
                 }
-                0x07 => { channel.tremolo(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y()); }
+                0x07 => { channel.tremolo(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.song_data.song_type); }
                 0x08 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(pattern.effect_param as i32); } } }
                 0x09 => { 
                     if first_tick { 
@@ -714,7 +781,7 @@ impl ModuleBackend for ModBackend {
                         0xA => { if first_tick { channel.fine_volume_slide(voice_ref.as_deref_mut(), true, y as i8); } }
                         0xB => { if first_tick { channel.fine_volume_slide(voice_ref.as_deref_mut(), true, -(y as i8)); } }
                         0xC => { if *r.tick == y as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
-                        0xE => { if first_tick { *r.row_delay = y as usize; } }
+                        0xE => { if first_tick && !r.pattern_change.delay_processed { r.pattern_change.pattern_delay = y as u8; r.pattern_change.delay_processed = true; } }
                         _ => {}
                     }
                 }
@@ -736,7 +803,7 @@ impl ModuleBackend for ModBackend {
         let global_vol_f32 = 1.0; // MOD has no global volume
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
+            let _channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
             let channel_force_off = r.channels[voice.channel_idx].force_off;
             
             voice.update_fadeout();
@@ -784,7 +851,21 @@ impl ModuleBackend for S3MBackend {
             }
 
             // Note trigger logic
-            if is_note_valid(pattern.note, r.song_data.song_type) {
+            // Note trigger logic
+            if pattern.note == 97 || pattern.note == 253 { // Note Off
+                if note_delay_first_tick {
+                    if let Some(v_idx) = channel.voice_idx {
+                        r.voices[v_idx].key_off(instruments, false);
+                    }
+                }
+            } else if pattern.note == 121 || pattern.note == 254 { // Note Cut
+                if note_delay_first_tick {
+                    if let Some(v_idx) = channel.voice_idx {
+                        r.voices[v_idx].on = false;
+                        r.voices[v_idx].volume.output_volume = 0.0;
+                    }
+                }
+            } else if is_note_valid(pattern.note, r.song_data.song_type) {
                 if pattern.is_porta_to_note(r.song_data.song_type) {
                     if first_tick {
                         let inst_idx = channel.last_instrument;
@@ -793,7 +874,7 @@ impl ModuleBackend for S3MBackend {
                             let sample_idx = it_mapping.1 as usize;
                             if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
                                 let sample = &instruments[inst_idx].samples[sample_idx - 1];
-                                let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(0, 119) as u8;
+                                let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                                 channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
                             }
                         }
@@ -812,7 +893,19 @@ impl ModuleBackend for S3MBackend {
                                 
                                 let mut voice_idx = channel.voice_idx.unwrap_or(i);
                                 if r.voices[voice_idx].on && r.voices[voice_idx].channel_idx == i {
-                                    r.voices[voice_idx].on = false;
+                                    match r.song_data.song_type {
+                                        SongType::XM | SongType::MOD => { r.voices[voice_idx].on = false; }
+                                        _ => {
+                                            let old_inst = &instruments[r.voices[voice_idx].instrument];
+                                            match old_inst.nna {
+                                                0 => { r.voices[voice_idx].on = false; } // Cut
+                                                1 => { /* Continue */ }
+                                                2 => { r.voices[voice_idx].key_off(instruments, false); } // Note Off
+                                                3 => { r.voices[voice_idx].sustained = false; } // Fade
+                                                _ => { r.voices[voice_idx].on = false; }
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // Find a free voice
@@ -846,7 +939,7 @@ impl ModuleBackend for S3MBackend {
                                     voice.panning.panning = r.song_data.initial_channel_panning[i];
                                 }
                                 
-                                voice.trigger_note(instruments, pattern.instrument != 0);
+                                voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
                                 
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
@@ -858,19 +951,6 @@ impl ModuleBackend for S3MBackend {
                                 channel.voice_idx = Some(voice_idx);
                             }
                         }
-                    }
-                }
-            } else if pattern.note == 97 || pattern.note == 253 { // Note Off
-                if note_delay_first_tick {
-                    if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].key_off(instruments, false);
-                    }
-                }
-            } else if pattern.note == 121 || pattern.note == 254 { // Note Cut
-                if note_delay_first_tick {
-                    if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].on = false;
-                        r.voices[v_idx].volume.output_volume = 0.0;
                     }
                 }
             }
@@ -887,7 +967,6 @@ impl ModuleBackend for S3MBackend {
             if first_tick {
                 match pattern.volume {
                     0..=64 => { 
-                        channel.channel_volume = pattern.volume;
                         channel.set_volume(voice_ref.as_deref_mut(), true, pattern.volume); 
                     }
                     _ => {}
@@ -915,10 +994,10 @@ impl ModuleBackend for S3MBackend {
                 5 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); }
                 6 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
                 7 => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables); }
-                8 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables); }
-                10 => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y()); }
+                8 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
+                10 => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y(), true); }
                 11 => { 
-                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables);
+                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type);
                     channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
                 }
                 12 => { 
@@ -937,7 +1016,7 @@ impl ModuleBackend for S3MBackend {
                         }
                     }
                 }
-                16 => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param); }
+                16 => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param, r.song_data.song_type); }
                 17 => { channel.it_retrig(voice_ref.as_deref_mut(), instruments, *r.tick, pattern.effect_param); }
                 19 => {
                     let x = pattern.get_x();
@@ -945,7 +1024,8 @@ impl ModuleBackend for S3MBackend {
                     match x {
                         0x8 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((y as i32 * 17).min(255)); } } }
                         0xC => { if *r.tick == y as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
-                        0xE => { if first_tick { *r.row_delay = y as usize; } }
+                        0xE => { if first_tick && !r.pattern_change.delay_processed { r.pattern_change.pattern_delay = y as u8; r.pattern_change.delay_processed = true; } }
+
                         _ => {}
                     }
                 }
@@ -971,12 +1051,10 @@ impl ModuleBackend for S3MBackend {
             voice.update_envelopes(instruments, r.rate);
             voice.update_fadeout();
             
-            // S3M formula: fadeout * envelope * channel_vol/64 * global_vol/64
-            // S3M uses channel.channel_volume for final volume calculation
-            let fadeout = voice.volume.fadeout_vol as f32 / 65536.0;
-            let envelope = voice.volume.envelope_vol as f32 / 16384.0;
+            // S3M formula: compute_base_volume() * channel_vol/64 * global_vol/64
+            // compute_base_volume() includes fadeout, envelope, and sample volume
             let channel_vol = channel.channel_volume as f32 / 64.0;
-            let output_vol = fadeout * envelope * channel_vol * global_vol_f32;
+            let output_vol = voice.compute_base_volume() * channel_vol * global_vol_f32;
             voice.set_output_volume(output_vol);
             
             if channel_force_off {
@@ -984,6 +1062,7 @@ impl ModuleBackend for S3MBackend {
             }
             
             let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
+
             if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
                 voice.on = false;
             } else if !is_host_voice && voice.volume.output_volume < 0.00001 {

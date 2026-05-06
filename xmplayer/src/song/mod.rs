@@ -18,7 +18,7 @@ use shared_sync_primitives::TripleBufferWriter;
 use std::collections::HashMap;
 use std::num::Wrapping;
 
-pub(crate) mod backend;
+pub mod backend;
 pub mod test_dump;
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -298,6 +298,7 @@ pub struct PatternChange {
     row:            u8,
     pattern:        u8,
     pattern_delay:  u8,
+    delay_processed:bool,
 }
 
 impl PatternChange {
@@ -308,8 +309,13 @@ impl PatternChange {
             is_loop: false,
             row: 0,
             pattern: 0,
-            pattern_delay: 0,
+            pattern_delay: 0, delay_processed: false,
         }
+    }
+
+    pub fn set_loop(&mut self, row: u8) {
+        self.is_loop = true;
+        self.row = row;
     }
 
     pub fn new_jump(order: usize) -> Self {
@@ -319,7 +325,7 @@ impl PatternChange {
             is_loop: false,
             row: 0,
             pattern: order as u8,
-            pattern_delay: 0,
+            pattern_delay: 0, delay_processed: false,
         }
     }
 
@@ -330,7 +336,7 @@ impl PatternChange {
             is_loop: false,
             row: row as u8,
             pattern: 0,
-            pattern_delay: 0,
+            pattern_delay: 0, delay_processed: false,
         }
     }
     fn reset(&mut self) {
@@ -340,8 +346,8 @@ impl PatternChange {
     fn set_break(&mut self, song_type: SongType, first_tick: bool, param: u8) {
         if !first_tick { return; }
         self.pattern_break = true;
-        if song_type == SongType::MOD || song_type == SongType::S3M {
-            // MOD and S3M use BCD for Pattern Break
+        if song_type == SongType::MOD || song_type == SongType::S3M || song_type == SongType::XM {
+            // MOD, S3M and XM use BCD for Pattern Break
             self.row = ((param >> 4) * 10 + (param & 0x0F)) as u8;
         } else {
             // XM and IT use Hex
@@ -419,9 +425,6 @@ impl GlobalVolume {
         }
     }
 
-    fn handle_volume_slide(&mut self, first_tick: bool, volume: i8) {
-        if !first_tick { self.volume_slide_inner(volume);}
-    }
 
     // fn fine_volume_slide(&mut self, first_tick: bool, volume: i8) {
     //     if first_tick { self.volume_slide_inner(volume);}
@@ -434,7 +437,7 @@ impl GlobalVolume {
         self.volume = new_volume as u32;
     }
 
-    fn set_volume(&mut self, first_tick: bool, volume: u8) {
+    pub(crate) fn set_volume(&mut self, first_tick: bool, volume: u8) {
         if first_tick {
             let max_vol = if self.song_type == Some(SongType::IT) { 128 } else { 64 };
             self.volume = (volume as u32).min(max_vol as u32);
@@ -620,7 +623,6 @@ pub struct TickState {
     state:                  BufferState,
     current_buf_position:   usize,
     current_tick_position:  usize,
-    pub row_delay:              usize,
 }
 
 pub enum CallbackState {
@@ -766,11 +768,11 @@ pub struct Song {
     pub hann_window:                Vec<f32>,
     pub cached_fft:                 Option<Arc<dyn Fft<f32>>>,
     pub bin_map:                    Vec<(usize, usize)>,
-    pub(crate) old_effects:         bool,
-    pub(crate) compatible_g:        bool,
-    pub(crate) master_volume:       u8,
-    pub(crate) mixing_volume:       u8,
-    pub(crate) backend:             Option<Box<dyn crate::song::backend::ModuleBackend>>,
+    pub old_effects:         bool,
+    pub compatible_g:        bool,
+    pub master_volume:       u8,
+    pub mixing_volume:       u8,
+    pub backend:             Option<Box<dyn crate::song::backend::ModuleBackend>>,
 }
 
 impl Song {
@@ -851,7 +853,6 @@ impl Song {
                 state: BufferState::Start,
                 current_buf_position: 0,
                 current_tick_position: 0,
-                row_delay: 0,
             },
             visualizer_enabled: true,
             visualizer_mode: 2,
@@ -940,7 +941,6 @@ impl Song {
             state: BufferState::Start,
             current_buf_position: 0,
             current_tick_position: 0,
-            row_delay: 0,
         };
 
         // Reset all channels to blank slate, but preserve initial volumes/panning
@@ -1602,6 +1602,7 @@ impl Song {
             return;
         }
 
+        let first_row_tick = self.tick == 0;
         let mut r = backend::SongPlaybackResources {
             song_position: &mut self.song_position,
             row: &mut self.row,
@@ -1612,10 +1613,10 @@ impl Song {
             channels: &mut self.channels,
             voices: &mut self.voices,
             pattern_change: &mut self.pattern_change,
-            row_delay: &mut self.tick_state.row_delay,
             bpm: &mut self.bpm,
             frequency_tables: &self.frequency_tables,
             rate: self.rate,
+            first_row_tick,
             old_effects: self.old_effects,
             compatible_g: self.compatible_g,
         };
@@ -1630,7 +1631,7 @@ impl Song {
         return (1.0 - t) * p1 + t * p2;
     }
 
-    fn output_channels(&mut self, current_buf_position: usize, buf: &mut impl BufferAdapter, ticks_to_generate: usize) {
+    pub fn output_channels(&mut self, current_buf_position: usize, buf: &mut impl BufferAdapter, ticks_to_generate: usize) {
         if self.is_fast_forwarding {
             return;
         }

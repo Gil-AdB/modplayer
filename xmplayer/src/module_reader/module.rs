@@ -141,8 +141,8 @@
                     let data = file.read_u32_be()?;
                     let sample = (((data & 0xF0000000) >> 24) | ((data & 0xF000) >> 12)) as u8;
                     let period = ((data >> 16) & 0x0FFF) as u16;
-                    let mut effect = ((data & 0xF00) >> 8) as u8;
-                    let mut effect_param = (data & 0xFF) as u8;
+                    let effect = ((data & 0xF00) >> 8) as u8;
+                    let effect_param = (data & 0xFF) as u8;
 
                     let mut note = 0u8;
                     for i in 0..8 * 12usize {
