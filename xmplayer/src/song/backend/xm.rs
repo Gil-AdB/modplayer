@@ -1,8 +1,8 @@
-use crate::module_reader::SongType;
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_extended, set_channel_note, ModuleBackend,
-    SongPlaybackResources, XM_E_TABLE,
+    alloc_voice, apply_extended, cut_or_nna_existing_voice, init_voice_basics,
+    mute_silent_voices, set_channel_note, ModuleBackend, SongPlaybackResources,
+    XM_E_TABLE,
 };
 
 pub struct XmBackend {}
@@ -61,35 +61,12 @@ impl ModuleBackend for XmBackend {
                             if sample_idx > 0 && (sample_idx - 1) < instrument.samples.len() {
                                 let final_sample_idx = sample_idx - 1;
                                 
-                                // XM cuts the existing voice on the channel before starting a new one.
-                                // The match-on-song_type block is dead under XmBackend (always XM/MOD),
-                                // and is preserved here for the helper-extraction follow-up.
                                 let prev_voice_idx = channel.voice_idx.unwrap_or(i);
-                                if r.voices[prev_voice_idx].on && r.voices[prev_voice_idx].channel_idx == i {
-                                    match r.song_data.song_type {
-                                        SongType::XM | SongType::MOD => { r.voices[prev_voice_idx].on = false; }
-                                        _ => {
-                                            let old_inst = &instruments[r.voices[prev_voice_idx].instrument];
-                                            match old_inst.nna {
-                                                0 => { r.voices[prev_voice_idx].on = false; } // Cut
-                                                1 => { /* Continue */ }
-                                                2 => { r.voices[prev_voice_idx].key_off(instruments, false); } // Note Off
-                                                3 => { r.voices[prev_voice_idx].sustained = false; } // Fade
-                                                _ => { r.voices[prev_voice_idx].on = false; }
-                                            }
-                                        }
-                                    }
-                                }
+                                cut_or_nna_existing_voice(r.voices, instruments, r.song_data.song_type, i, prev_voice_idx);
 
                                 let voice_idx = alloc_voice(r.voices);
+                                init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
                                 let voice = &mut r.voices[voice_idx];
-                                voice.on = true;
-                                voice.channel_idx = i;
-                                voice.instrument = inst_idx;
-                                voice.sample = final_sample_idx;
-                                voice.sustained = true;
-                                voice.sample_position = 4.0;
-                                voice.loop_started = false;
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
                                 voice.panning.panning = r.song_data.initial_channel_panning[i];
 
@@ -242,30 +219,24 @@ impl ModuleBackend for XmBackend {
             }
         }
 
-        // 2. Process all active voices (XM volume formula)
+        // 2. Process all active voices (XM volume formula).
         let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
-        for (v_idx, voice) in r.voices.iter_mut().enumerate() {
+        for voice in r.voices.iter_mut() {
             if !voice.on { continue; }
             let channel_force_off = r.channels[voice.channel_idx].force_off;
-        
-        voice.update_envelopes(instruments, r.rate);
-        voice.update_fadeout();
-            
-            // XM formula: fadeout * envelope * channel_vol/64 * global_vol/64
-            let base = voice.compute_base_volume();
-            let output_vol = base * global_vol_f32;
+
+            voice.update_envelopes(instruments, r.rate);
+            voice.update_fadeout();
+
+            // XM formula: compute_base_volume() * global_vol/64
+            let output_vol = voice.compute_base_volume() * global_vol_f32;
             voice.set_output_volume(output_vol);
-            
+
             if channel_force_off {
                 voice.set_output_volume(0.0);
             }
-            
-            let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
-            if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
-                voice.on = false;
-            } else if !is_host_voice && voice.volume.output_volume < 0.00001 {
-                voice.on = false;
-            }
         }
+
+        mute_silent_voices(r.voices, r.channels);
     }
 }

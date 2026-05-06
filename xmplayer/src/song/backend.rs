@@ -56,6 +56,68 @@ pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
     idx
 }
 
+/// Set the basic voice fields shared by every format's note-trigger path.
+/// Caller is responsible for sample-volume retrig, panning, trigger_note,
+/// envelope reset, and the channel.voice_idx assignment - those vary
+/// per format.
+pub(super) fn init_voice_basics(voice: &mut Voice, channel_idx: usize, instrument: usize, sample: usize) {
+    voice.on = true;
+    voice.channel_idx = channel_idx;
+    voice.instrument = instrument;
+    voice.sample = sample;
+    voice.sustained = true;
+    voice.sample_position = 4.0;
+    voice.loop_started = false;
+}
+
+/// Apply the previous-voice-on-channel handling that runs before alloc_voice
+/// in XM, MOD, and S3M backends. XM and MOD always cut; S3M dispatches via
+/// the instrument's NNA. Cmwt with IT's DCT/DCA logic isn't covered here -
+/// that block is more involved and stays inline in ItBackend.
+pub(super) fn cut_or_nna_existing_voice(
+    voices: &mut [Voice],
+    instruments: &Vec<Instrument>,
+    song_type: SongType,
+    channel_idx: usize,
+    prev_voice_idx: usize,
+) {
+    let v = &voices[prev_voice_idx];
+    if !(v.on && v.channel_idx == channel_idx) { return; }
+    match song_type {
+        SongType::XM | SongType::MOD => {
+            voices[prev_voice_idx].on = false;
+        }
+        _ => {
+            let nna = instruments[voices[prev_voice_idx].instrument].nna;
+            match nna {
+                0 => { voices[prev_voice_idx].on = false; }       // Cut
+                1 => { /* Continue */ }
+                2 => { voices[prev_voice_idx].key_off(instruments, false); } // Note Off
+                3 => { voices[prev_voice_idx].sustained = false; } // Fade
+                _ => { voices[prev_voice_idx].on = false; }
+            }
+        }
+    }
+}
+
+/// End-of-tick mute pass: zero out a voice's output and mark it inactive
+/// when it has finished fading or has dropped below the audibility floor.
+/// Repeated identically in all four backends after their volume formula.
+pub(super) fn mute_silent_voices(voices: &mut [Voice], channels: &[ChannelState]) {
+    const SILENCE_FLOOR: f32 = 0.00001;
+    for (v_idx, voice) in voices.iter_mut().enumerate() {
+        if !voice.on { continue; }
+        let is_host_voice = channels[voice.channel_idx].voice_idx == Some(v_idx);
+        if !voice.sustained
+            && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < SILENCE_FLOOR)
+        {
+            voice.on = false;
+        } else if !is_host_voice && voice.volume.output_volume < SILENCE_FLOOR {
+            voice.on = false;
+        }
+    }
+}
+
 /// Kind of extended-subcommand effect (XM `Exy`, S3M `Sxy`, IT `Sxy`).
 ///
 /// Each format has its own 16-entry table that maps the high nibble (`x`) of

@@ -1,7 +1,7 @@
-use crate::module_reader::SongType;
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_extended, ModuleBackend, SongPlaybackResources, MOD_E_TABLE,
+    alloc_voice, apply_extended, cut_or_nna_existing_voice, init_voice_basics,
+    mute_silent_voices, ModuleBackend, SongPlaybackResources, MOD_E_TABLE,
 };
 
 pub struct ModBackend {}
@@ -44,33 +44,12 @@ impl ModuleBackend for ModBackend {
                     let inst_idx = channel.last_instrument;
                     if inst_idx != 0 && !instruments[inst_idx].samples.is_empty() {
                         let sample_idx = 0;
-                        // MOD always cuts the existing voice on the channel.
                         let prev_voice_idx = channel.voice_idx.unwrap_or(i);
-                        if r.voices[prev_voice_idx].on && r.voices[prev_voice_idx].channel_idx == i {
-                            match r.song_data.song_type {
-                                SongType::XM | SongType::MOD => { r.voices[prev_voice_idx].on = false; }
-                                _ => {
-                                    let old_inst = &instruments[r.voices[prev_voice_idx].instrument];
-                                    match old_inst.nna {
-                                        0 => { r.voices[prev_voice_idx].on = false; } // Cut
-                                        1 => { /* Continue */ }
-                                        2 => { r.voices[prev_voice_idx].key_off(instruments, false); } // Note Off
-                                        3 => { r.voices[prev_voice_idx].sustained = false; } // Fade
-                                        _ => { r.voices[prev_voice_idx].on = false; }
-                                    }
-                                }
-                            }
-                        }
+                        cut_or_nna_existing_voice(r.voices, instruments, r.song_data.song_type, i, prev_voice_idx);
 
                         let voice_idx = alloc_voice(r.voices);
+                        init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, sample_idx);
                         let voice = &mut r.voices[voice_idx];
-                        voice.on = true;
-                        voice.channel_idx = i;
-                        voice.instrument = inst_idx;
-                        voice.sample = sample_idx;
-                        voice.sustained = true;
-                        voice.sample_position = 4.0;
-                        voice.loop_started = false;
                         if pattern.instrument != 0 {
                             voice.volume.retrig(instruments[inst_idx].samples[sample_idx].volume as i32);
                             if instruments[inst_idx].samples[sample_idx].panning < 255 {
@@ -189,7 +168,7 @@ impl ModuleBackend for ModBackend {
         // defaults to 64. Going through compute_base_volume() lets MOD pick up
         // tremolo_shift (effect 0x07), which the previous hand-rolled formula
         // ignored - the handler ran but the output never landed.
-        for (v_idx, voice) in r.voices.iter_mut().enumerate() {
+        for voice in r.voices.iter_mut() {
             if !voice.on { continue; }
             let channel_force_off = r.channels[voice.channel_idx].force_off;
 
@@ -197,17 +176,12 @@ impl ModuleBackend for ModBackend {
 
             let output_vol = voice.compute_base_volume();
             voice.set_output_volume(output_vol);
-            
+
             if channel_force_off {
                 voice.set_output_volume(0.0);
             }
-            
-            let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
-            if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
-                voice.on = false;
-            } else if !is_host_voice && voice.volume.output_volume < 0.00001 {
-                voice.on = false;
-            }
         }
+
+        mute_silent_voices(r.voices, r.channels);
     }
 }

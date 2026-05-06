@@ -2,8 +2,8 @@ use crate::instrument::Instrument;
 use crate::channel_state::Voice;
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_extended, set_channel_note, ModuleBackend,
-    SongPlaybackResources, IT_S_TABLE,
+    alloc_voice, apply_extended, init_voice_basics, mute_silent_voices,
+    set_channel_note, ModuleBackend, SongPlaybackResources, IT_S_TABLE,
 };
 
 pub struct ItBackend {}
@@ -107,14 +107,8 @@ impl ModuleBackend for ItBackend {
                                 }
 
                                 let voice_idx = alloc_voice(r.voices);
+                                init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
                                 let voice = &mut r.voices[voice_idx];
-                                voice.on = true;
-                                voice.channel_idx = i;
-                                voice.instrument = inst_idx;
-                                voice.sample = final_sample_idx;
-                                voice.sustained = true;
-                                voice.sample_position = 4.0;
-                                voice.loop_started = false;
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
                                 if instrument.samples[final_sample_idx].panning < 255 {
                                     voice.panning.panning = instrument.samples[final_sample_idx].panning;
@@ -239,36 +233,30 @@ impl ModuleBackend for ItBackend {
             }
         }
 
-        // 2. Process all active voices (IT volume formula)
+        // 2. Process all active voices (IT volume formula).
         let global_vol_f32 = r.global_volume.volume as f32 / 128.0;
-        for (v_idx, voice) in r.voices.iter_mut().enumerate() {
+        for voice in r.voices.iter_mut() {
             if !voice.on { continue; }
             let channel_force_off = r.channels[voice.channel_idx].force_off;
-            
+
             voice.update_envelopes(instruments, r.rate);
             voice.update_fadeout();
-            
+
             // IT formula: fadeout * envelope * note_vol/64 + tremolo, clamped,
             //   * sample_global/64 * inst_global/128 * global_vol/128.
             // sample_global is already inside compute_base_volume(); don't
             // multiply by it again here (fixes a regression where samples with
             // non-default global volume came out attenuated by an extra
             // sample_global/64 factor).
-            let base = voice.compute_base_volume();
             let inst_vol = voice.instrument_global_volume as f32 / 128.0;
-            let output_vol = base * inst_vol * global_vol_f32;
+            let output_vol = voice.compute_base_volume() * inst_vol * global_vol_f32;
             voice.set_output_volume(output_vol);
-            
+
             if channel_force_off {
                 voice.set_output_volume(0.0);
             }
-            
-            let is_host_voice = r.channels[voice.channel_idx].voice_idx == Some(v_idx);
-            if !voice.sustained && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < 0.00001) {
-                voice.on = false;
-            } else if !is_host_voice && voice.volume.output_volume < 0.00001 {
-                voice.on = false;
-            }
         }
+
+        mute_silent_voices(r.voices, r.channels);
     }
 }
