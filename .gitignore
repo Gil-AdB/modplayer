@@ -23,3 +23,11 @@ modplayer-wasm/www/modplayer-wasm-app-*.tgz
 
 # Deployment
 .publish/
+.aider*
+.env
+
+# Scratch / local debug artifacts (state dumps, comparison transcripts,
+# loose .rs files used for one-off probes, sample modules pulled in for
+# debugging). Not part of any crate.
+scratch/
+ft2-clone/
