@@ -94,6 +94,14 @@ impl SongState {
         if let Ok(_) = self.tx.send(PlaybackCmd::SetPosition(order)) {}
     }
 
+    /// Enable/disable the per-callback display path (oscilloscope copy,
+    /// channel-status snapshot, master FFT). Embedders that don't render
+    /// a visualizer should pass `false` to avoid ~22K complex muls/buffer
+    /// of pure waste. Defaults to true for backwards compatibility.
+    pub fn set_display(&self, on: bool) {
+        if let Ok(_) = self.tx.send(PlaybackCmd::SetDisplay(on)) {}
+    }
+
     fn callback(&self) {
         let mut song = self.song.lock().unwrap();
         let mut rx = self.rx.lock().unwrap();

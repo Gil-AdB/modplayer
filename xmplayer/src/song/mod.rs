@@ -409,6 +409,7 @@ pub enum PlaybackCmd {
     PauseToggle,
     FilterToggle,
     DisplayToggle,
+    SetDisplay(bool),
     ChannelToggle(u8),
     ChannelSolo(u8),
     ChannelUnmuteAll,
@@ -1321,6 +1322,7 @@ impl Song {
                         }
                     }
                     PlaybackCmd::DisplayToggle => {self.display = !self.display;}
+                    PlaybackCmd::SetDisplay(on) => {self.display = on;}
                     PlaybackCmd::ChannelToggle(channel) => {
                         if (channel as usize) < self.channels.len() {
                             self.channels[channel as usize].force_off = !self.channels[channel as usize].force_off;
@@ -1382,6 +1384,13 @@ impl Song {
                         self.rate = self.original_rate;
                     }
                     PlaybackCmd::SetPosition(order) => {
+                        // Cut any voices still ringing from the previous
+                        // pattern; without this, a held note bleeds across
+                        // the jump and tails into the new section.
+                        for channel in self.channels.iter_mut() {
+                            channel.on = false;
+                            channel.voice.volume.set_volume(0);
+                        }
                         self.pattern_change.pattern = order as u8;
                         self.pattern_change.pattern_jump = true;
                         self.pattern_change.row = 0;

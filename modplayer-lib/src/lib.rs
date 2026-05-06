@@ -95,6 +95,10 @@ impl App {
         self.song_handle.set_order(order);
     }
 
+    pub(crate) fn set_display(&mut self, on: bool) {
+        self.song_handle.set_display(on);
+    }
+
     fn close_audio(&mut self) {
         self.audio_output.close();
         self.song_handle.close();
@@ -114,7 +118,12 @@ extern "C" fn Modplayer_Stop(app_ptr: *mut c_void) {
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
     self_.close_audio();
-    let _ = unsafe { Box::from_raw(self_) };
+    // Don't drop the App. Its AudioOutput owns the sdl2::Sdl context whose
+    // Drop calls SDL_Quit, which on macOS tears down windows via AppKit.
+    // AppKit is main-thread-only and Modplayer_Stop is typically called from
+    // an embedder's worker thread, which crashes with
+    // "Must only be used from the main thread". The host process is exiting
+    // anyway, so leak the App and let the OS reclaim memory.
 }
 
 #[unsafe(no_mangle)]
@@ -131,6 +140,14 @@ extern "C" fn Modplayer_SetOrder(app_ptr: *mut c_void, order: u32) {
     let leaked_pointer = app_ptr as *mut App;
     let self_ = unsafe { &mut *leaked_pointer };
     self_.set_order(order);
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Modplayer_SetDisplay(app_ptr: *mut c_void, on: bool) {
+    if app_ptr == 0 as *mut c_void {return;}
+    let leaked_pointer = app_ptr as *mut App;
+    let self_ = unsafe { &mut *leaked_pointer };
+    self_.set_display(on);
 }
 
 #[unsafe(no_mangle)]
