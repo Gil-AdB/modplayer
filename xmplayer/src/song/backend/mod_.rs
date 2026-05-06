@@ -1,8 +1,8 @@
 use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_extended, apply_flow_control_effect, cut_or_nna_existing_voice,
-    init_voice_basics, mute_silent_voices, ModuleBackend, SongPlaybackResources,
-    MOD_E_TABLE,
+    init_voice_basics, mute_silent_voices, set_channel_note, ModuleBackend,
+    SongPlaybackResources, MOD_E_TABLE,
 };
 
 pub struct ModBackend {}
@@ -38,7 +38,12 @@ impl ModuleBackend for ModBackend {
                         let inst_idx = channel.last_instrument;
                         if inst_idx != 0 && !instruments[inst_idx].samples.is_empty() {
                             let sample = &instruments[inst_idx].samples[0];
-                            let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(0, 119) as u8;
+                            // MOD samples always have relative_note = 0 (set
+                            // by module.rs::read_sample), so the (1..=120)
+                            // clamp matches what the historical (0..=119)
+                            // produced for any reachable input - and this
+                            // way MOD shares the engine's note convention.
+                            let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                             channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
                         }
                     }
@@ -62,11 +67,9 @@ impl ModuleBackend for ModBackend {
                             }
                         }
                         voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
-                        
+
                         let sample = &instruments[inst_idx].samples[sample_idx];
-                        let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(0, 119) as u8;
-                        channel.note.set_note(real_note, sample.finetune, pattern.note, r.frequency_tables);
-                        channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+                        set_channel_note(channel, voice, sample.relative_note, sample.finetune, pattern.note, r.rate, r.frequency_tables);
                         voice.last_played_note = pattern.note;
                         channel.voice_idx = Some(voice_idx);
                     }
