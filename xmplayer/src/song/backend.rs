@@ -1,5 +1,62 @@
-// Backend trait + per-tick context. Per-format implementations live in
-// the backend/ submodule (one file per format).
+// Backend trait + per-tick context + shared effect dispatch tables.
+//
+// Architecture
+// ============
+//
+// `Song` calls a single `ModuleBackend::process_tick` per tick. Each format
+// (XM / MOD / S3M / IT) has its own backend struct in the `backend/` sub-
+// module that implements the trait. The backends are structurally similar:
+//
+//   for each channel:
+//     reset transient flags (e.g. tremor_silenced)
+//     update last_instrument from pattern.instrument if set
+//     match pattern.note_action(song_type) {
+//       Trigger(_) => maybe-porta-target / NNA-cut / alloc voice / init / trigger_note
+//       Off / Cut / Fade / None => format-specific
+//     }
+//     volume column   (per-format encoding)
+//     effect column   (table-driven dispatch, see below)
+//   for each voice: format's volume formula, then mute_silent_voices
+//
+// Effect dispatch is data-driven through three layers:
+//
+//   1. `apply_flow_control_effect` handles the simple flow effects
+//      (Pattern Jump / Pattern Break / Set Speed / Set BPM). Both each
+//      backend and the `is_calculating_duration` fast path in `playback.rs`
+//      call it, so the two paths stay in sync.
+//
+//   2. `apply_effect` + per-format `*_EFFECT_TABLE: [EffectKind; 32]`
+//      route the main effect column. Each backend looks up its raw effect
+//      byte in its table to get an `EffectKind`, calls `apply_effect`. The
+//      kind variants encode format-aware behaviour (e.g. `SetPanningXm`
+//      vs `SetPanningIt` because the panning byte is interpreted
+//      differently). `apply_effect` returns `true` for `Extended`, in
+//      which case the caller follows up with...
+//
+//   3. `apply_extended` + per-format `*_E_TABLE: [ExtendedCmdKind; 16]`
+//      handle the XM `Exy` / S3M `Sxy` / IT `Sxy` extended-subcommand
+//      tables. Same shape as layer 2, but indexed by the param's high
+//      nibble.
+//
+// Per-tick context shared between layers 2 and 3 lives in `EffectCtx<'a>`,
+// constructed once per channel iteration.
+//
+// Per-channel "memory" for "param=0 means recall last param" semantics
+// lives on `ChannelState::effect_memory: [u8; N]` indexed by the
+// `EffectMemorySlot` enum (defined in `channel_state`). The
+// `recall_or_set` / `recall_or_set_shared` helpers wrap the canonical
+// "if param != 0 update; else recall" pattern.
+//
+// Voice handling shared across formats:
+//
+//   alloc_voice                 prefer-idle / steal-quietest pick
+//   cut_or_nna_existing_voice   apply prev-voice cut or NNA before alloc
+//   init_voice_basics           set channel_idx / instrument / sample
+//                               (Voice::trigger_note owns playback state)
+//   set_channel_note            real_note clamp + Note::set_note +
+//                               update_frequency_voice
+//   mute_silent_voices          end-of-tick cleanup (voice.on = false on
+//                               faded / non-host-silent voices)
 
 use crate::song::{GlobalVolume, BPM, PatternChange};
 use crate::module_reader::{SongData, SongType};
