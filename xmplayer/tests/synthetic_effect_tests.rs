@@ -41,6 +41,36 @@ fn test_set_volume_mod() {
 }
 
 #[test]
+fn test_mod_tremolo_affects_output_volume() {
+    // Regression: MOD's volume path used to be hand-rolled and skipped
+    // tremolo_shift, so the 0x07 Tremolo effect ran (tremolo_shift was
+    // updated) but never reached the output. Switching MOD to
+    // compute_base_volume() routes tremolo into the formula like other
+    // formats. This test sets up max-depth tremolo on a max-volume note and
+    // expects the output to deviate from a constant 1.0 across ticks.
+    let mut builder = MockSongBuilder::new(SongType::MOD, 1);
+    builder.add_empty_pattern(1);
+    // Row 0: C-4, instrument 1, set volume 64, then Tremolo 0xFF (max
+    // speed, max depth). MOD effect 7 is Tremolo.
+    builder.add_pattern_row(0, 0, 49, 1, 0, 0x07, 0xFF);
+    let mut tester = builder.get_tester();
+
+    let mut min_vol: f32 = f32::INFINITY;
+    let mut max_vol: f32 = -f32::INFINITY;
+    for _ in 0..6 {
+        tester.tick();
+        let v = tester.song.voices[0].volume.output_volume;
+        min_vol = min_vol.min(v);
+        max_vol = max_vol.max(v);
+    }
+    // Without tremolo plumbing, output stays constant at 1.0; with tremolo,
+    // depth=15 produces a clearly visible swing across ticks.
+    assert!(max_vol - min_vol > 0.05,
+            "Tremolo should modulate output volume; saw range {:.3}..{:.3}",
+            min_vol, max_vol);
+}
+
+#[test]
 fn test_sample_offset() {
     let mut builder = MockSongBuilder::new(SongType::XM, 1);
     builder.add_empty_pattern(1);

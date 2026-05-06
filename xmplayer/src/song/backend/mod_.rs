@@ -168,19 +168,22 @@ impl ModuleBackend for ModBackend {
             }
         }
 
-        // 2. Process all active voices (MOD volume formula - no envelope, no inst/sample global vol)
-        let global_vol_f32 = 1.0; // MOD has no global volume
+        // 2. Process all active voices (MOD volume formula).
+        //
+        // MOD has no envelopes, no per-instrument or per-sample global volume,
+        // and no song-level global volume. compute_base_volume() degenerates to
+        //   (fadeout/65536) * (vol/64) + tremolo, clamped, * 1.0
+        // because envelope_vol defaults to 16384 (full) and sample.global_volume
+        // defaults to 64. Going through compute_base_volume() lets MOD pick up
+        // tremolo_shift (effect 0x07), which the previous hand-rolled formula
+        // ignored - the handler ran but the output never landed.
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
-            let _channel_vol_f32 = r.channels[voice.channel_idx].channel_volume as f32 / 64.0;
             let channel_force_off = r.channels[voice.channel_idx].force_off;
-            
+
             voice.update_fadeout();
-            
-            // MOD formula: fadeout * channel_vol/64 (no envelope, no inst/sample global vol)
-            let fadeout = voice.volume.fadeout_vol as f32 / 65536.0;
-            let channel_vol = voice.volume.get_volume() as f32 / 64.0;
-            let output_vol = fadeout * channel_vol * global_vol_f32;
+
+            let output_vol = voice.compute_base_volume();
             voice.set_output_volume(output_vol);
             
             if channel_force_off {
