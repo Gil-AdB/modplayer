@@ -132,11 +132,9 @@ impl ModuleBackend for ModBackend {
                 }
                 0x07 => { channel.tremolo(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.song_data.song_type); }
                 0x08 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(pattern.effect_param as i32); } } }
-                0x09 => { 
-                    if first_tick { 
-                        let mut param = pattern.effect_param as u32;
-                        if param == 0 { param = channel.last_sample_offset; }
-                        channel.last_sample_offset = param;
+                0x09 => {
+                    if first_tick {
+                        let param = channel.recall_or_set(crate::channel_state::EffectMemorySlot::SampleOffset, pattern.effect_param);
                         if let Some(v) = voice_ref.as_deref_mut() { v.sample_position = (param as f32) * 256.0 + 4.0; }
                     }
                 }

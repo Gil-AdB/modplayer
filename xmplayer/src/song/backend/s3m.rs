@@ -164,9 +164,7 @@ impl ModuleBackend for S3MBackend {
                 14 => { channel.channel_volume_slide(first_tick, pattern.effect_param); }
                 15 => { // Sample Offset
                     if first_tick {
-                        let mut param = pattern.effect_param as u32;
-                        if param == 0 { param = channel.last_sample_offset; }
-                        channel.last_sample_offset = param;
+                        let param = channel.recall_or_set(crate::channel_state::EffectMemorySlot::SampleOffset, pattern.effect_param);
                         if let Some(v) = voice_ref.as_deref_mut() {
                             v.sample_position = (param as f32) * 256.0 + 4.0;
                         }

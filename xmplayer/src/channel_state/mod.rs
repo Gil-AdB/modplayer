@@ -273,6 +273,42 @@ impl Voice {
     }
 }
 
+/// Slots for the per-channel effect-memory table.
+///
+/// Each tracker effect that has "param=0 means recall last param" semantics
+/// stores its raw byte parameter in `ChannelState::effect_memory[slot]`.
+/// Two effects can share a slot (e.g. S3M shares E and F porta memory) and
+/// pre-multiplication is done at the use-site, not at storage time.
+#[derive(Copy, Clone, Debug)]
+#[repr(usize)]
+pub enum EffectMemorySlot {
+    PortaUp = 0,             // XM/MOD E1xx, also fine via Exy. Raw byte; use-site does *4.
+    PortaDown,               // XM/MOD E2xx
+    FinePortaUp,             // XM E1x
+    FinePortaDown,           // XM E2x
+    VolSlide,                // XM/MOD A
+    FineVolSlideUp,          // XM EA
+    FineVolSlideDown,        // XM EB
+    SampleOffset,            // 9xx
+    ItPortaUp,               // IT E / S3M E (S3M shares with PortaDown via shared write)
+    ItPortaDown,             // IT F / S3M F
+    ItVolColVolSlide,        // IT vol-col Cx/Dx (running)
+    ItVolColFineVolSlide,    // IT vol-col Ax/Bx (fine)
+    ItVolColPorta,           // IT vol-col Gx
+    ItVolSlide,              // IT D
+    VibratoParam,            // XM/MOD H/4 packed nibbles
+    TremoloParam,            // XM/MOD R/7 packed nibbles
+    VibratoSpeed,            // IT/S3M H speed (split storage)
+    VibratoDepth,            // IT/S3M H depth (split storage)
+    TremoloSpeed,            // IT/S3M R speed
+    TremoloDepth,            // IT/S3M R depth
+    PanningSlide,            // XM P / IT P / S3M P
+    Arpeggio,                // XM/IT/S3M arpeggio packed nibbles
+    Count,                   // sentinel for table size
+}
+
+const EFFECT_MEMORY_LEN: usize = EffectMemorySlot::Count as usize;
+
 pub struct ChannelState {
     pub voice_idx:                      Option<usize>, // Which voice is currently "active" for this channel
     pub last_instrument:                usize,
@@ -282,47 +318,19 @@ pub struct ChannelState {
     pub volume:                         Volume,
     pub panning:                        Panning,
     pub on:                             bool,
-    pub last_porta_up:                  u16,
-    pub last_porta_down:                u16,
-    pub last_fine_porta_up:             u16,
-    pub last_fine_porta_down:           u16,
     pub channel_volume:                 u8,
-    pub last_volume_slide:              u8,
-    pub last_fine_volume_slide_up:      u8,
-    pub last_fine_volume_slide_down:    u8,
     pub porta_to_note:                  PortaToNoteState,
-    pub last_sample_offset:             u32,
-    pub last_panning_speed:             u8,
     pub force_off:                      bool,
+    pub effect_memory:                  [u8; EFFECT_MEMORY_LEN],
     pub(crate) glissando:                      bool,
-    #[allow(dead_code)] pub(crate) vibrato_control:                u8,
-    #[allow(dead_code)] pub(crate) tremolo_control:                u8,
     pub(crate) tremor:                         u8,
     pub(crate) tremor_count:                   u32,
-    #[allow(dead_code)] pub(crate) multi_retrig_count:             u8,
-    #[allow(dead_code)] pub(crate) multi_retrig_volume:            u8,
     pub(crate) period_shift:                   i16,
     pub(crate) last_played_note:               u8,
-    pub(crate) last_it_porta_up:               u8,
-    pub(crate) last_it_porta_down:             u8,
-    pub(crate) last_it_vol_col_vol_slide:      u8,
-    pub(crate) last_it_vol_col_fine_vol_slide: u8,
-    pub(crate) last_it_vol_col_porta:          u8,
-    #[allow(dead_code)] pub(crate) last_it_slide_speed:            u8,
-    pub(crate) last_it_vol_slide:              u8,
-    #[allow(dead_code)] pub(crate) last_vibrato_param:             u8,
-    #[allow(dead_code)] pub(crate) last_tremolo_param:             u8,
-    #[allow(dead_code)] pub(crate) last_tremor_param:              u8,
-    pub(crate) last_panning_slide:             u8,
-    pub(crate) last_vibrato_speed:             u8,
-    pub(crate) last_vibrato_depth:             u8,
-    pub(crate) last_tremolo_speed:             u8,
-    pub(crate) last_tremolo_depth:             u8,
     pub(crate) vibrato_waveform:               u8,
     pub(crate) tremolo_waveform:               u8,
     pub(crate) vibrato_retrig:                 bool,
     pub(crate) tremolo_retrig:                 bool,
-    pub(crate) last_arpeggio_param:            u8,
     pub(crate) last_samples:                   [f32; 512], // Standardized to 512 for UI
     pub(crate) last_samples_pos:               usize,
     pub(crate) loop_row:                       u8,
@@ -340,43 +348,15 @@ impl ChannelState {
             volume: Volume::new(),
             panning: Panning::new(),
             on: false,
-            last_porta_up: 0,
-            last_porta_down: 0,
-            last_fine_porta_up: 0,
-            last_fine_porta_down: 0,
             channel_volume: 64,
-            last_volume_slide: 0,
-            last_fine_volume_slide_up: 0,
-            last_fine_volume_slide_down: 0,
             porta_to_note: PortaToNoteState::new(),
-            last_sample_offset: 0,
-            last_panning_speed: 0,
             force_off: false,
+            effect_memory: [0u8; EFFECT_MEMORY_LEN],
             glissando: false,
-            vibrato_control: 0,
-            tremolo_control: 0,
             tremor: 0,
             tremor_count: 0,
-            multi_retrig_count: 0,
-            multi_retrig_volume: 0,
             period_shift: 0,
             last_played_note: 0,
-            last_it_porta_up: 0,
-            last_it_porta_down: 0,
-            last_it_vol_col_vol_slide: 0,
-            last_it_vol_col_fine_vol_slide: 0,
-            last_it_vol_col_porta: 0,
-            last_it_slide_speed: 0,
-            last_it_vol_slide: 0,
-            last_vibrato_param: 0,
-            last_tremolo_param: 0,
-            last_tremor_param: 0,
-            last_panning_slide: 0,
-            last_arpeggio_param: 0,
-            last_vibrato_speed:     0,
-            last_vibrato_depth:     0,
-            last_tremolo_speed:     0,
-            last_tremolo_depth:     0,
             vibrato_waveform:       0,
             tremolo_waveform: 0,
             vibrato_retrig:         true,
@@ -388,6 +368,47 @@ impl ChannelState {
         }
     }
 
+    /// Read an effect-memory slot.
+    #[inline]
+    pub fn mem(&self, slot: EffectMemorySlot) -> u8 {
+        self.effect_memory[slot as usize]
+    }
+
+    /// Write an effect-memory slot.
+    #[inline]
+    pub fn set_mem(&mut self, slot: EffectMemorySlot, v: u8) {
+        self.effect_memory[slot as usize] = v;
+    }
+
+    /// Standard "param=0 means recall, otherwise update" pattern.
+    #[inline]
+    pub fn recall_or_set(&mut self, slot: EffectMemorySlot, param: u8) -> u8 {
+        if param == 0 {
+            self.mem(slot)
+        } else {
+            self.set_mem(slot, param);
+            param
+        }
+    }
+
+    /// Two-slot variant: writes update both slots (e.g. S3M's E and F porta
+    /// share memory). Recall reads from `primary`.
+    #[inline]
+    pub fn recall_or_set_shared(
+        &mut self,
+        primary: EffectMemorySlot,
+        secondary: EffectMemorySlot,
+        param: u8,
+    ) -> u8 {
+        if param == 0 {
+            self.mem(primary)
+        } else {
+            self.set_mem(primary, param);
+            self.set_mem(secondary, param);
+            param
+        }
+    }
+
 
     pub(crate) fn update_frequency_voice(&mut self, voice: &mut Voice, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
         let vib_shift = voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform));
@@ -396,25 +417,22 @@ impl ChannelState {
     }
 
     pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
-        if song_type == SongType::XM || song_type == SongType::MOD {
-            if speed != 0 || depth != 0 {
-                self.last_vibrato_param = (speed << 4) | depth;
-                self.last_vibrato_speed = speed;
-                self.last_vibrato_depth = depth;
-            } else {
-                self.last_vibrato_speed = self.last_vibrato_param >> 4;
-                self.last_vibrato_depth = self.last_vibrato_param & 0x0F;
-            }
+        let (cur_speed, cur_depth) = if song_type == SongType::XM || song_type == SongType::MOD {
+            // XM/MOD pack speed+depth into a single byte memory.
+            let packed = self.recall_or_set(EffectMemorySlot::VibratoParam, (speed << 4) | depth);
+            (packed >> 4, packed & 0x0F)
         } else {
-            if speed != 0 { self.last_vibrato_speed = speed; }
-            if depth != 0 { self.last_vibrato_depth = depth; }
-        }
+            // IT/S3M store speed and depth independently.
+            if speed != 0 { self.set_mem(EffectMemorySlot::VibratoSpeed, speed); }
+            if depth != 0 { self.set_mem(EffectMemorySlot::VibratoDepth, depth); }
+            (self.mem(EffectMemorySlot::VibratoSpeed), self.mem(EffectMemorySlot::VibratoDepth))
+        };
 
         if let Some(v) = voice {
             if first_tick {
-                v.vibrato_state.speed = self.last_vibrato_speed as i8;
+                v.vibrato_state.speed = cur_speed as i8;
                 let multiplier = if old_effects { 8 } else { 4 };
-                v.vibrato_state.depth = ((self.last_vibrato_depth as u16) * multiplier) as i16;
+                v.vibrato_state.depth = ((cur_depth as u16) * multiplier) as i16;
             } else {
                 v.vibrato_state.next_tick();
             }
@@ -423,24 +441,19 @@ impl ChannelState {
     }
 
     pub(crate) fn tremolo(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, song_type: SongType) {
-        if song_type == SongType::XM || song_type == SongType::MOD {
-            if speed != 0 || depth != 0 {
-                self.last_tremolo_param = (speed << 4) | depth;
-                self.last_tremolo_speed = speed;
-                self.last_tremolo_depth = depth;
-            } else {
-                self.last_tremolo_speed = self.last_tremolo_param >> 4;
-                self.last_tremolo_depth = self.last_tremolo_param & 0x0F;
-            }
+        let (cur_speed, cur_depth) = if song_type == SongType::XM || song_type == SongType::MOD {
+            let packed = self.recall_or_set(EffectMemorySlot::TremoloParam, (speed << 4) | depth);
+            (packed >> 4, packed & 0x0F)
         } else {
-            if speed != 0 { self.last_tremolo_speed = speed; }
-            if depth != 0 { self.last_tremolo_depth = depth; }
-        }
+            if speed != 0 { self.set_mem(EffectMemorySlot::TremoloSpeed, speed); }
+            if depth != 0 { self.set_mem(EffectMemorySlot::TremoloDepth, depth); }
+            (self.mem(EffectMemorySlot::TremoloSpeed), self.mem(EffectMemorySlot::TremoloDepth))
+        };
 
         if let Some(v) = voice {
             if first_tick {
-                v.tremolo_state.speed = self.last_tremolo_speed as i8;
-                v.tremolo_state.depth = self.last_tremolo_depth as i16;
+                v.tremolo_state.speed = cur_speed as i8;
+                v.tremolo_state.depth = cur_depth as i16;
             } else {
                 v.tremolo_state.next_tick();
             }
@@ -451,11 +464,9 @@ impl ChannelState {
 
     pub(crate) fn arpeggio(&mut self, tick: u32, x: u8, y: u8, has_memory: bool) {
         if has_memory {
-            if x != 0 || y != 0 {
-                self.last_arpeggio_param = (x << 4) | y;
-            }
-            let actual_x = self.last_arpeggio_param >> 4;
-            let actual_y = self.last_arpeggio_param & 0x0F;
+            let packed = self.recall_or_set(EffectMemorySlot::Arpeggio, (x << 4) | y);
+            let actual_x = packed >> 4;
+            let actual_y = packed & 0x0F;
             match tick % 3 {
                 0 => { self.period_shift = 0; }
                 1 => { self.period_shift = -(actual_x as i16 * 64); }
@@ -473,15 +484,13 @@ impl ChannelState {
     }
 
     pub(crate) fn porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        let mut actual_amount = amount;
-        if song_type == SongType::IT || song_type == SongType::S3M {
-            if actual_amount == 0 {
-                actual_amount = self.last_it_porta_up;
-            } else {
-                self.last_it_porta_up = actual_amount;
-            }
-            if song_type == SongType::S3M { self.last_it_porta_down = actual_amount; } // Share memory for S3M
-        }
+        let actual_amount = match song_type {
+            SongType::IT  => self.recall_or_set(EffectMemorySlot::ItPortaUp, amount),
+            SongType::S3M => self.recall_or_set_shared(
+                EffectMemorySlot::ItPortaUp, EffectMemorySlot::ItPortaDown, amount,
+            ),
+            _ => amount,
+        };
 
         if song_type == SongType::IT || (song_type == SongType::S3M && actual_amount >= 0xE0) {
             if actual_amount >= 0xF0 { // Extra Fine
@@ -501,15 +510,17 @@ impl ChannelState {
                 }
             }
         } else {
+            // XM/MOD: store the raw byte; scale by 4 at the apply site.
             if first_tick {
                 if actual_amount != 0 {
-                    self.last_porta_up = (actual_amount as u16) * 4;
+                    self.set_mem(EffectMemorySlot::PortaUp, actual_amount);
                 }
             } else {
-                self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(self.last_porta_up)).0;
+                let val = (self.mem(EffectMemorySlot::PortaUp) as u16) * 4;
+                self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(val)).0;
             }
         }
-        
+
         let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
         if (self.note.period as i16) < min_period {
             self.note.period = min_period as u16;
@@ -545,15 +556,13 @@ impl ChannelState {
     }
 
     pub(crate) fn porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        let mut actual_amount = amount;
-        if song_type == SongType::IT || song_type == SongType::S3M {
-            if actual_amount == 0 {
-                actual_amount = self.last_it_porta_down;
-            } else {
-                self.last_it_porta_down = actual_amount;
-            }
-            if song_type == SongType::S3M { self.last_it_porta_up = actual_amount; } // Share memory for S3M
-        }
+        let actual_amount = match song_type {
+            SongType::IT  => self.recall_or_set(EffectMemorySlot::ItPortaDown, amount),
+            SongType::S3M => self.recall_or_set_shared(
+                EffectMemorySlot::ItPortaDown, EffectMemorySlot::ItPortaUp, amount,
+            ),
+            _ => amount,
+        };
 
         if song_type == SongType::IT || (song_type == SongType::S3M && actual_amount >= 0xE0) {
             if actual_amount >= 0xF0 { // Extra Fine
@@ -575,10 +584,11 @@ impl ChannelState {
         } else {
             if first_tick {
                 if actual_amount != 0 {
-                    self.last_porta_down = (actual_amount as u16) * 4;
+                    self.set_mem(EffectMemorySlot::PortaDown, actual_amount);
                 }
             } else {
-                self.note.period += self.last_porta_down;
+                let val = (self.mem(EffectMemorySlot::PortaDown) as u16) * 4;
+                self.note.period += val;
             }
         }
 
@@ -591,9 +601,10 @@ impl ChannelState {
     pub(crate) fn fine_porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
         if first_tick {
             if amount != 0 {
-                self.last_fine_porta_up = (amount as u16) * 4;
+                self.set_mem(EffectMemorySlot::FinePortaUp, amount);
             }
-            self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(self.last_fine_porta_up)).0;
+            let val = (self.mem(EffectMemorySlot::FinePortaUp) as u16) * 4;
+            self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(val)).0;
             let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
             if (self.note.period as i16) < min_period {
                 self.note.period = min_period as u16;
@@ -628,9 +639,10 @@ impl ChannelState {
     pub(crate) fn fine_porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
         if first_tick {
             if amount != 0 {
-                self.last_fine_porta_down = (amount as u16) * 4;
+                self.set_mem(EffectMemorySlot::FinePortaDown, amount);
             }
-            self.note.period += self.last_fine_porta_down;
+            let val = (self.mem(EffectMemorySlot::FinePortaDown) as u16) * 4;
+            self.note.period += val;
             let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
             if self.note.period > max_period {
                 self.note.period = max_period;
@@ -655,35 +667,34 @@ impl ChannelState {
     }
 
     pub(crate) fn it_vol_col_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut amount: i8) {
+        // Note: original code stored only abs(amount), so a recall after a
+        // negative input always returned positive. Preserved here as-is for
+        // bit-exact compatibility; an IT-spec-correct version would split
+        // up/down into separate slots.
         if amount == 0 {
-            amount = self.last_it_vol_col_vol_slide as i8;
+            amount = self.mem(EffectMemorySlot::ItVolColVolSlide) as i8;
         } else {
-            self.last_it_vol_col_vol_slide = amount.abs() as u8;
+            self.set_mem(EffectMemorySlot::ItVolColVolSlide, amount.abs() as u8);
         }
         self.volume_slide(voice, first_tick, amount);
     }
 
     pub(crate) fn it_vol_col_fine_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut amount: i8) {
         if amount == 0 {
-            amount = self.last_it_vol_col_fine_vol_slide as i8;
+            amount = self.mem(EffectMemorySlot::ItVolColFineVolSlide) as i8;
         } else {
-            self.last_it_vol_col_fine_vol_slide = amount.abs() as u8;
+            self.set_mem(EffectMemorySlot::ItVolColFineVolSlide, amount.abs() as u8);
         }
         self.fine_volume_slide(voice, first_tick, amount);
     }
 
-    pub(crate) fn it_vol_col_porta_to_note(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut speed: u8, compatible_g: bool, rate: f32, tables: &AudioTables) {
-        if speed == 0 {
-            speed = self.last_it_vol_col_porta;
-        } else {
-            self.last_it_vol_col_porta = speed;
-        }
+    pub(crate) fn it_vol_col_porta_to_note(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, compatible_g: bool, rate: f32, tables: &AudioTables) {
+        let speed = self.recall_or_set(EffectMemorySlot::ItVolColPorta, speed);
         self.porta_to_note(SongType::IT, voice, first_tick, speed, compatible_g, rate, tables);
     }
 
-    pub(crate) fn it_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut param: u8) {
-        if param == 0 { param = self.last_it_vol_slide; }
-        self.last_it_vol_slide = param;
+    pub(crate) fn it_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
+        let param = self.recall_or_set(EffectMemorySlot::ItVolSlide, param);
 
         let x = param >> 4;
         let y = param & 0x0F;
@@ -771,12 +782,7 @@ impl ChannelState {
     }
 
     pub(crate) fn panning_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8, song_type: SongType) {
-        let mut actual_param = param;
-        if actual_param == 0 {
-            actual_param = self.last_panning_slide;
-        } else {
-            self.last_panning_slide = actual_param;
-        }
+        let actual_param = self.recall_or_set(EffectMemorySlot::PanningSlide, param);
 
         let right = (actual_param >> 4) as i32;
         let left = (actual_param & 0xf) as i32;
