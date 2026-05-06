@@ -239,117 +239,91 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
         return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Not an XM module")));
     }
 
-    dbg!(&id);
     let name = file.read_string(20);
-    dbg!(&name);
     let sig = file.read_u8()?;
     if sig != 0x1a {
         return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "Not an XM module")));
     }
 
     let tracker_name = file.read_string(20);
-    dbg!(&tracker_name);
+    let _ver = file.read_u16()?;
 
-    let ver = file.read_u16()?;
-    dbg!(format!("{:x}", ver));
+    let header_size = file.read_u32()?;
+    let mut song_length = file.read_u16()?;
+    let restart_position = file.read_u16()?;
+    let channel_count = file.read_u16()?;
+    let pattern_count = file.read_u16()?;
+    let instrument_count = file.read_u16()?;
+    let flags = file.read_u16()?;
+    let tempo = file.read_u16()?;
+    let bpm = file.read_u16()?;
+    let stream_position;
+    if let Ok(pos) = file.seek(SeekFrom::Current(0)) { stream_position = pos; } else { stream_position = 20 }
 
-//    dbg!(file.seek(SeekFrom::Current(0)));
+    let mut pattern_order = file.read_bytes((60 + header_size - stream_position as u32) as usize)?;
 
-        let header_size = file.read_u32()?;
-        dbg!(header_size);
+    let mut patterns = read_patterns(file, pattern_count as usize, channel_count as usize)?;
 
-        let mut song_length = file.read_u16()?;
-        dbg!(song_length);
-
-        let restart_position = file.read_u16()?;
-        dbg!(restart_position);
-
-        let channel_count = file.read_u16()?;
-        dbg!(channel_count);
-
-        let pattern_count = file.read_u16()?;
-        dbg!(pattern_count);
-
-        let instrument_count = file.read_u16()?;
-        dbg!(instrument_count);
-
-        let flags = file.read_u16()?;
-        dbg!(flags);
-
-        let tempo = file.read_u16()?;
-        dbg!(tempo);
-
-        let bpm = file.read_u16()?;
-        dbg!(bpm);
-        let stream_position;
-        if let Ok(pos) = file.seek(SeekFrom::Current(0)) { stream_position = pos; } else { stream_position = 20 }
-
-        let mut pattern_order = file.read_bytes((60 + header_size - stream_position as u32) as usize)?;
-
-        let mut patterns = read_patterns(file, pattern_count as usize, channel_count as usize)?;
-
-        // fix empty patterns at end
-        for idx in 0..pattern_order.len() {
-            if pattern_order[idx] >= patterns.len() as u8 {
-                pattern_order[idx] = patterns.len() as u8;
-            }
+    // fix empty patterns at end
+    for idx in 0..pattern_order.len() {
+        if pattern_order[idx] >= patterns.len() as u8 {
+            pattern_order[idx] = patterns.len() as u8;
         }
-        if song_length > pattern_order.len() as u16 {
-            song_length = pattern_order.len() as u16;
-            dbg!("Trimming song legth to {}", song_length);
-        }
-        // dbg!(&pattern_order);
-
-        patterns.push(Patterns {
-            rows: vec![Row {
-                channels: vec![Pattern {
-                    note: 0,
-                    instrument: 0,
-                    volume: 0,
-                    effect: 0,
-                    effect_param: 0
-                }; channel_count as usize]
-            }; 64]
-        });
-
-        let instruments = read_instruments(file, instrument_count as usize)?;
-
-        Ok(SongData {
-            id: id.trim().to_string(),
-            name: name.trim().to_string(),
-            song_type: SongType::XM,
-            tracker_name: tracker_name.trim().to_string(),
-            song_length,
-            restart_position,
-            channel_count,
-            patterns,
-            instrument_count,
-            frequency_type: if (flags & 1) == 1 { FrequencyType::LINEAR } else { FrequencyType::AMIGA },
-            tempo,
-            bpm,
-            pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
-            instruments,
-            use_amiga: (flags & 1) != 1,
-            song_message: "".to_string(),
-            initial_channel_volume: [64; 64],
-            initial_channel_panning: [128; 64],
-            global_volume:           64,
-            master_volume:           128,
-            mixing_volume:           128,
-            old_effects: false,
-            compatible_g: false,
-        })
+    }
+    if song_length > pattern_order.len() as u16 {
+        song_length = pattern_order.len() as u16;
     }
 
-    pub fn read_xm<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData> {
-        file.seek(SeekFrom::Start(0))?;
+    patterns.push(Patterns {
+        rows: vec![Row {
+            channels: vec![Pattern {
+                note: 0,
+                instrument: 0,
+                volume: 0,
+                effect: 0,
+                effect_param: 0
+            }; channel_count as usize]
+        }; 64]
+    });
 
-        let file_len = file.seek(SeekFrom::End(0))?;
-        file.seek(SeekFrom::Start(0))?;
+    let instruments = read_instruments(file, instrument_count as usize)?;
 
-        if file_len < 60 {
-            return Err(SimpleError::new("File is too small!"));
-        }
+    Ok(SongData {
+        id: id.trim().to_string(),
+        name: name.trim().to_string(),
+        song_type: SongType::XM,
+        tracker_name: tracker_name.trim().to_string(),
+        song_length,
+        restart_position,
+        channel_count,
+        patterns,
+        instrument_count,
+        frequency_type: if (flags & 1) == 1 { FrequencyType::LINEAR } else { FrequencyType::AMIGA },
+        tempo,
+        bpm,
+        pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
+        instruments,
+        use_amiga: (flags & 1) != 1,
+        song_message: "".to_string(),
+        initial_channel_volume: [64; 64],
+        initial_channel_panning: [128; 64],
+        global_volume:           64,
+        master_volume:           128,
+        mixing_volume:           128,
+        old_effects: false,
+        compatible_g: false,
+    })
+}
 
-        read_xm_header(file)
+pub fn read_xm<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData> {
+    file.seek(SeekFrom::Start(0))?;
+
+    let file_len = file.seek(SeekFrom::End(0))?;
+    file.seek(SeekFrom::Start(0))?;
+
+    if file_len < 60 {
+        return Err(SimpleError::new("File is too small!"));
     }
+
+    read_xm_header(file)
+}
