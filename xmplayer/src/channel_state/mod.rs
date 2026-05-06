@@ -699,14 +699,19 @@ impl ChannelState {
         let x = param >> 4;
         let y = param & 0x0F;
 
-        if x == 0x0F && y != 0 { // DFy: Fine Down
+        // IT/S3M Dxy decode (see ITTECH.TXT): the upper nibble takes
+        // precedence when both nibbles are non-zero. DFy/DxF select fine
+        // variants only when one of the two is exactly F.
+        if x == 0x0F && y != 0 {        // DFy: Fine Down
             self.fine_volume_slide(voice, first_tick, -(y as i8));
         } else if y == 0x0F && x != 0 { // DxF: Fine Up
             self.fine_volume_slide(voice, first_tick, x as i8);
-        } else if x != 0 && y == 0 { // Dx0: Up
+        } else if x != 0 && y == 0 {    // Dx0: Up by x
             self.volume_slide(voice, first_tick, x as i8);
-        } else if y != 0 && x == 0 { // D0y: Down
+        } else if x == 0 && y != 0 {    // D0y: Down by y
             self.volume_slide(voice, first_tick, -(y as i8));
+        } else if x != 0 {              // Dxy with both non-zero: low nibble ignored, slide up
+            self.volume_slide(voice, first_tick, x as i8);
         }
     }
 

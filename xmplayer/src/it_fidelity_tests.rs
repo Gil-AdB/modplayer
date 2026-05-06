@@ -93,6 +93,38 @@ fn test_it_sample_global_volume_no_double_apply() {
 }
 
 #[test]
+fn test_it_dxy_both_nibbles_non_zero_slides_up_by_x() {
+    // Per IT spec: when both Dxy nibbles are non-zero and neither is F,
+    // the lower nibble is ignored. D32 should slide up by 3 per tick after
+    // first tick. Previously fell through all four match arms and did
+    // nothing.
+    let mut builder = MockSongBuilder::new(SongType::IT, 1);
+    builder.add_empty_pattern(64);
+    builder.add_instrument("Test", vec![0.5; 100]);
+
+    // Row 0: trigger note at half volume so we can slide up and observe.
+    builder.set_pattern_row(0, 0, 0, Pattern { note: 61, instrument: 1, volume: 32, ..Pattern::new() });
+    // Row 1: D32 (effect 0x04, param 0x32) - slide up by 3 per tick.
+    // Pattern::new() defaults volume to 255 (= no vol-col).
+    builder.set_pattern_row(0, 1, 0, Pattern { effect: 0x04, effect_param: 0x32, ..Pattern::new() });
+
+    let mut tester = SongTester::new(builder.build());
+    tester.song.speed = 4;
+
+    // Step into row 1; tick 0 doesn't slide (IT D is "after first tick").
+    // SongTester::tick() processes the current tick THEN advances, so three
+    // tick() calls cover ticks 0, 1, 2 - i.e. one no-op tick and two slides.
+    tester.step_to_row(1);
+    let v0 = tester.song.voices[0].volume.volume;
+    tester.tick(); // processes tick 0 (no slide), advances to 1
+    tester.tick(); // processes tick 1 (slide +3)
+    tester.tick(); // processes tick 2 (slide +3)
+    let v1 = tester.song.voices[0].volume.volume;
+    // Two slide ticks of +3 = +6. With the bug, no slide ran (0).
+    assert_eq!(v1 as i32 - v0 as i32, 6, "D32 should slide up by 3 per non-first tick, got {}", v1 as i32 - v0 as i32);
+}
+
+#[test]
 fn test_it_volume_scaling() {
     let mut builder = MockSongBuilder::new(SongType::IT, 2);
     builder.add_empty_pattern(64);
