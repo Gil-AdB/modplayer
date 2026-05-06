@@ -45,21 +45,25 @@ fn test_dump_amiga_limits() {
     generate_state_dump("test_data/AmigaLimitsFinetune.mod", "test_data/AmigaLimitsFinetune_dump.txt", 100);
 }
 #[test]
+#[ignore = "Manual dump regen; reads /Users/gil-ad/Downloads/mods/strshine.s3m"]
 fn test_dump_strshine() {
     generate_state_dump("/Users/gil-ad/Downloads/mods/strshine.s3m", "test_data/strshine_refactor.txt", 1000);
 }
 
 #[test]
+#[ignore = "Manual dump regen; reads /Users/gil-ad/Downloads/mods/2nd_reality.s3m"]
 fn test_dump_2nd_reality() {
     generate_state_dump("/Users/gil-ad/Downloads/mods/2nd_reality.s3m", "test_data/2nd_reality_refactor.txt", 1000);
 }
 
 #[test]
+#[ignore = "Manual dump regen; reads /Users/gil-ad/work/modplayer/2ND_PM.xm"]
 fn test_dump_2nd_pm_xm() {
     generate_state_dump("/Users/gil-ad/work/modplayer/2ND_PM.xm", "/Users/gil-ad/work/modplayer/2ND_PM_xm_refactor.txt", 2000);
 }
 
 #[test]
+#[ignore = "Manual dump regen; reads /Users/gil-ad/work/modplayer/2ND_PM.S3M"]
 fn test_dump_2nd_pm_s3m() {
     generate_state_dump("/Users/gil-ad/work/modplayer/2ND_PM.S3M", "/Users/gil-ad/work/modplayer/2ND_PM_s3m_refactor.txt", 2000);
 }

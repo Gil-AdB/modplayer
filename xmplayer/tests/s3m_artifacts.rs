@@ -3,6 +3,7 @@ use xmplayer::song::Song;
 use shared_sync_primitives::TripleBuffer;
 
 #[test]
+#[ignore = "Manual local debug helper; reads /Users/gil-ad/Downloads/mods/2nd_reality.s3m"]
 fn test_2nd_reality_s3m_artifacts() {
     let filename = "/Users/gil-ad/Downloads/mods/2nd_reality.s3m";
     let song_data = read_module(filename).expect("Failed to read module");

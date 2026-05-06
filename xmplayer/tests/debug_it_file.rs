@@ -1,6 +1,7 @@
 use xmplayer::module_reader::read_module;
 
 #[test]
+#[ignore = "Manual local debug helper; reads /Users/gil-ad/Downloads/mods/a-windf.it"]
 fn debug_it_patterns() {
     let filename = "/Users/gil-ad/Downloads/mods/a-windf.it";
     

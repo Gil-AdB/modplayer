@@ -1,6 +1,7 @@
 use xmplayer::song_state::SongState;
 
 #[test]
+#[ignore = "Manual local debug helper; reads /Users/gil-ad/Downloads/mods/strshine.s3m"]
 fn dump_pattern_4() {
     let (song_handle, _) = SongState::new("/Users/gil-ad/Downloads/mods/strshine.s3m").unwrap();
     let song = song_handle.get_song().lock().unwrap();
