@@ -325,6 +325,11 @@ pub struct ChannelState {
     pub(crate) glissando:                      bool,
     pub(crate) tremor:                         u8,
     pub(crate) tremor_count:                   u32,
+    /// Set by the Tremor (S3M Ixy) handler each tick. When true, the
+    /// volume post-loop forces voice output to 0 for this channel's voice.
+    /// Reset to false at the top of every channel iteration so it only
+    /// persists for the tick on which Tremor was dispatched.
+    pub(crate) tremor_silenced:                bool,
     pub(crate) period_shift:                   i16,
     pub(crate) last_played_note:               u8,
     pub(crate) vibrato_waveform:               u8,
@@ -355,6 +360,7 @@ impl ChannelState {
             glissando: false,
             tremor: 0,
             tremor_count: 0,
+            tremor_silenced: false,
             period_shift: 0,
             last_played_note: 0,
             vibrato_waveform:       0,
@@ -538,32 +544,36 @@ impl ChannelState {
         }
     }
 
-    #[allow(dead_code)]
+    /// S3M Ixy / similar: alternate the channel between audible (x ticks)
+    /// and silent (y ticks). Persistent state lives in `tremor` (param
+    /// memory) and `tremor_count` (running on/off counter encoded as
+    /// sign bit + remaining-ticks-in-current-phase). Per-tick state goes
+    /// into `tremor_silenced`, which the volume post-loop honors.
     pub(crate) fn tremor(&mut self, tick: u32, param: u8) {
-        if tick == 0 {
-            if param != 0 {
-                self.tremor = param;
-            }
+        if tick == 0 && param != 0 {
+            self.tremor = param;
         }
 
         let mut tremor_sign = self.tremor_count & 0x80;
         let mut tremor_data = (self.tremor_count & 0x7F) as i8;
 
         tremor_data -= 1;
-        if tremor_data < 0
-        {
-            if tremor_sign == 0x80
-            {
+        if tremor_data < 0 {
+            if tremor_sign == 0x80 {
+                // Switching from "on" to "off" phase, load the y nibble.
                 tremor_sign = 0x00;
                 tremor_data = (self.tremor & 0xf) as i8;
             } else {
+                // Switching from "off" to "on" phase, load the x nibble.
                 tremor_sign = 0x80;
                 tremor_data = (self.tremor >> 4) as i8;
             }
         }
 
         self.tremor_count = tremor_sign | tremor_data as u32;
-        self.on = tremor_sign == 0x80;
+        // sign == 0x80 means "in the on phase, audible". Silenced is the
+        // negation; volume post-loop zeros output when this is true.
+        self.tremor_silenced = tremor_sign != 0x80;
     }
 
     pub(crate) fn porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {

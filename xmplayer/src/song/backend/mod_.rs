@@ -16,6 +16,8 @@ impl ModuleBackend for ModBackend {
 
         // 1. Process all channels
         for (i, channel) in r.channels.iter_mut().enumerate() {
+            channel.tremor_silenced = false;
+
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
             let row = &patterns.rows[*r.row];
             let pattern = &row.channels[i];
@@ -170,14 +172,15 @@ impl ModuleBackend for ModBackend {
         // ignored - the handler ran but the output never landed.
         for voice in r.voices.iter_mut() {
             if !voice.on { continue; }
-            let channel_force_off = r.channels[voice.channel_idx].force_off;
+            let channel = &r.channels[voice.channel_idx];
+            let silenced = channel.force_off || channel.tremor_silenced;
 
             voice.update_fadeout();
 
             let output_vol = voice.compute_base_volume();
             voice.set_output_volume(output_vol);
 
-            if channel_force_off {
+            if silenced {
                 voice.set_output_volume(0.0);
             }
         }

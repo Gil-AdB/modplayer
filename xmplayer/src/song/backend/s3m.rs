@@ -16,6 +16,10 @@ impl ModuleBackend for S3MBackend {
         let instruments = &r.song_data.instruments;
         // 1. Process channels
         for (i, channel) in r.channels.iter_mut().enumerate() {
+            // Tremor silencing is per-tick; the handler re-sets this if the
+            // channel's row carries an I effect.
+            channel.tremor_silenced = false;
+
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
             let row = &patterns.rows[*r.row];
             let pattern = &row.channels[i];
@@ -144,6 +148,7 @@ impl ModuleBackend for S3MBackend {
                 6 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
                 7 => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables); }
                 8 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
+                9 => { channel.tremor(*r.tick, pattern.effect_param); }
                 10 => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y(), true); }
                 11 => { 
                     channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type);
@@ -199,7 +204,7 @@ impl ModuleBackend for S3MBackend {
         for voice in r.voices.iter_mut() {
             if !voice.on { continue; }
             let channel = &r.channels[voice.channel_idx];
-            let channel_force_off = channel.force_off;
+            let silenced = channel.force_off || channel.tremor_silenced;
 
             voice.update_envelopes(instruments, r.rate);
             voice.update_fadeout();
@@ -210,7 +215,7 @@ impl ModuleBackend for S3MBackend {
             let output_vol = voice.compute_base_volume() * channel_vol * global_vol_f32 * master_vol_f32;
             voice.set_output_volume(output_vol);
 
-            if channel_force_off {
+            if silenced {
                 voice.set_output_volume(0.0);
             }
         }

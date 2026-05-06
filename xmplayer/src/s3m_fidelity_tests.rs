@@ -128,12 +128,36 @@ mod tests {
         builder.add_pattern_row(0, 0, 49, 1, 64, 9, 0x21); // I21 (Tremor 2 on, 1 off)
         builder.add_pattern_row(0, 1, 0, 0, 255, 9, 0x00); // I00 (Memory)
         let mut tester = SongTester::new(builder.build());
-        
+
         tester.step_row(); // Row 0: Tremor starts
-        // We just verify it doesn't crash for now. 
-        // Real tremor verification requires checking volume on every tick.
-        tester.step_to_row(2); 
+        tester.step_to_row(2);
         tester.assert_voice_on(0, true);
+    }
+
+    #[test]
+    fn test_s3m_tremor_silences_voice_during_off_phase() {
+        // Regression: S3M effect 9 (I = Tremor) was parsed but never
+        // dispatched. tremor() also overloaded channel.on which the volume
+        // formula didn't observe. Now tremor sets channel.tremor_silenced
+        // and the post-loop zeros output volume on those ticks.
+        //
+        // I21 = 2 ticks on, 1 tick off, repeating.
+        let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+        builder.master_volume = 128 | 64;
+        builder.global_volume = 64;
+        builder.add_pattern_row(0, 0, 49, 1, 64, 9, 0x21); // I21
+        let mut tester = SongTester::new(builder.build());
+
+        let mut had_audible = false;
+        let mut had_silent = false;
+        for _ in 0..6 {
+            tester.tick();
+            let v = tester.song.voices[0].volume.output_volume;
+            if v > 0.01 { had_audible = true; }
+            if v < 1e-6 { had_silent = true; }
+        }
+        assert!(had_audible, "Tremor should let the voice through during the on phase");
+        assert!(had_silent,  "Tremor should silence the voice during the off phase");
     }
 
     #[test]
