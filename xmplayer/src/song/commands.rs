@@ -3,7 +3,7 @@
 use std::num::Wrapping;
 use std::sync::mpsc::Receiver;
 
-use crate::tables::AudioTables;
+use crate::tables::{AMIGA_TABLES, LINEAR_TABLES};
 use crate::song::{FilterType, PlaybackCmd, Song, UserData};
 
 impl Song {
@@ -68,8 +68,8 @@ impl Song {
                             channel.force_off = true;
                         }
                     }
-                    PlaybackCmd::AmigaTable => {self.frequency_tables = AudioTables::calc_tables_amiga();}
-                    PlaybackCmd::LinearTable => {self.frequency_tables = AudioTables::calc_tables_linear();}
+                    PlaybackCmd::AmigaTable => { self.frequency_tables = AMIGA_TABLES.as_ref(); }
+                    PlaybackCmd::LinearTable => { self.frequency_tables = LINEAR_TABLES.as_ref(); }
                     PlaybackCmd::SetUserData(key, value) => {self.user_data.insert(key, value);}
                     PlaybackCmd::ModifyUserDataAddUSize(key, value) => {
                         let entry = self.user_data.entry(key).or_insert(UserData::USize(0));

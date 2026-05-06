@@ -163,7 +163,7 @@ impl Song {
             status.force_off          = channel.force_off;
             status.frequency          = voice_frequency;
             let is_linear = self.song_data.frequency_type == FrequencyType::LINEAR;
-            let base_frequency = channel.note.base_frequency(is_linear, &self.frequency_tables);
+            let base_frequency = channel.note.base_frequency(is_linear, self.frequency_tables);
             if base_frequency > 0.0 && voice_frequency > 0.0 {
                 status.pitch_shift = (voice_frequency / base_frequency).log2() * 12.0;
             } else {

@@ -11,7 +11,7 @@ use crate::module_reader::{SongData, SongType, Patterns};
 #[cfg(test)]
 #[allow(unused_imports)]
 use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
-use crate::tables::AudioTables;
+use crate::tables::{AudioTables, AMIGA_TABLES, LINEAR_TABLES};
 use shared_sync_primitives::TripleBufferWriter;
 use std::collections::HashMap;
 
@@ -496,7 +496,7 @@ pub struct Song {
     pub pause:                      bool,
     pub filter:                     FilterType,
     pub display:                    bool,
-    pub frequency_tables:           Box<AudioTables>,
+    pub frequency_tables:           &'static AudioTables,
     pub is_fast_forwarding:         bool,
     pub is_calculating_duration:    bool,
     pub triple_buffer_writer:       TripleBufferWriter<PlayData>,
@@ -533,7 +533,14 @@ pub struct Song {
 
 impl Song {
     pub fn new(song_data: &SongData, triple_buffer_writer: TripleBufferWriter<PlayData>, sample_rate: f32) -> Self {
-        let use_amiga = if song_data.use_amiga { AudioTables::calc_tables_amiga() } else { AudioTables::calc_tables_linear() };
+        // Period/frequency tables depend only on use_amiga and are immutable;
+        // pull a 'static reference into the lazy_static rather than building
+        // and boxing fresh copies per Song.
+        let frequency_tables: &'static AudioTables = if song_data.use_amiga {
+            AMIGA_TABLES.as_ref()
+        } else {
+            LINEAR_TABLES.as_ref()
+        };
         let mut channels = Vec::with_capacity(song_data.channel_count as usize);
         for i in 0..song_data.channel_count as usize {
             let mut channel = ChannelState::new();
@@ -585,7 +592,7 @@ impl Song {
             pause: false,
             filter: FilterType::Sinc,
             display: true,
-            frequency_tables: use_amiga,
+            frequency_tables,
             is_fast_forwarding: false,
             is_calculating_duration: false,
             triple_buffer_writer,

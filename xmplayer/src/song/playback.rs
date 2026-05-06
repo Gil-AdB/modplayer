@@ -309,7 +309,7 @@ impl Song {
             voices: &mut self.voices,
             pattern_change: &mut self.pattern_change,
             bpm: &mut self.bpm,
-            frequency_tables: &self.frequency_tables,
+            frequency_tables: self.frequency_tables,
             rate: self.rate,
             first_row_tick,
             old_effects: self.old_effects,
