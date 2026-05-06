@@ -31,11 +31,15 @@ impl<'a> ITDecompressor<'a> {
         Ok(res)
     }
 
-    pub fn decompress_8bit(data: &[u8], out: &mut [i8]) -> SimpleResult<()> {
+    pub fn decompress_8bit(data: &[u8], out: &mut [i8], it215: bool) -> SimpleResult<()> {
         let mut decompressor = ITDecompressor::new(data);
         let mut bit_width = 9u32;
         let mut out_pos = 0usize;
-        let mut last_val = 0i8;
+        // IT215 applies the integrator twice over the same delta stream.
+        // delta1 = sum of deltas, delta2 = sum of delta1. IT 2.14 uses only
+        // delta1.
+        let mut delta1 = 0i8;
+        let mut delta2 = 0i8;
 
         while out_pos < out.len() {
             let val = decompressor.read_bits(bit_width)?;
@@ -68,19 +72,26 @@ impl<'a> ITDecompressor<'a> {
             let shift = 32 - bit_width;
             final_val <<= shift;
             final_val >>= shift;
-            
-            last_val = last_val.wrapping_add(final_val as i8);
-            out[out_pos] = last_val;
+
+            delta1 = delta1.wrapping_add(final_val as i8);
+            let out_val = if it215 {
+                delta2 = delta2.wrapping_add(delta1);
+                delta2
+            } else {
+                delta1
+            };
+            out[out_pos] = out_val;
             out_pos += 1;
         }
         Ok(())
     }
 
-    pub fn decompress_16bit(data: &[u8], out: &mut [i16]) -> SimpleResult<()> {
+    pub fn decompress_16bit(data: &[u8], out: &mut [i16], it215: bool) -> SimpleResult<()> {
         let mut decompressor = ITDecompressor::new(data);
         let mut bit_width = 17u32;
         let mut out_pos = 0usize;
-        let mut last_val = 0i16;
+        let mut delta1 = 0i16;
+        let mut delta2 = 0i16;
 
         while out_pos < out.len() {
             let val = decompressor.read_bits(bit_width)?;
@@ -113,19 +124,85 @@ impl<'a> ITDecompressor<'a> {
             let shift = 32 - bit_width;
             final_val <<= shift;
             final_val >>= shift;
-            
-            last_val = last_val.wrapping_add(final_val as i16);
-            out[out_pos] = last_val;
+
+            delta1 = delta1.wrapping_add(final_val as i16);
+            let out_val = if it215 {
+                delta2 = delta2.wrapping_add(delta1);
+                delta2
+            } else {
+                delta1
+            };
+            out[out_pos] = out_val;
             out_pos += 1;
         }
         Ok(())
     }
 }
 
-pub(crate) fn decompress_it_block_8bit(data: &[u8], out: &mut [i8]) -> SimpleResult<()> {
-    ITDecompressor::decompress_8bit(data, out)
+pub(crate) fn decompress_it_block_8bit(data: &[u8], out: &mut [i8], it215: bool) -> SimpleResult<()> {
+    ITDecompressor::decompress_8bit(data, out, it215)
 }
 
-pub(crate) fn decompress_it_block_16bit(data: &[u8], out: &mut [i16]) -> SimpleResult<()> {
-    ITDecompressor::decompress_16bit(data, out)
+pub(crate) fn decompress_it_block_16bit(data: &[u8], out: &mut [i16], it215: bool) -> SimpleResult<()> {
+    ITDecompressor::decompress_16bit(data, out, it215)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pack a sequence of (value, width-in-bits) into a little-endian bit
+    /// stream matching ITDecompressor::read_bits's layout: bits accumulate
+    /// least-significant-first within each byte and across bytes.
+    fn pack_bits(values: &[(u32, u32)]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut buf: u64 = 0;
+        let mut count: u32 = 0;
+        for &(val, width) in values {
+            buf |= (val as u64) << count;
+            count += width;
+            while count >= 8 {
+                bytes.push((buf & 0xFF) as u8);
+                buf >>= 8;
+                count -= 8;
+            }
+        }
+        if count > 0 {
+            bytes.push((buf & 0xFF) as u8);
+        }
+        bytes
+    }
+
+    #[test]
+    fn test_decompress_8bit_it214_single_integration() {
+        // Four 9-bit deltas, each = 1. it214 (single integration) should
+        // produce the running sum: 1, 2, 3, 4.
+        let stream = pack_bits(&[(1, 9), (1, 9), (1, 9), (1, 9)]);
+        let mut out = [0i8; 4];
+        decompress_it_block_8bit(&stream, &mut out, false).unwrap();
+        assert_eq!(out, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_decompress_8bit_it215_double_integration() {
+        // Same input as above, but with the IT 2.15+ second-integration pass:
+        // delta1 = 1, 2, 3, 4
+        // delta2 = 1, 3, 6, 10  (running sum of delta1)
+        let stream = pack_bits(&[(1, 9), (1, 9), (1, 9), (1, 9)]);
+        let mut out = [0i8; 4];
+        decompress_it_block_8bit(&stream, &mut out, true).unwrap();
+        assert_eq!(out, [1, 3, 6, 10]);
+    }
+
+    #[test]
+    fn test_decompress_16bit_it215_double_integration() {
+        // 17-bit deltas of value 1, four samples.
+        let stream = pack_bits(&[(1, 17), (1, 17), (1, 17), (1, 17)]);
+        let mut out214 = [0i16; 4];
+        let mut out215 = [0i16; 4];
+        decompress_it_block_16bit(&stream, &mut out214, false).unwrap();
+        decompress_it_block_16bit(&stream, &mut out215, true).unwrap();
+        assert_eq!(out214, [1, 2, 3, 4]);
+        assert_eq!(out215, [1, 3, 6, 10]);
+    }
 }

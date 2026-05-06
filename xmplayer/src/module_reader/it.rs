@@ -103,7 +103,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         result
     }
 
-    fn read_samples<R: Read + Seek>(file: &mut R, sample_ptrs: &Vec<u32>) -> SimpleResult<Vec<Sample>> {
+    fn read_samples<R: Read + Seek>(file: &mut R, sample_ptrs: &Vec<u32>, it215: bool) -> SimpleResult<Vec<Sample>> {
         let mut samples: Vec<Sample> = vec![];
         samples.reserve_exact(sample_ptrs.len());
 
@@ -179,7 +179,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                             let mut block_data = vec![0u8; block_len as usize];
                             file.read_exact(&mut block_data)?;
                             let todo = std::cmp::min(0x8000, length as usize - decomp_pos);
-                            it_compression::decompress_it_block_8bit(&block_data, &mut decompressed_data[decomp_pos..decomp_pos+todo])?;
+                            it_compression::decompress_it_block_8bit(&block_data, &mut decompressed_data[decomp_pos..decomp_pos+todo], it215)?;
                             decomp_pos += todo;
                         }
                         sample.data = Sample::upsamplei16(Sample::upsamplei8(decompressed_data));
@@ -191,7 +191,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                             let mut block_data = vec![0u8; block_len as usize];
                             file.read_exact(&mut block_data)?;
                             let todo = std::cmp::min(0x4000, length as usize - decomp_pos);
-                            it_compression::decompress_it_block_16bit(&block_data, &mut decompressed_data[decomp_pos..decomp_pos+todo])?;
+                            it_compression::decompress_it_block_16bit(&block_data, &mut decompressed_data[decomp_pos..decomp_pos+todo], it215)?;
                             decomp_pos += todo;
                         }
                         sample.data = Sample::upsamplei16(decompressed_data);
@@ -393,7 +393,11 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let sample_ptrs = file.read_u32_vec(sample_count as usize)?;
         let pattern_ptrs = file.read_u32_vec(pattern_count as usize)?;
 
-        let samples = read_samples(file, &sample_ptrs)?;
+        // IT 2.15+ adds a second delta-integration pass to the compressed
+        // sample format. Earlier IT versions use single-pass deltas. cmwt
+        // (Compatible With Tracker) >= 0x215 selects the IT215 variant.
+        let it215 = compatible_with_version >= 0x215;
+        let samples = read_samples(file, &sample_ptrs, it215)?;
         let mut instruments = read_instruments(file, &instrument_ptrs)?;
 
         let mut patterns: Vec<Patterns> = vec![];
