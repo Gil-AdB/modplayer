@@ -1,7 +1,7 @@
 use xmplayer::song::{PlaybackCmd, UserData};
 use xmplayer::module_reader::print_module;
 use std::env;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use std::io::{stdout, Write};
 
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
@@ -41,7 +41,7 @@ fn main() {
     }
 }
 
-fn run_dump(song_data: &mut SongHandle, mut consumer: AudioConsumer) {
+fn run_dump(song_data: &mut SongHandle, consumer: AudioConsumer) {
     println!("Starting dump of {}...", song_data.get_song_data().name);
     let _handle = song_data.start(|_, _, _, _| {});
 
@@ -153,11 +153,6 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
     if let Err(_e) = crossterm::execute!(stdout(), LeaveAlternateScreen) {}
 }
 
-fn is_num (ch: char) -> bool {
-    ch >= '0' && ch <= '9'
-}
-
-
 fn mainloop(song_data: &SongState) {
 
     if let Ok(size) = crossterm::terminal::size() {
@@ -167,9 +162,6 @@ fn mainloop(song_data: &SongState) {
         let _ = tx.send(PlaybackCmd::SetUserData("x".to_string(), UserData::ISize(0)));
         let _ = tx.send(PlaybackCmd::SetUserData("y".to_string(), UserData::ISize(0)));
     }
-
-    let mut last_time = SystemTime::now();
-    let mut last_char= '\0';
 
     if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
     loop {
