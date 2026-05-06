@@ -175,6 +175,9 @@ impl ModuleBackend for S3MBackend {
                 }
                 16 => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param, r.song_data.song_type); }
                 17 => { channel.it_retrig(voice_ref.as_deref_mut(), instruments, *r.tick, pattern.effect_param); }
+                18 => { // R: Tremolo
+                    channel.tremolo(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.song_data.song_type);
+                }
                 19 => {
                     let kind = S3M_S_TABLE[pattern.get_x() as usize];
                     apply_extended(
@@ -186,6 +189,9 @@ impl ModuleBackend for S3MBackend {
                     );
                 }
                 20 => { if first_tick { r.bpm.update(pattern.effect_param as u32, r.rate); } }
+                21 => { // U: Fine Vibrato (depth/4 of regular H, shared memory)
+                    channel.fine_vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type);
+                }
                 22 => { r.global_volume.set_volume(note_delay_first_tick, pattern.effect_param); }
                 23 => { r.global_volume.volume_slide(note_delay_first_tick, pattern.effect_param); }
                 24 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(pattern.effect_param as i32); } } }

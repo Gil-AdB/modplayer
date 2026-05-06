@@ -159,9 +159,63 @@ mod tests {
         builder.add_pattern_row(0, 0, 49, 1, 64, 18, 0x42); // R 42 (Tremolo)
         builder.add_pattern_row(0, 1, 0, 0, 255, 18, 0x00); // R 00 (Memory)
         let mut tester = SongTester::new(builder.build());
-        
+
         tester.step_to_row(2);
         tester.assert_voice_on(0, true);
+    }
+
+    #[test]
+    fn test_s3m_tremolo_modulates_output_volume() {
+        // Regression: S3M effect 18 (R = Tremolo) was parsed but never
+        // dispatched, so tremolo on S3M modules played silently.
+        let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+        builder.master_volume = 128 | 64;
+        builder.global_volume = 64;
+        // Note + Tremolo with max-ish swing.
+        builder.add_pattern_row(0, 0, 49, 1, 64, 18, 0xFF);
+        let mut tester = SongTester::new(builder.build());
+
+        let mut min_v: f32 = f32::INFINITY;
+        let mut max_v: f32 = -f32::INFINITY;
+        for _ in 0..6 {
+            tester.tick();
+            let v = tester.song.voices[0].volume.output_volume;
+            min_v = min_v.min(v);
+            max_v = max_v.max(v);
+        }
+        assert!(max_v - min_v > 0.05,
+                "S3M tremolo should modulate output; saw range {:.3}..{:.3}",
+                min_v, max_v);
+    }
+
+    #[test]
+    fn test_s3m_fine_vibrato_smaller_swing_than_vibrato() {
+        // S3M U (effect 21) is fine vibrato: same params as H but the depth
+        // multiplier is 1 instead of 4. Compare voice frequency excursion
+        // (vibrato modulates frequency, not channel.note.period) of H88 vs
+        // U88; H should sweep wider than U.
+        fn max_freq_excursion(effect: u8) -> f32 {
+            let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+            builder.add_pattern_row(0, 0, 49, 1, 64, effect, 0x88); // speed 8, depth 8
+            let mut tester = SongTester::new(builder.build());
+            tester.tick();
+            let base = tester.song.voices[0].frequency;
+            let mut max_dev: f32 = 0.0;
+            for _ in 0..32 {
+                tester.tick();
+                let f = tester.song.voices[0].frequency;
+                let d = (f - base).abs();
+                if d > max_dev { max_dev = d; }
+            }
+            max_dev
+        }
+
+        let h_swing = max_freq_excursion(8);   // H = regular vibrato
+        let u_swing = max_freq_excursion(21);  // U = fine vibrato
+        assert!(u_swing > 0.0, "U should produce some pitch swing, got {}", u_swing);
+        assert!(h_swing > u_swing,
+                "H vibrato swing ({}) should exceed U fine vibrato swing ({})",
+                h_swing, u_swing);
     }
 
     #[test]

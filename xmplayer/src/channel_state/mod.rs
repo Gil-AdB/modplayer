@@ -417,6 +417,17 @@ impl ChannelState {
     }
 
     pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
+        self.vibrato_inner(voice, first_tick, speed, depth, old_effects, false, rate, tables, song_type);
+    }
+
+    /// S3M U / IT u command: like vibrato but the depth multiplier is 1
+    /// instead of 4 (1/4 the swing for the same depth byte). Memory is
+    /// shared with regular vibrato per S3M spec.
+    pub(crate) fn fine_vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
+        self.vibrato_inner(voice, first_tick, speed, depth, old_effects, true, rate, tables, song_type);
+    }
+
+    fn vibrato_inner(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, fine: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
         let (cur_speed, cur_depth) = if song_type == SongType::XM || song_type == SongType::MOD {
             // XM/MOD pack speed+depth into a single byte memory.
             let packed = self.recall_or_set(EffectMemorySlot::VibratoParam, (speed << 4) | depth);
@@ -431,7 +442,7 @@ impl ChannelState {
         if let Some(v) = voice {
             if first_tick {
                 v.vibrato_state.speed = cur_speed as i8;
-                let multiplier = if old_effects { 8 } else { 4 };
+                let multiplier: u16 = if fine { 1 } else if old_effects { 8 } else { 4 };
                 v.vibrato_state.depth = ((cur_depth as u16) * multiplier) as i16;
             } else {
                 v.vibrato_state.next_tick();
