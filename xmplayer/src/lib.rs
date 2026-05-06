@@ -68,7 +68,11 @@ mod it_fidelity_tests;
 #[cfg(test)]
 mod s3m_fidelity_tests;
 #[cfg(test)]
+mod s3m_pattern_fidelity;
+#[cfg(test)]
 mod it_mapping_tests;
+#[cfg(test)]
+mod xm_fidelity_tests;
 #[cfg(test)]
 mod dump_compare_test;
 pub mod test_utils;
