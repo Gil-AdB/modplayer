@@ -70,6 +70,34 @@ fn test_it_nna_note_off() {
 }
 
 #[test]
+fn test_it_filter_z_sets_cutoff_and_resonance() {
+    // IT Zxx (effect 0x1A): values 0x00..0x7F set the per-voice filter
+    // cutoff; values 0x80..=0x8F set the resonance (low nibble << 3).
+    // Verified against apply_effect's Filter arm.
+    let mut builder = MockSongBuilder::new(SongType::IT, 1);
+    builder.add_empty_pattern(64);
+    builder.add_instrument("F", vec![0.5; 100]);
+    builder.set_pattern_row(0, 0, 0, Pattern {
+        note: 49, instrument: 1, volume: 64, effect: 0x1A, effect_param: 0x40,
+    });
+    builder.set_pattern_row(0, 1, 0, Pattern {
+        note: 0, instrument: 0, volume: 255, effect: 0x1A, effect_param: 0x8F,
+    });
+
+    let mut tester = SongTester::new(builder.build());
+    tester.tick();
+    assert_eq!(tester.song.voices[0].filter_cutoff, 0x40,
+               "Z40 should set filter cutoff to 0x40");
+    let resonance_before = tester.song.voices[0].filter_resonance;
+
+    tester.step_to_row(1);
+    tester.tick();
+    assert_eq!(tester.song.voices[0].filter_resonance, 0x0F << 3,
+               "Z8F should set resonance to (0x0F << 3) = {} (was {})",
+               0x0F << 3, resonance_before);
+}
+
+#[test]
 fn test_it_sample_global_volume_no_double_apply() {
     // Regression: prior to the fix, the IT formula multiplied by
     // sample_global_volume/64 once inside compute_base_volume() and again in

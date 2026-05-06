@@ -299,6 +299,63 @@ mod tests {
     }
 
     #[test]
+    fn test_xm_e3_glissando() {
+        // E3y enables glissando (porta-to-note snaps to semitones) when y!=0.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(2);
+        builder.add_pattern_row(0, 0, 48, 1, 255, 0x0E, 0x31); // E31 -> glissando on
+        builder.add_pattern_row(0, 1, 0, 0,  255, 0x0E, 0x30); // E30 -> glissando off
+        let mut tester = builder.get_tester();
+
+        tester.tick();
+        assert!(tester.song.channels[0].glissando, "E31 should enable glissando");
+
+        tester.step_to_row(1);
+        tester.tick();
+        assert!(!tester.song.channels[0].glissando, "E30 should disable glissando");
+    }
+
+    #[test]
+    fn test_xm_e4_vibrato_waveform() {
+        // E4y selects vibrato waveform (low 2 bits) and retrig flag (bit 2).
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(1);
+        // E42 -> waveform 2 (square), retrig=true (bit 4 == 0).
+        builder.add_pattern_row(0, 0, 48, 1, 255, 0x0E, 0x42);
+        let mut tester = builder.get_tester();
+        tester.tick();
+        assert_eq!(tester.song.channels[0].vibrato_waveform, 2);
+        assert!(tester.song.channels[0].vibrato_retrig);
+    }
+
+    #[test]
+    fn test_xm_e5_set_finetune() {
+        // E5y sets finetune to (y << 4) - 128, mapping nibble 0..15 to
+        // -128..112 in i8.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(1);
+        builder.add_pattern_row(0, 0, 48, 1, 255, 0x0E, 0x58);  // E58 -> 8<<4 - 128 = 0
+        let mut tester = builder.get_tester();
+        tester.tick();
+        assert_eq!(tester.song.channels[0].note.finetune, 0);
+    }
+
+    #[test]
+    fn test_xm_ecx_note_cut_at_tick() {
+        // ECx silences the voice when tick == x.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(1);
+        builder.add_pattern_row(0, 0, 48, 1, 255, 0x0E, 0xC2); // EC2 -> cut at tick 2
+        let mut tester = builder.get_tester();
+        tester.tick(); // tick 0
+        assert!(tester.song.voices[0].on);
+        tester.tick(); // tick 1
+        assert!(tester.song.voices[0].on);
+        tester.tick(); // tick 2 -> cut
+        assert!(!tester.song.voices[0].on);
+    }
+
+    #[test]
     fn test_combo_vibrato_plus_volslide_runs_in_all_formats() {
         // VibratoPlusVolSlide: XM 6, MOD 6, S3M 11 (K), IT 0xB.
         for st in [SongType::XM, SongType::MOD, SongType::S3M, SongType::IT] {
