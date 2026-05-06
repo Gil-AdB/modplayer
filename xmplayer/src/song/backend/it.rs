@@ -2,8 +2,9 @@ use crate::instrument::Instrument;
 use crate::channel_state::Voice;
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_extended, init_voice_basics, mute_silent_voices,
-    set_channel_note, ModuleBackend, SongPlaybackResources, IT_S_TABLE,
+    alloc_voice, apply_extended, apply_flow_control_effect, init_voice_basics,
+    mute_silent_voices, set_channel_note, ModuleBackend, SongPlaybackResources,
+    IT_S_TABLE,
 };
 
 pub struct ItBackend {}
@@ -181,11 +182,22 @@ impl ModuleBackend for ItBackend {
                 _ => {}
             }
 
-            // Effect Column
+            // Effect Column. Flow control (A/B/C/T) goes through the
+            // shared helper to stay in sync with the duration-calc path.
+            if apply_flow_control_effect(
+                pattern, r.song_data.song_type, first_tick,
+                r.pattern_change, r.speed, r.bpm, r.rate,
+            ) {
+                if let Some(v) = voice_ref.as_deref_mut() {
+                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                }
+                continue;
+            }
+
             match pattern.effect {
-                0x01 => { if first_tick { *r.speed = pattern.effect_param as u32; } }
-                0x02 => { r.pattern_change.set_jump(first_tick, pattern.effect_param); }
-                0x03 => { r.pattern_change.set_break(r.song_data.song_type, first_tick, pattern.effect_param); }
+                // 0x01 (A) SetSpeed, 0x02 (B) PatternJump,
+                // 0x03 (C) PatternBreak, 0x14 (T) SetBpm -- all handled
+                // by apply_flow_control_effect.
                 0x04 => { channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param); }
                 0x05 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); }
                 0x06 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
@@ -202,7 +214,7 @@ impl ModuleBackend for ItBackend {
                     channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param);
                 }
                 0x11 => { channel.it_retrig(voice_ref.as_deref_mut(), instruments, *r.tick, pattern.effect_param); }
-                0x14 => { if first_tick { r.bpm.update(pattern.effect_param as u32, r.rate); } }
+                // 0x14 (T) SetBpm - handled by apply_flow_control_effect.
                 0x16 => { r.global_volume.set_volume(note_delay_first_tick, pattern.effect_param); }
                 0x17 => { r.global_volume.volume_slide(note_delay_first_tick, pattern.effect_param); }
                 0x18 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((pattern.effect_param as i32 * 4).min(255)); } } }

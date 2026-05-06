@@ -5,6 +5,7 @@ use crate::song::{GlobalVolume, BPM, PatternChange};
 use crate::module_reader::{SongData, SongType};
 use crate::channel_state::{ChannelState, Voice};
 use crate::instrument::Instrument;
+use crate::pattern::Pattern;
 use crate::tables::AudioTables;
 
 mod it;
@@ -37,6 +38,81 @@ pub struct SongPlaybackResources<'a> {
 
 pub trait ModuleBackend: Send {
     fn process_tick(&mut self, resources: &mut SongPlaybackResources);
+}
+
+/// Dispatch the simple flow-control effects: pattern jump, pattern break,
+/// set speed, set BPM. Returns true if `pattern.effect` was a flow-control
+/// effect that has been fully handled (caller should not dispatch it again).
+///
+/// Pattern Loop and Pattern Delay live inside the E/S extended-command
+/// table and go through `apply_extended` instead — see the per-format
+/// E/S tables and the dispatch in each backend.
+///
+/// Used by both per-format backends (so they can share one source of truth
+/// for B/D/F/A/T) and by the duration-calc fast path in
+/// `Song::process_tick` (`is_calculating_duration == true`).
+pub(super) fn apply_flow_control_effect(
+    pattern: &Pattern,
+    song_type: SongType,
+    first_tick: bool,
+    pattern_change: &mut PatternChange,
+    speed: &mut u32,
+    bpm: &mut BPM,
+    rate: f32,
+) -> bool {
+    // Effect codes overlap across formats (XM effect 2 is Porta Down, but
+    // S3M/IT effect 2 is Pattern Jump). Match on (song_type, effect) so an
+    // XM Porta Down can never be misclassified as a Pattern Jump.
+    let xm_or_mod = matches!(song_type, SongType::XM | SongType::MOD);
+    let s3m_or_it = matches!(song_type, SongType::S3M | SongType::IT);
+
+    match pattern.effect {
+        // Pattern Jump
+        0xB if xm_or_mod => {
+            pattern_change.set_jump(first_tick, pattern.effect_param);
+            true
+        }
+        2 if s3m_or_it => {
+            pattern_change.set_jump(first_tick, pattern.effect_param);
+            true
+        }
+        // Pattern Break
+        0xD if xm_or_mod => {
+            pattern_change.set_break(song_type, first_tick, pattern.effect_param);
+            true
+        }
+        3 if s3m_or_it => {
+            pattern_change.set_break(song_type, first_tick, pattern.effect_param);
+            true
+        }
+        // XM/MOD Fxx: <0x20 sets speed, >=0x20 sets BPM (a Protracker quirk
+        // preserved by XM and MOD).
+        0xF if xm_or_mod => {
+            if first_tick && pattern.effect_param > 0 {
+                if pattern.effect_param < 0x20 {
+                    *speed = pattern.effect_param as u32;
+                } else {
+                    bpm.update(pattern.effect_param as u32, rate);
+                }
+            }
+            true
+        }
+        // S3M Axx / IT Axx - SetSpeed
+        1 if s3m_or_it => {
+            if first_tick && pattern.effect_param > 0 {
+                *speed = pattern.effect_param as u32;
+            }
+            true
+        }
+        // S3M Txx / IT Txx - SetBpm
+        20 if s3m_or_it => {
+            if first_tick && pattern.effect_param > 0 {
+                bpm.update(pattern.effect_param as u32, rate);
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Pick a voice slot for a new note: prefer the first idle voice, otherwise

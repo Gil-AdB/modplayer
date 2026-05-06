@@ -6,7 +6,11 @@ use std::cmp::min;
 use std::sync::mpsc::Receiver;
 
 use crate::channel_state::{ChannelState, Voice};
-use crate::song::backend::SongPlaybackResources;
+use crate::module_reader::SongType;
+use crate::song::backend::{
+    apply_extended, apply_flow_control_effect, ExtendedCmdKind, SongPlaybackResources,
+    IT_S_TABLE, MOD_E_TABLE, S3M_S_TABLE, XM_E_TABLE,
+};
 use crate::song::{
     BPM, BufferAdapter, BufferState, CallbackState, GlobalVolume, InterleavedBufferAdaptar,
     PatternChange, PlaybackCmd, Song, TickState,
@@ -250,48 +254,67 @@ impl Song {
         }
 
         // Hyper-optimization for duration calculation:
-        // Skip all expensive effect processing and only handle flow control.
+        // Skip all expensive voice/effect processing and only handle the
+        // flow-control effects that can change the song's duration.
         if self.is_calculating_duration {
-            let patterns = &self.song_data.patterns[self.song_data.pattern_order[self.song_position] as usize];
-            let row = &patterns.rows[self.row];
+            let pat_idx = self.song_data.pattern_order[self.song_position] as usize;
+            let song_type = self.song_data.song_type;
             let first_tick = self.tick == 0;
+            let row = self.row;
+            let rate = self.rate;
 
-            for pattern in &row.channels {
-                match pattern.effect {
-                    0xB | 2 => { self.pattern_change.set_jump(first_tick, pattern.effect_param); }
-                    0xD | 3 => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); }
-                    0xF => {
-                        if first_tick && pattern.effect_param > 0 {
-                            if pattern.effect_param <= 0x1f { self.speed = pattern.effect_param as u32; }
-                            else { self.bpm.update(pattern.effect_param as u32, self.rate); }
-                        }
+            // Snapshot the row's effect params first; we then mutate
+            // pattern_change / speed / bpm / channels[i] without keeping a
+            // borrow on self.song_data.
+            let row_effects: Vec<(u8, u8)> = self.song_data.patterns[pat_idx].rows[row]
+                .channels.iter()
+                .map(|c| (c.effect, c.effect_param))
+                .collect();
+
+            for (i, &(effect, effect_param)) in row_effects.iter().enumerate() {
+                let pat = crate::pattern::Pattern { note: 0, instrument: 0, volume: 255, effect, effect_param };
+
+                if apply_flow_control_effect(
+                    &pat, song_type, first_tick,
+                    &mut self.pattern_change, &mut self.speed, &mut self.bpm, rate,
+                ) {
+                    continue;
+                }
+
+                // Pattern Loop and Pattern Delay live in the E/S extended
+                // command. Route them through apply_extended (with voice =
+                // None) so the canonical implementation in backend.rs is
+                // the single source of truth.
+                let is_extended = match song_type {
+                    SongType::XM | SongType::MOD => effect == 0x0E,
+                    SongType::S3M | SongType::IT => effect == 0x13,
+                    _ => false,
+                };
+                if is_extended {
+                    let x = pat.get_x();
+                    let kind = match song_type {
+                        SongType::XM  => XM_E_TABLE[x as usize],
+                        SongType::MOD => MOD_E_TABLE[x as usize],
+                        SongType::S3M => S3M_S_TABLE[x as usize],
+                        SongType::IT  => IT_S_TABLE[x as usize],
+                        _ => ExtendedCmdKind::None,
+                    };
+                    // Only flow-affecting subcommands (PatternLoop /
+                    // PatternDelay) need to be applied here; the others
+                    // touch voices we're not running. apply_extended is
+                    // safe to call with voice = None for the flow ones.
+                    if matches!(kind, ExtendedCmdKind::PatternLoop | ExtendedCmdKind::PatternDelay) {
+                        apply_extended(
+                            kind,
+                            &mut self.channels[i],
+                            None,
+                            &mut self.pattern_change,
+                            &self.song_data.instruments,
+                            self.tick, row, first_tick, first_tick,
+                            song_type, rate, self.frequency_tables,
+                            pat.get_y(),
+                        );
                     }
-                    1 => { // S3M Speed
-                        if first_tick && pattern.effect_param > 0 { self.speed = pattern.effect_param as u32; }
-                    }
-                    20 => { // S3M BPM
-                        if first_tick && pattern.effect_param > 0 { self.bpm.update(pattern.effect_param as u32, self.rate); }
-                    }
-                    0xE | 0x13 => {
-                        let x = pattern.get_x();
-                        let y = pattern.get_y();
-                        match x {
-                            0x6 | 0xB => {
-                                // Pattern Loop (E6x / S3B)
-                                if first_tick && y != 0 {
-                                    self.pattern_change.is_loop = true;
-                                }
-                            }
-                            0xE => {
-                                // Pattern Delay (EEx / SxE)
-                                if first_tick {
-                                    self.pattern_change.pattern_delay = y;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {}
                 }
             }
             return;

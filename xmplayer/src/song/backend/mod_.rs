@@ -1,7 +1,8 @@
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_extended, cut_or_nna_existing_voice, init_voice_basics,
-    mute_silent_voices, ModuleBackend, SongPlaybackResources, MOD_E_TABLE,
+    alloc_voice, apply_extended, apply_flow_control_effect, cut_or_nna_existing_voice,
+    init_voice_basics, mute_silent_voices, ModuleBackend, SongPlaybackResources,
+    MOD_E_TABLE,
 };
 
 pub struct ModBackend {}
@@ -110,7 +111,19 @@ impl ModuleBackend for ModBackend {
                 }
             });
 
-            // Effect Column (MOD effects 0-F)
+            // Effect Column (MOD effects 0-F). Flow control (B/D/F) goes
+            // through the shared helper to stay in sync with the
+            // duration-calc fast path.
+            if apply_flow_control_effect(
+                pattern, r.song_data.song_type, first_tick,
+                r.pattern_change, r.speed, r.bpm, r.rate,
+            ) {
+                if let Some(v) = voice_ref.as_deref_mut() {
+                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                }
+                continue;
+            }
+
             match pattern.effect {
                 0x00 => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y(), false); }
                 0x01 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
@@ -134,9 +147,9 @@ impl ModuleBackend for ModBackend {
                     }
                 }
                 0x0A => { channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
-                0x0B => { if first_tick { r.pattern_change.set_jump(true, pattern.effect_param); } }
+                // 0x0B Pattern Jump - apply_flow_control_effect.
                 0x0C => { channel.set_volume(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
-                0x0D => { if first_tick { r.pattern_change.set_break(r.song_data.song_type, true, pattern.effect_param); } }
+                // 0x0D Pattern Break - apply_flow_control_effect.
                 0x0E => {
                     let kind = MOD_E_TABLE[pattern.get_x() as usize];
                     apply_extended(
@@ -147,12 +160,7 @@ impl ModuleBackend for ModBackend {
                         pattern.get_y(),
                     );
                 }
-                0x0F => {
-                    if first_tick {
-                        if pattern.effect_param >= 32 { r.bpm.update(pattern.effect_param as u32, r.rate); }
-                        else { *r.speed = pattern.effect_param as u32; }
-                    }
-                }
+                // 0x0F Speed/BPM - apply_flow_control_effect.
                 _ => {}
             }
 

@@ -1,8 +1,8 @@
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_extended, cut_or_nna_existing_voice, init_voice_basics,
-    mute_silent_voices, set_channel_note, ModuleBackend, SongPlaybackResources,
-    XM_E_TABLE,
+    alloc_voice, apply_extended, apply_flow_control_effect, cut_or_nna_existing_voice,
+    init_voice_basics, mute_silent_voices, set_channel_note, ModuleBackend,
+    SongPlaybackResources, XM_E_TABLE,
 };
 
 pub struct XmBackend {}
@@ -129,7 +129,19 @@ impl ModuleBackend for XmBackend {
                 _ => {}
             }
 
-            // Effect Column
+            // Effect Column. Flow-control effects (B/D/F) go through the
+            // shared helper so the duration-calc fast path uses the same
+            // implementation; we drop them from this match entirely.
+            if apply_flow_control_effect(
+                pattern, r.song_data.song_type, first_tick,
+                r.pattern_change, r.speed, r.bpm, r.rate,
+            ) {
+                if let Some(v) = voice_ref.as_deref_mut() {
+                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                }
+                continue;
+            }
+
             match pattern.effect {
                 0x0 => { // Arpeggio
                     if pattern.effect_param != 0 {
@@ -161,9 +173,9 @@ impl ModuleBackend for XmBackend {
                     }
                 }
                 0xA => { channel.volume_slide_main(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param); }
-                0xB => { r.pattern_change.set_jump(first_tick, pattern.effect_param); }
+                // 0xB Pattern Jump - handled by apply_flow_control_effect above.
                 0xC => { if first_tick { channel.set_volume(voice_ref.as_deref_mut(), true, pattern.effect_param); } }
-                0xD => { r.pattern_change.set_break(r.song_data.song_type, first_tick, pattern.effect_param); }
+                // 0xD Pattern Break - handled by apply_flow_control_effect above.
                 0xE => {
                     let kind = XM_E_TABLE[pattern.get_x() as usize];
                     apply_extended(
@@ -174,12 +186,7 @@ impl ModuleBackend for XmBackend {
                         pattern.get_y(),
                     );
                 }
-                0x0F => {
-                    if first_tick {
-                        if pattern.effect_param >= 32 { r.bpm.update(pattern.effect_param as u32, r.rate); }
-                        else { *r.speed = pattern.effect_param as u32; }
-                    }
-                }
+                // 0x0F Speed/BPM - handled by apply_flow_control_effect above.
                 0x14 => { // Kxx: Key Off at tick xx
                     if *r.tick == pattern.effect_param as u32 {
                         if let Some(v) = voice_ref.as_deref_mut() {

@@ -1,8 +1,8 @@
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_extended, cut_or_nna_existing_voice, init_voice_basics,
-    mute_silent_voices, set_channel_note, ModuleBackend, SongPlaybackResources,
-    S3M_S_TABLE,
+    alloc_voice, apply_extended, apply_flow_control_effect, cut_or_nna_existing_voice,
+    init_voice_basics, mute_silent_voices, set_channel_note, ModuleBackend,
+    SongPlaybackResources, S3M_S_TABLE,
 };
 
 pub struct S3MBackend {}
@@ -126,23 +126,21 @@ impl ModuleBackend for S3MBackend {
                 }
             }
 
-            // Effect Column
+            // Effect Column. Flow control (A/B/C/T) goes through the
+            // shared helper to stay in sync with the duration-calc path.
+            if apply_flow_control_effect(
+                pattern, r.song_data.song_type, first_tick,
+                r.pattern_change, r.speed, r.bpm, r.rate,
+            ) {
+                if let Some(v) = voice_ref.as_deref_mut() {
+                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                }
+                continue;
+            }
+
             match pattern.effect {
-                1 => { // A: Set Speed
-                    if first_tick && pattern.effect_param != 0 {
-                        *r.speed = pattern.effect_param as u32;
-                    }
-                }
-                2 => { // B: Pattern Jump
-                    if first_tick {
-                        r.pattern_change.set_jump(true, pattern.effect_param);
-                    }
-                }
-                3 => { // C: Pattern Break
-                    if first_tick {
-                        r.pattern_change.set_break(r.song_data.song_type, true, pattern.effect_param);
-                    }
-                }
+                // 1 (A) SetSpeed, 2 (B) PatternJump, 3 (C) PatternBreak,
+                // 20 (T) SetBpm - all handled by apply_flow_control_effect.
                 4 => { channel.it_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.effect_param); }
                 5 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); }
                 6 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
@@ -183,7 +181,7 @@ impl ModuleBackend for S3MBackend {
                         pattern.get_y(),
                     );
                 }
-                20 => { if first_tick { r.bpm.update(pattern.effect_param as u32, r.rate); } }
+                // 20 (T) SetBpm - handled by apply_flow_control_effect.
                 21 => { // U: Fine Vibrato (depth/4 of regular H, shared memory)
                     channel.fine_vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type);
                 }
