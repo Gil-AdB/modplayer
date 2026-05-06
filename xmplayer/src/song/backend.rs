@@ -315,18 +315,24 @@ pub(super) const IT_S_TABLE: [ExtendedCmdKind; 16] = {
 /// share. Constructed once per channel iteration. Lets shared helpers
 /// take `(channel, voice, ctx)` instead of stretching out into 10+
 /// individual arguments, and keeps the lifetime story explicit.
-#[allow(dead_code)] // frequency_tables / rate are part of the canonical context
-                    // bundle; kept available for future helpers that need them.
+#[allow(dead_code)] // frequency_tables / rate / old_effects / compatible_g are
+                    // part of the canonical context bundle; not all helpers
+                    // read them today but having them in the bundle saves
+                    // signature widening when new helpers need them.
 pub(super) struct EffectCtx<'a> {
     pub pattern_change: &'a mut PatternChange,
+    pub global_volume:  &'a mut GlobalVolume,
     pub instruments:    &'a Vec<Instrument>,
     pub frequency_tables: &'a AudioTables,
     pub tick:           u32,
     pub row:            usize,
     pub first_tick:     bool,
     pub first_row_tick: bool,
+    pub note_delay_first_tick: bool,
     pub song_type:      SongType,
     pub rate:           f32,
+    pub old_effects:    bool,
+    pub compatible_g:   bool,
 }
 
 /// Apply an extended-subcommand effect. Operates on the channel/voice the
@@ -438,6 +444,400 @@ pub(super) fn apply_extended(
         }
     }
 
+}
+
+// =================================================================
+// Main effect-column dispatch table.
+// =================================================================
+//
+// Each format previously inlined ~15-20 match arms for the "main"
+// effect column (everything that isn't flow control or the E/S
+// extended subcommand). Most arms across formats called the same
+// channel methods - the only thing that varied was the effect code.
+//
+// `EffectKind` collapses every format's per-effect intent into a
+// single enum. Per-format `[EffectKind; 32]` tables map raw effect
+// bytes into the enum, and `apply_effect` is the shared dispatcher.
+// Each backend's main match collapses to a single table lookup +
+// dispatch call.
+//
+// Per-format quirks (e.g. XM uses `volume_slide_main`, IT/S3M use
+// `it_volume_slide`; XM panning is 0..255, IT panning is param*4)
+// are folded into apply_effect via `match ctx.song_type` branches.
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(super) enum EffectKind {
+    /// Slot is unused for this format / no-op.
+    None,
+    Arpeggio,
+    PortaUp,
+    PortaDown,
+    PortaToNote,
+    Vibrato,
+    /// XM 5 / MOD 5 / S3M L / IT 0xC: porta-to-note + volume slide.
+    PortaPlusVolSlide,
+    /// XM 6 / MOD 6 / S3M K / IT 0xB: vibrato + volume slide.
+    VibratoPlusVolSlide,
+    Tremolo,
+    /// XM/MOD 8: panning byte is 0..255.
+    SetPanningXm,
+    /// IT 0x18: panning byte is *4 (0..63 → 0..252).
+    SetPanningIt,
+    /// S3M 24 (X command): panning 0..255.
+    SetPanningS3m,
+    SampleOffset,
+    /// XM 0xA / MOD 0xA: volume_slide_main (XM nibble decode).
+    VolSlideXmStyle,
+    /// S3M 4 / IT 0x04: it_volume_slide (IT nibble decode).
+    VolSlideItStyle,
+    /// XM 0xC / MOD 0xC: set voice volume (0..64).
+    SetVolume,
+    /// S3M 13: set channel volume (0..64).
+    SetChannelVolume,
+    /// S3M 14: channel-volume slide.
+    ChannelVolSlide,
+    /// XM 0x19 / S3M 16: panning slide (P).
+    PanningSlide,
+    /// S3M Q / IT 0x11: retrig (it_retrig).
+    Retrig,
+    /// XM 0x1B (Rxy): multi retrig with volume change.
+    XmMultiRetrig,
+    /// XM 0x10 / S3M V / IT 0x16: set global volume.
+    SetGlobalVolume,
+    /// XM 0x11 / S3M W / IT 0x17: global volume slide.
+    GlobalVolSlide,
+    /// XM 0x14: Kxx, key off at tick xx.
+    KeyOffAtTick,
+    /// XM 0x15: Lxx, set envelope position.
+    SetEnvelopePos,
+    /// S3M 9 (Ixy): tremor.
+    Tremor,
+    /// S3M 21 (Uxy): fine vibrato.
+    FineVibrato,
+    /// IT 0x1A (Zxx): resonant filter cutoff/resonance.
+    Filter,
+    /// XM 0xE / MOD 0xE / S3M 19 / IT 0x13: extended subcommand
+    /// (handled by `apply_extended` via the per-format E/S tables, not
+    /// `apply_effect` - this variant is here so the table can mark
+    /// those slots and the backend can route to apply_extended).
+    Extended,
+}
+
+const EK: EffectKind = EffectKind::None; // shorthand for table padding
+
+/// XM main effect table. Index = pattern.effect (0..=0x1F).
+pub(super) const XM_EFFECT_TABLE: [EffectKind; 32] = {
+    use EffectKind::*;
+    let mut t = [EK; 32];
+    t[0x00] = Arpeggio;
+    t[0x01] = PortaUp;
+    t[0x02] = PortaDown;
+    t[0x03] = PortaToNote;
+    t[0x04] = Vibrato;
+    t[0x05] = PortaPlusVolSlide;
+    t[0x06] = VibratoPlusVolSlide;
+    t[0x07] = Tremolo;
+    t[0x08] = SetPanningXm;
+    t[0x09] = SampleOffset;
+    t[0x0A] = VolSlideXmStyle;
+    // 0x0B Pattern Jump   - apply_flow_control_effect
+    t[0x0C] = SetVolume;
+    // 0x0D Pattern Break  - apply_flow_control_effect
+    t[0x0E] = Extended;
+    // 0x0F Speed/BPM      - apply_flow_control_effect
+    t[0x10] = SetGlobalVolume;
+    t[0x11] = GlobalVolSlide;
+    t[0x14] = KeyOffAtTick;
+    t[0x15] = SetEnvelopePos;
+    t[0x19] = PanningSlide;
+    t[0x1B] = XmMultiRetrig;
+    t
+};
+
+/// MOD effect table. Index = pattern.effect (0..=0x0F).
+pub(super) const MOD_EFFECT_TABLE: [EffectKind; 32] = {
+    use EffectKind::*;
+    let mut t = [EK; 32];
+    t[0x00] = Arpeggio;
+    t[0x01] = PortaUp;
+    t[0x02] = PortaDown;
+    t[0x03] = PortaToNote;
+    t[0x04] = Vibrato;
+    t[0x05] = PortaPlusVolSlide;
+    t[0x06] = VibratoPlusVolSlide;
+    t[0x07] = Tremolo;
+    t[0x08] = SetPanningXm;
+    t[0x09] = SampleOffset;
+    t[0x0A] = VolSlideXmStyle;
+    // 0x0B Pattern Jump  - apply_flow_control_effect
+    t[0x0C] = SetVolume;
+    // 0x0D Pattern Break - apply_flow_control_effect
+    t[0x0E] = Extended;
+    // 0x0F Speed/BPM     - apply_flow_control_effect
+    t
+};
+
+/// S3M effect table.
+pub(super) const S3M_EFFECT_TABLE: [EffectKind; 32] = {
+    use EffectKind::*;
+    let mut t = [EK; 32];
+    // 1   A  SetSpeed         - apply_flow_control_effect
+    // 2   B  PatternJump      - apply_flow_control_effect
+    // 3   C  PatternBreak     - apply_flow_control_effect
+    t[4]  = VolSlideItStyle;       // D
+    t[5]  = PortaDown;             // E
+    t[6]  = PortaUp;               // F
+    t[7]  = PortaToNote;           // G
+    t[8]  = Vibrato;               // H
+    t[9]  = Tremor;                // I
+    t[10] = Arpeggio;              // J
+    t[11] = VibratoPlusVolSlide;   // K
+    t[12] = PortaPlusVolSlide;     // L
+    t[13] = SetChannelVolume;      // M
+    t[14] = ChannelVolSlide;       // N
+    t[15] = SampleOffset;          // O
+    t[16] = PanningSlide;          // P
+    t[17] = Retrig;                // Q
+    t[18] = Tremolo;               // R
+    t[19] = Extended;              // S (table-driven via S3M_S_TABLE)
+    // 20  T  SetBpm            - apply_flow_control_effect
+    t[21] = FineVibrato;           // U
+    t[22] = SetGlobalVolume;       // V
+    t[23] = GlobalVolSlide;        // W
+    t[24] = SetPanningS3m;         // X
+    t
+};
+
+/// IT effect table.
+pub(super) const IT_EFFECT_TABLE: [EffectKind; 32] = {
+    use EffectKind::*;
+    let mut t = [EK; 32];
+    // 0x01 A  SetSpeed         - apply_flow_control_effect
+    // 0x02 B  PatternJump      - apply_flow_control_effect
+    // 0x03 C  PatternBreak     - apply_flow_control_effect
+    t[0x04] = VolSlideItStyle;
+    t[0x05] = PortaDown;
+    t[0x06] = PortaUp;
+    t[0x07] = PortaToNote;
+    t[0x08] = Vibrato;
+    t[0x0A] = Arpeggio;
+    t[0x0B] = VibratoPlusVolSlide;
+    t[0x0C] = PortaPlusVolSlide;
+    t[0x11] = Retrig;
+    t[0x13] = Extended; // S - table-driven via IT_S_TABLE
+    // 0x14 T  SetBpm           - apply_flow_control_effect
+    t[0x16] = SetGlobalVolume;
+    t[0x17] = GlobalVolSlide;
+    t[0x18] = SetPanningIt;
+    t[0x1A] = Filter;
+    t
+};
+
+/// Apply a main-column effect. Returns true if the effect was Extended
+/// (the caller routes those to `apply_extended` via the per-format
+/// E/S subcommand table).
+pub(super) fn apply_effect(
+    kind: EffectKind,
+    channel: &mut ChannelState,
+    mut voice: Option<&mut Voice>,
+    ctx: &mut EffectCtx<'_>,
+    pattern: &Pattern,
+) -> bool {
+    match kind {
+        EffectKind::None => {}
+        EffectKind::Extended => return true,
+
+        EffectKind::Arpeggio => {
+            // XM/MOD: arpeggio with no params clears any prior period_shift.
+            // S3M/IT: arpeggio is `J` and has memory.
+            let has_memory = matches!(ctx.song_type, SongType::S3M | SongType::IT);
+            if pattern.effect_param != 0 || has_memory {
+                channel.arpeggio(ctx.tick, pattern.get_x(), pattern.get_y(), has_memory);
+            } else {
+                channel.period_shift = 0;
+            }
+        }
+
+        EffectKind::PortaUp => {
+            channel.porta_up(ctx.song_type, ctx.first_tick, pattern.effect_param);
+        }
+        EffectKind::PortaDown => {
+            channel.porta_down(ctx.song_type, ctx.first_tick, pattern.effect_param);
+        }
+        EffectKind::PortaToNote => {
+            channel.porta_to_note(
+                ctx.song_type, voice.as_deref_mut(), ctx.first_tick,
+                pattern.effect_param, ctx.compatible_g, ctx.rate, ctx.frequency_tables,
+            );
+        }
+        EffectKind::Vibrato => {
+            channel.vibrato(
+                voice.as_deref_mut(), ctx.first_tick,
+                pattern.get_x(), pattern.get_y(),
+                ctx.old_effects, ctx.rate, ctx.frequency_tables, ctx.song_type,
+            );
+        }
+        EffectKind::FineVibrato => {
+            channel.fine_vibrato(
+                voice.as_deref_mut(), ctx.first_tick,
+                pattern.get_x(), pattern.get_y(),
+                ctx.old_effects, ctx.rate, ctx.frequency_tables, ctx.song_type,
+            );
+        }
+        EffectKind::Tremolo => {
+            channel.tremolo(
+                voice.as_deref_mut(), ctx.first_tick,
+                pattern.get_x(), pattern.get_y(), ctx.song_type,
+            );
+        }
+        EffectKind::Tremor => {
+            channel.tremor(ctx.tick, pattern.effect_param);
+        }
+
+        EffectKind::PortaPlusVolSlide => {
+            channel.porta_to_note(
+                ctx.song_type, voice.as_deref_mut(), ctx.first_tick, 0,
+                ctx.compatible_g, ctx.rate, ctx.frequency_tables,
+            );
+            apply_vol_slide(channel, voice, ctx, pattern.effect_param);
+        }
+        EffectKind::VibratoPlusVolSlide => {
+            channel.vibrato(
+                voice.as_deref_mut(), ctx.first_tick, 0, 0,
+                ctx.old_effects, ctx.rate, ctx.frequency_tables, ctx.song_type,
+            );
+            apply_vol_slide(channel, voice, ctx, pattern.effect_param);
+        }
+
+        EffectKind::SetPanningXm => {
+            if ctx.first_tick {
+                if let Some(v) = voice.as_deref_mut() {
+                    v.panning.set_panning(pattern.effect_param as i32);
+                }
+            }
+        }
+        EffectKind::SetPanningIt => {
+            if ctx.first_tick {
+                if let Some(v) = voice.as_deref_mut() {
+                    v.panning.set_panning((pattern.effect_param as i32 * 4).min(255));
+                }
+            }
+        }
+        EffectKind::SetPanningS3m => {
+            if ctx.first_tick {
+                if let Some(v) = voice.as_deref_mut() {
+                    v.panning.set_panning(pattern.effect_param as i32);
+                }
+            }
+        }
+        EffectKind::SampleOffset => {
+            if ctx.first_tick {
+                let param = channel.recall_or_set(
+                    crate::channel_state::EffectMemorySlot::SampleOffset,
+                    pattern.effect_param,
+                );
+                if let Some(v) = voice.as_deref_mut() {
+                    v.sample_position = (param as f32) * 256.0 + 4.0;
+                }
+            }
+        }
+
+        EffectKind::VolSlideXmStyle => {
+            // Gating: XM 0xA uses note_delay_first_tick; MOD 0xA uses
+            // first_tick. note_delay_first_tick == first_tick when no
+            // note delay is active.
+            channel.volume_slide_main(voice.as_deref_mut(), ctx.note_delay_first_tick, pattern.effect_param);
+        }
+        EffectKind::VolSlideItStyle => {
+            channel.it_volume_slide(voice.as_deref_mut(), ctx.note_delay_first_tick, pattern.effect_param);
+        }
+        EffectKind::SetVolume => {
+            if ctx.first_tick {
+                channel.set_volume(voice.as_deref_mut(), true, pattern.effect_param);
+            }
+        }
+        EffectKind::SetChannelVolume => {
+            if ctx.first_tick {
+                channel.channel_volume = pattern.effect_param.min(64);
+            }
+        }
+        EffectKind::ChannelVolSlide => {
+            channel.channel_volume_slide(ctx.first_tick, pattern.effect_param);
+        }
+        EffectKind::PanningSlide => {
+            channel.panning_slide(voice.as_deref_mut(), ctx.note_delay_first_tick, pattern.effect_param, ctx.song_type);
+        }
+
+        EffectKind::Retrig => {
+            channel.it_retrig(voice.as_deref_mut(), ctx.instruments, ctx.tick, pattern.effect_param);
+        }
+        EffectKind::XmMultiRetrig => {
+            channel.retrig(
+                voice.as_deref_mut(), ctx.instruments, ctx.tick,
+                pattern.get_y(), pattern.get_x(),
+            );
+        }
+
+        EffectKind::SetGlobalVolume => {
+            ctx.global_volume.set_volume(ctx.note_delay_first_tick, pattern.effect_param);
+        }
+        EffectKind::GlobalVolSlide => {
+            ctx.global_volume.volume_slide(ctx.note_delay_first_tick, pattern.effect_param);
+        }
+
+        EffectKind::KeyOffAtTick => {
+            if ctx.tick == pattern.effect_param as u32 {
+                if let Some(v) = voice.as_deref_mut() {
+                    v.key_off(ctx.instruments, false);
+                }
+            }
+        }
+        EffectKind::SetEnvelopePos => {
+            if ctx.first_tick {
+                if let Some(v) = voice.as_deref_mut() {
+                    let inst = &ctx.instruments[v.instrument];
+                    v.volume_envelope_state.set_position(&inst.volume_envelope, pattern.effect_param);
+                    v.panning_envelope_state.set_position(&inst.panning_envelope, pattern.effect_param);
+                    v.pitch_envelope_state.set_position(&inst.pitch_envelope, pattern.effect_param);
+                }
+            }
+        }
+        EffectKind::Filter => {
+            // IT Z: 0x00..=0x7F sets filter cutoff; 0x80..=0x8F sets
+            // resonance (4 bits, scaled << 3).
+            if ctx.first_tick {
+                if let Some(v) = voice.as_deref_mut() {
+                    if pattern.effect_param < 0x80 {
+                        v.filter_cutoff = pattern.effect_param;
+                    } else if (0x80..=0x8F).contains(&pattern.effect_param) {
+                        v.filter_resonance = (pattern.effect_param & 0x0F) << 3;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Used by the PortaPlusVolSlide / VibratoPlusVolSlide combo dispatch:
+/// XM/MOD use `volume_slide_main` (XM-style nibble decode), IT/S3M use
+/// `it_volume_slide` (IT-style with fine variants encoded in nibbles).
+/// In every backend the combo gates on first_tick (not
+/// note_delay_first_tick) - matches the pre-extraction code.
+fn apply_vol_slide(
+    channel: &mut ChannelState,
+    voice: Option<&mut Voice>,
+    ctx: &EffectCtx<'_>,
+    param: u8,
+) {
+    match ctx.song_type {
+        SongType::XM | SongType::MOD => {
+            channel.volume_slide_main(voice, ctx.first_tick, param);
+        }
+        _ => {
+            channel.it_volume_slide(voice, ctx.note_delay_first_tick, param);
+        }
+    }
 }
 
 /// Compute real_note (mapped_note + sample.relative_note clamped) and push

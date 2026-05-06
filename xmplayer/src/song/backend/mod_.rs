@@ -1,8 +1,9 @@
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_extended, apply_flow_control_effect, cut_or_nna_existing_voice,
-    init_voice_basics, mute_silent_voices, set_channel_note, EffectCtx,
-    ModuleBackend, SongPlaybackResources, MOD_E_TABLE,
+    alloc_voice, apply_effect, apply_extended, apply_flow_control_effect,
+    cut_or_nna_existing_voice, init_voice_basics, mute_silent_voices,
+    set_channel_note, EffectCtx, ModuleBackend, SongPlaybackResources,
+    MOD_EFFECT_TABLE, MOD_E_TABLE,
 };
 
 pub struct ModBackend {}
@@ -114,9 +115,8 @@ impl ModuleBackend for ModBackend {
                 }
             });
 
-            // Effect Column (MOD effects 0-F). Flow control (B/D/F) goes
-            // through the shared helper to stay in sync with the
-            // duration-calc fast path.
+            // Effect Column. Flow-control (B/D/F) is the shared helper;
+            // everything else dispatches through MOD_EFFECT_TABLE -> EffectKind.
             if apply_flow_control_effect(
                 pattern, r.song_data.song_type, first_tick,
                 r.pattern_change, r.speed, r.bpm, r.rate,
@@ -127,49 +127,30 @@ impl ModuleBackend for ModBackend {
                 continue;
             }
 
-            match pattern.effect {
-                0x00 => { channel.arpeggio(*r.tick, pattern.get_x(), pattern.get_y(), false); }
-                0x01 => { channel.porta_up(r.song_data.song_type, first_tick, pattern.effect_param); }
-                0x02 => { channel.porta_down(r.song_data.song_type, first_tick, pattern.effect_param); }
-                0x03 => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, pattern.effect_param, r.compatible_g, r.rate, r.frequency_tables); }
-                0x04 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
-                0x05 => { 
-                    channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), first_tick, 0, r.compatible_g, r.rate, r.frequency_tables);
-                    channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param);
-                }
-                0x06 => { 
-                    channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type);
-                    channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param);
-                }
-                0x07 => { channel.tremolo(voice_ref.as_deref_mut(), first_tick, pattern.get_x(), pattern.get_y(), r.song_data.song_type); }
-                0x08 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(pattern.effect_param as i32); } } }
-                0x09 => {
-                    if first_tick {
-                        let param = channel.recall_or_set(crate::channel_state::EffectMemorySlot::SampleOffset, pattern.effect_param);
-                        if let Some(v) = voice_ref.as_deref_mut() { v.sample_position = (param as f32) * 256.0 + 4.0; }
-                    }
-                }
-                0x0A => { channel.volume_slide_main(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
-                // 0x0B Pattern Jump - apply_flow_control_effect.
-                0x0C => { channel.set_volume(voice_ref.as_deref_mut(), first_tick, pattern.effect_param); }
-                // 0x0D Pattern Break - apply_flow_control_effect.
-                0x0E => {
-                    let kind = MOD_E_TABLE[pattern.get_x() as usize];
-                    let mut ctx = EffectCtx {
-                        pattern_change: r.pattern_change,
-                        instruments,
-                        frequency_tables: r.frequency_tables,
-                        tick: *r.tick,
-                        row: *r.row,
-                        first_tick,
-                        first_row_tick: first_tick,
-                        song_type: r.song_data.song_type,
-                        rate: r.rate,
-                    };
-                    apply_extended(kind, channel, voice_ref.as_deref_mut(), &mut ctx, pattern.get_y());
-                }
-                // 0x0F Speed/BPM - apply_flow_control_effect.
-                _ => {}
+            let mut ctx = EffectCtx {
+                pattern_change: r.pattern_change,
+                global_volume: r.global_volume,
+                instruments,
+                frequency_tables: r.frequency_tables,
+                tick: *r.tick,
+                row: *r.row,
+                first_tick,
+                first_row_tick: first_tick,
+                note_delay_first_tick: first_tick,
+                song_type: r.song_data.song_type,
+                rate: r.rate,
+                old_effects: r.old_effects,
+                compatible_g: r.compatible_g,
+            };
+            let kind = if pattern.effect < 32 {
+                MOD_EFFECT_TABLE[pattern.effect as usize]
+            } else {
+                crate::song::backend::EffectKind::None
+            };
+            let is_extended = apply_effect(kind, channel, voice_ref.as_deref_mut(), &mut ctx, pattern);
+            if is_extended {
+                let ext = MOD_E_TABLE[pattern.get_x() as usize];
+                apply_extended(ext, channel, voice_ref.as_deref_mut(), &mut ctx, pattern.get_y());
             }
 
             if let Some(v) = voice_ref.as_deref_mut() {

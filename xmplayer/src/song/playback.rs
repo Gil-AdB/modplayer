@@ -306,14 +306,18 @@ impl Song {
                     if matches!(kind, ExtendedCmdKind::PatternLoop | ExtendedCmdKind::PatternDelay) {
                         let mut ctx = EffectCtx {
                             pattern_change: &mut self.pattern_change,
+                            global_volume: &mut self.global_volume,
                             instruments: &self.song_data.instruments,
                             frequency_tables: self.frequency_tables,
                             tick: self.tick,
                             row,
                             first_tick,
                             first_row_tick: first_tick,
+                            note_delay_first_tick: first_tick,
                             song_type,
                             rate,
+                            old_effects: self.old_effects,
+                            compatible_g: self.compatible_g,
                         };
                         apply_extended(kind, &mut self.channels[i], None, &mut ctx, pat.get_y());
                     }
