@@ -149,7 +149,6 @@ impl ModuleBackend for ItBackend {
                                 voice.sustained = true;
                                 voice.sample_position = 4.0;
                                 voice.loop_started = false;
-                                voice.ping = true;
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
                                 if instrument.samples[final_sample_idx].panning < 255 {
                                     voice.panning.panning = instrument.samples[final_sample_idx].panning;
@@ -402,7 +401,6 @@ impl ModuleBackend for XmBackend {
                                 voice.sustained = true;
                                 voice.sample_position = 4.0;
                                 voice.loop_started = false;
-                                voice.ping = true;
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
                                 voice.panning.panning = r.song_data.initial_channel_panning[i];
                                 
@@ -689,7 +687,6 @@ impl ModuleBackend for ModBackend {
                         voice.sustained = true;
                         voice.sample_position = 4.0;
                         voice.loop_started = false;
-                        voice.ping = true;
                         if pattern.instrument != 0 {
                             voice.volume.retrig(instruments[inst_idx].samples[sample_idx].volume as i32);
                             if instruments[inst_idx].samples[sample_idx].panning < 255 {
@@ -931,7 +928,6 @@ impl ModuleBackend for S3MBackend {
                                 voice.sustained = true;
                                 voice.sample_position = 4.0;
                                 voice.loop_started = false;
-                                voice.ping = true;
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
                                 if instrument.samples[final_sample_idx].panning < 255 {
                                     voice.panning.panning = instrument.samples[final_sample_idx].panning;
@@ -1023,6 +1019,23 @@ impl ModuleBackend for S3MBackend {
                     let y = pattern.get_y();
                     match x {
                         0x8 => { if first_tick { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning((y as i32 * 17).min(255)); } } }
+                        0xB => { // SBx: Pattern Loop
+                            if first_tick {
+                                if y == 0 {
+                                    channel.loop_row = *r.row as u8;
+                                } else {
+                                    if channel.loop_count == 0 {
+                                        channel.loop_count = y;
+                                        r.pattern_change.set_loop(channel.loop_row);
+                                    } else {
+                                        channel.loop_count -= 1;
+                                        if channel.loop_count > 0 {
+                                            r.pattern_change.set_loop(channel.loop_row);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         0xC => { if *r.tick == y as u32 { channel.on = false; if let Some(v) = voice_ref.as_deref_mut() { v.on = false; } } }
                         0xE => { if first_tick && !r.pattern_change.delay_processed { r.pattern_change.pattern_delay = y as u8; r.pattern_change.delay_processed = true; } }
 
@@ -1043,6 +1056,7 @@ impl ModuleBackend for S3MBackend {
 
         // 2. Process all active voices (S3M volume formula)
         let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
+        let master_vol_f32 = (r.song_data.master_volume & 127) as f32 / 64.0;
         for (v_idx, voice) in r.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
             let channel = &r.channels[voice.channel_idx];
@@ -1051,10 +1065,10 @@ impl ModuleBackend for S3MBackend {
             voice.update_envelopes(instruments, r.rate);
             voice.update_fadeout();
             
-            // S3M formula: compute_base_volume() * channel_vol/64 * global_vol/64
+            // S3M formula: compute_base_volume() * channel_vol/64 * global_vol/64 * master_vol/64
             // compute_base_volume() includes fadeout, envelope, and sample volume
             let channel_vol = channel.channel_volume as f32 / 64.0;
-            let output_vol = voice.compute_base_volume() * channel_vol * global_vol_f32;
+            let output_vol = voice.compute_base_volume() * channel_vol * global_vol_f32 * master_vol_f32;
             voice.set_output_volume(output_vol);
             
             if channel_force_off {

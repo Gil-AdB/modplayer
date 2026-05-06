@@ -57,7 +57,6 @@ pub struct Voice {
     pub        volume:                         Volume,
     pub        sample_position:                f32,
     pub        loop_started:                   bool,
-    pub(crate) ping:                           bool,
     pub        sustained:                      bool,
     pub(crate) spline_data:                    SplineData,
     
@@ -111,7 +110,6 @@ impl Voice {
             volume: Volume::new(),
             sample_position: 0.0,
             loop_started: false,
-            ping: true,
             sustained: false,
             spline_data: SplineData::new(),
             volume_envelope_state: EnvelopeState::new(),
@@ -249,7 +247,6 @@ impl Voice {
     pub(crate) fn trigger_note(&mut self, instruments: &Instruments, reset_envelopes: bool, vibrato_retrig: bool, tremolo_retrig: bool) {
         self.sample_position = 4.0;
         self.loop_started = false;
-        self.ping = true;
         self.sustained = true;
         self.on = true;
         

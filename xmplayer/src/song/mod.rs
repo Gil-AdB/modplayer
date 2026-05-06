@@ -346,11 +346,11 @@ impl PatternChange {
     fn set_break(&mut self, song_type: SongType, first_tick: bool, param: u8) {
         if !first_tick { return; }
         self.pattern_break = true;
-        if song_type == SongType::MOD || song_type == SongType::S3M || song_type == SongType::XM {
-            // MOD, S3M and XM use BCD for Pattern Break
+        if song_type == SongType::MOD || song_type == SongType::XM {
+            // MOD and XM use BCD for Pattern Break
             self.row = ((param >> 4) * 10 + (param & 0x0F)) as u8;
         } else {
-            // XM and IT use Hex
+            // S3M and IT use Hex (Decimal in S3M UI, but stored as raw byte)
             self.row = param;
         }
     }
@@ -830,7 +830,12 @@ impl Song {
             speed: song_data.tempo as u32,
             total_duration_ms: 0.0,
             bpm: BPM::new(song_data.bpm as u32, sample_rate),
-            global_volume: GlobalVolume::new(),
+            global_volume: {
+                let mut gv = GlobalVolume::new();
+                gv.volume = song_data.global_volume as u32;
+                gv.song_type = Some(song_data.song_type);
+                gv
+            },
             song_message: song_data.song_message.clone(),
             song_data: song_data.clone(),
             channels,
@@ -1519,6 +1524,16 @@ impl Song {
                     }
                 }
                 self.row = self.pattern_change.row as usize;
+                // Per ProTracker/OpenMPT: a break-target row past the destination
+                // pattern's length wraps to row 0 (e.g. spacedeb.mod uses Dxy=80
+                // into a 64-row pattern).
+                if self.song_position < self.song_data.pattern_order.len() {
+                    let pat_idx = self.song_data.pattern_order[self.song_position] as usize;
+                    if pat_idx < self.song_data.patterns.len()
+                        && self.row >= self.song_data.patterns[pat_idx].rows.len() {
+                        self.row = 0;
+                    }
+                }
             } else {
                 self.row = self.row + 1;
                 if self.row >= self.song_data.patterns[self.song_data.pattern_order[self.song_position as usize] as usize].rows.len() {
@@ -1553,45 +1568,35 @@ impl Song {
 
             for pattern in &row.channels {
                 match pattern.effect {
-                    0xB => { self.pattern_change.set_jump(first_tick, pattern.effect_param); }
-                    0xD => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); }
+                    0xB | 2 => { self.pattern_change.set_jump(first_tick, pattern.effect_param); }
+                    0xD | 3 => { self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param); }
                     0xF => { 
                         if first_tick && pattern.effect_param > 0 {
                             if pattern.effect_param <= 0x1f { self.speed = pattern.effect_param as u32; }
                             else { self.bpm.update(pattern.effect_param as u32, self.rate); }
                         }
                     }
-                    0xE => {
-                        match pattern.get_x() {
-                            0x6 => { 
-                                // Pattern Loop (E6x)
-                                let param = pattern.get_y();
-                                if first_tick {
-                                    if param != 0 {
-                                        self.pattern_change.is_loop = true;
-                                    }
+                    1 => { // S3M Speed
+                        if first_tick && pattern.effect_param > 0 { self.speed = pattern.effect_param as u32; }
+                    }
+                    20 => { // S3M BPM
+                        if first_tick && pattern.effect_param > 0 { self.bpm.update(pattern.effect_param as u32, self.rate); }
+                    }
+                    0xE | 0x13 => {
+                        let x = pattern.get_x();
+                        let y = pattern.get_y();
+                        match x {
+                            0x6 | 0xB => { 
+                                // Pattern Loop (E6x / S3B)
+                                if first_tick && y != 0 {
+                                    self.pattern_change.is_loop = true;
                                 }
                             }
                             0xE => { 
-                                // Pattern Delay (EEx)
+                                // Pattern Delay (EEx / SxE)
                                 if first_tick {
-                                    self.pattern_change.pattern_delay = pattern.get_y();
+                                    self.pattern_change.pattern_delay = y;
                                 }
-                            }
-                            _ => {}
-                        }
-                    }
-                    // S3M/IT Flow control
-                    0x16 => { // S3M Pattern Break
-                         self.pattern_change.set_break(self.song_data.song_type, first_tick, pattern.effect_param);
-                    }
-                    0x13 => { // S3M Special
-                        match pattern.get_x() {
-                            0xB => { // Pattern Loop
-                                if first_tick && pattern.get_y() != 0 { self.pattern_change.is_loop = true; }
-                            }
-                            0xE => { // Pattern Delay
-                                if first_tick { self.pattern_change.pattern_delay = pattern.get_y(); }
                             }
                             _ => {}
                         }
@@ -1819,17 +1824,10 @@ impl Song {
                         LoopType::ForwardLoop => {
                             voice.sample_position = (voice.sample_position - sample.loop_end as f32) + sample.loop_start as f32;
                         }
-                        LoopType::PingPongLoop => {
-                            if voice.ping {
-                                voice.sample_position = (sample.loop_end - 1) as f32 - (voice.sample_position - sample.loop_end as f32);
-                                voice.ping = false;
-                                voice.du = -voice.du;
-                            } else {
-                                voice.sample_position = sample.loop_start as f32 + (sample.loop_start as f32 - voice.sample_position);
-                                voice.ping = true;
-                                voice.du = -voice.du;
-                            }
-                        }
+                        // Ping-pong loops are unfolded into ForwardLoop at load
+                        // time (see Sample::setup_loops_and_padding); the engine
+                        // never sees PingPongLoop here.
+                        LoopType::PingPongLoop => unreachable!("ping-pong should have been unfolded to forward loop at load"),
                     }
                 }
                 i += 1;
