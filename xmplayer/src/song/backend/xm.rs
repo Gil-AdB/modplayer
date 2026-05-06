@@ -1,4 +1,5 @@
-use crate::module_reader::{SongType, is_note_valid};
+use crate::module_reader::SongType;
+use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_extended, set_channel_note, ModuleBackend,
     SongPlaybackResources, XM_E_TABLE,
@@ -33,7 +34,8 @@ impl ModuleBackend for XmBackend {
             }
 
             // Note trigger logic
-            if is_note_valid(pattern.note, r.song_data.song_type) {
+            match pattern.note_action(r.song_data.song_type) {
+            NoteAction::Trigger(_) => {
                 if pattern.is_porta_to_note(r.song_data.song_type) {
                     if first_tick {
                         let inst_idx = channel.last_instrument;
@@ -104,19 +106,24 @@ impl ModuleBackend for XmBackend {
                         }
                     }
                 }
-            } else if pattern.note == 97 { // Note Off
+            }
+            NoteAction::Off => {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
                         r.voices[v_idx].key_off(instruments, false);
                     }
                 }
-            } else if pattern.note == 121 { // Note Cut
+            }
+            NoteAction::Cut => {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
                         r.voices[v_idx].on = false;
                         r.voices[v_idx].volume.output_volume = 0.0;
                     }
                 }
+            }
+            // XM doesn't support note 122 (fade) or note > 96 - both fall through.
+            NoteAction::Fade | NoteAction::None => {}
             }
 
             let mut voice_ref = channel.voice_idx.and_then(|idx| {

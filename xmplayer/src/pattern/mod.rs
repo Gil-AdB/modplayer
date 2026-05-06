@@ -2,6 +2,27 @@ use std::fmt;
 use std::string::ToString;
 use crate::module_reader::SongType;
 
+/// What a pattern row's `note` byte means once the format has been decoded.
+///
+/// Each backend used to repeat the same chain of `if pattern.note == 97 { ... }
+/// else if pattern.note == 121 { ... } else if pattern.note == 122 { ... }`
+/// alongside an `is_note_valid` check. `Pattern::note_action` collapses that
+/// into a single enum dispatch and centralises the per-format note-range
+/// rules (1..=96 for XM/MOD, 1..=120 for IT/S3M).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NoteAction {
+    /// No note on this row.
+    None,
+    /// Trigger a note. Value is the engine-space note (1..=120).
+    Trigger(u8),
+    /// Note Off — start fade-out / end sustain.
+    Off,
+    /// Note Cut — silence the voice immediately.
+    Cut,
+    /// Note Fade — IT-only; force fade-out without releasing sustain.
+    Fade,
+}
+
 #[derive(Copy, Clone)]
 pub struct Pattern {
     pub note: u8,
@@ -28,6 +49,30 @@ impl Pattern {
     fn get_note(&self) -> String {
         if self.note == 97 {"OFF". to_string() } else if self.note == 0 { "   ".to_string() } else {
             format!("{}{}", Pattern::NOTES[((self.note - 1) % 12) as usize], (((self.note - 1) / 12) + '0' as u8) as char)
+        }
+    }
+
+    /// Decode `self.note` into a format-aware `NoteAction`.
+    ///
+    /// Engine-space encoding (set by the parsers in `module_reader::*`):
+    ///   * `1..=120`  trigger that note (range capped at 96 for XM/MOD)
+    ///   * `97`       Note Off
+    ///   * `121`      Note Cut
+    ///   * `122`      Note Fade (IT only)
+    ///   * `0`        empty / nothing
+    pub fn note_action(&self, song_type: SongType) -> NoteAction {
+        match self.note {
+            0 => NoteAction::None,
+            97 => NoteAction::Off,
+            121 => NoteAction::Cut,
+            122 => NoteAction::Fade,
+            n => {
+                let max = match song_type {
+                    SongType::IT | SongType::S3M => 120,
+                    _ => 96,
+                };
+                if n <= max { NoteAction::Trigger(n) } else { NoteAction::None }
+            }
         }
     }
 

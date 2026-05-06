@@ -1,4 +1,5 @@
-use crate::module_reader::{SongType, is_note_valid};
+use crate::module_reader::SongType;
+use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_extended, set_channel_note, ModuleBackend,
     SongPlaybackResources, S3M_S_TABLE,
@@ -27,21 +28,26 @@ impl ModuleBackend for S3MBackend {
             }
 
             // Note trigger logic
-            // Note trigger logic
-            if pattern.note == 97 || pattern.note == 253 { // Note Off
+            // (S3M parser converts file-byte 254 -> engine 97 (Note Off);
+            // there is no engine-side 253/254, so the dead checks in the
+            // old code have been dropped along with this rewrite.)
+            match pattern.note_action(r.song_data.song_type) {
+            NoteAction::Off => {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
                         r.voices[v_idx].key_off(instruments, false);
                     }
                 }
-            } else if pattern.note == 121 || pattern.note == 254 { // Note Cut
+            }
+            NoteAction::Cut => {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
                         r.voices[v_idx].on = false;
                         r.voices[v_idx].volume.output_volume = 0.0;
                     }
                 }
-            } else if is_note_valid(pattern.note, r.song_data.song_type) {
+            }
+            NoteAction::Trigger(_) => {
                 if pattern.is_porta_to_note(r.song_data.song_type) {
                     if first_tick {
                         let inst_idx = channel.last_instrument;
@@ -112,6 +118,10 @@ impl ModuleBackend for S3MBackend {
                         }
                     }
                 }
+            }
+            // S3M does not produce a 'Fade' encoding from the parser, and
+            // None drops through.
+            NoteAction::Fade | NoteAction::None => {}
             }
 
             let mut voice_ref = channel.voice_idx.and_then(|idx| {

@@ -1,4 +1,5 @@
-use crate::module_reader::{SongType, is_note_valid};
+use crate::module_reader::SongType;
+use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_extended, ModuleBackend, SongPlaybackResources, MOD_E_TABLE,
 };
@@ -23,8 +24,12 @@ impl ModuleBackend for ModBackend {
                 channel.last_instrument = if (pattern.instrument as usize) < instruments.len() { pattern.instrument as usize } else { 0 };
             }
 
-            // Note trigger logic
-            if is_note_valid(pattern.note, r.song_data.song_type) {
+            // Note trigger logic. MOD doesn't encode Off/Cut/Fade, so the
+            // only branches we need are Trigger and None - and None still
+            // matters because an instrument-only row (no note) refreshes
+            // sample volume/panning on the existing voice.
+            match pattern.note_action(r.song_data.song_type) {
+            NoteAction::Trigger(_) => {
                 if pattern.effect == 0x03 || pattern.effect == 0x05 { // Tone Porta
                     if first_tick {
                         let inst_idx = channel.last_instrument;
@@ -84,7 +89,10 @@ impl ModuleBackend for ModBackend {
                         channel.voice_idx = Some(voice_idx);
                     }
                 }
-            } else if pattern.instrument != 0 && first_tick {
+            }
+            // Instrument-only row (no note): refresh sample volume / panning
+            // / envelope state on the existing voice. MOD-style "ghost note".
+            NoteAction::None if pattern.instrument != 0 && first_tick => {
                 let inst_idx = channel.last_instrument;
                 if inst_idx != 0 && !instruments[inst_idx].samples.is_empty() {
                     let sample_idx = 0;
@@ -107,6 +115,10 @@ impl ModuleBackend for ModBackend {
                         }
                     }
                 }
+            }
+            // MOD doesn't have Off / Cut / Fade encodings, and bare Note::None
+            // (no instrument) is also a no-op.
+            _ => {}
             }
 
             let mut voice_ref = channel.voice_idx.and_then(|idx| {

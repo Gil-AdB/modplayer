@@ -35,16 +35,6 @@ pub enum FrequencyType {
     LINEAR
 }
 
-pub(crate) fn is_note_valid(note: u8, song_type: SongType) -> bool {
-    match song_type {
-        SongType::IT => note > 0 && note <= 120,
-        // S3M encodes octave in the high nybble; decoded values can exceed the XM-ish 96 range.
-        // Engine period tables clamp through note_to_period; skip only special/control values.
-        SongType::S3M => note > 0 && note <= 120,
-        _ => note > 0 && note <= 96,
-    }
-}
-
 #[derive(Clone)]
 pub struct Row {
     pub channels: Vec<Pattern>

@@ -226,26 +226,33 @@ fn test_it_note_off_cut_remapped() {
     assert_eq!(tester.get_active_voices(), 0, "Voice should be CUT immediately on Note 121 (IT Note Cut)");
 }
 
+// Helpers for expressing the old is_note_valid intent against the new
+// NoteAction API. is_note_valid was "is this a triggerable note?".
+fn note_at(n: u8) -> Pattern { Pattern { note: n, ..Pattern::new() } }
+fn is_trigger(p: &Pattern, st: SongType) -> bool {
+    use crate::pattern::NoteAction;
+    matches!(p.note_action(st), NoteAction::Trigger(_))
+}
+
 #[test]
 fn test_it_note_limit_acceptance() {
-    use crate::module_reader::is_note_valid;
-    assert!(is_note_valid(120, SongType::IT));
-    assert!(!is_note_valid(121, SongType::IT));
+    assert!(is_trigger(&note_at(120), SongType::IT));
+    // Note 121 is engine-encoding for Note Cut, not a trigger.
+    assert!(!is_trigger(&note_at(121), SongType::IT));
 }
 
 #[test]
 fn test_xm_note_limit_rejection() {
-    use crate::module_reader::is_note_valid;
-    assert!(is_note_valid(96, SongType::XM));
-    assert!(!is_note_valid(97, SongType::XM));
-    assert!(!is_note_valid(120, SongType::XM));
+    assert!(is_trigger(&note_at(96), SongType::XM));
+    // 97 is Note Off in XM encoding.
+    assert!(!is_trigger(&note_at(97), SongType::XM));
+    assert!(!is_trigger(&note_at(120), SongType::XM));
 }
 
 #[test]
 fn test_xm_relative_note_uses_pattern_note() {
-    use crate::module_reader::is_note_valid;
     use crate::test_utils::{MockSongBuilder, SongTester};
-    assert!(is_note_valid(49, SongType::XM));
+    assert!(is_trigger(&note_at(49), SongType::XM));
     let mut builder = MockSongBuilder::new(SongType::XM, 1);
     builder.instruments[1].samples[0].relative_note = 12;
     builder.add_pattern_row(0, 0, 49, 1, 255, 0, 0);
@@ -258,15 +265,14 @@ fn test_xm_relative_note_uses_pattern_note() {
 
 #[test]
 fn test_mod_note_limit_rejection() {
-    use crate::module_reader::is_note_valid;
-    assert!(is_note_valid(96, SongType::MOD));
-    assert!(!is_note_valid(97, SongType::MOD));
+    assert!(is_trigger(&note_at(96), SongType::MOD));
+    assert!(!is_trigger(&note_at(97), SongType::MOD));
 }
 
 #[test]
 fn test_s3m_note_above_96_is_valid() {
-    use crate::module_reader::is_note_valid;
     // S3M packs octave in the high nybble; decoded values may exceed 96.
-    assert!(is_note_valid(100, SongType::S3M));
-    assert!(!is_note_valid(121, SongType::S3M));
+    assert!(is_trigger(&note_at(100), SongType::S3M));
+    // 121 is Note Cut in engine encoding.
+    assert!(!is_trigger(&note_at(121), SongType::S3M));
 }
