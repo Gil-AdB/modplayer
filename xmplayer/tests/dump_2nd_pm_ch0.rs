@@ -30,29 +30,73 @@ fn dump_2nd_pm_order3_ch0() {
     dump_one("/Users/gil-ad/work/modplayer/scratch/2ND_PM.xm");
 }
 
-fn trace_voice_volume(path: &str, target_order: usize) {
+fn dump_all_channels_at_order(path: &str, order: usize) {
+    let (song_handle, _) = match SongState::new(path) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("can't open {}: {}", path, e); return; }
+    };
+    let song = song_handle.get_song().lock().unwrap();
+    let pat_idx = song.song_data.pattern_order[order] as usize;
+    let pat = &song.song_data.patterns[pat_idx];
+    let n_chan = pat.rows[0].channels.len();
+    println!("=== {}  order={} pattern={} rows={} channels={} ===", path, order, pat_idx, pat.rows.len(), n_chan);
+    for ch in 0..n_chan {
+        let mut any = false;
+        for (r, row) in pat.rows.iter().enumerate() {
+            let c = &row.channels[ch];
+            if c.note != 0 || c.instrument != 0 || c.volume != 255 || c.effect != 0 || c.effect_param != 0 {
+                if !any { println!("--- ch {} ---", ch); any = true; }
+                println!("  row {:02}  note {:>3}  inst {:>3}  vol {:>3}  eff {:02x} {:02x}",
+                         r, c.note, c.instrument, c.volume, c.effect, c.effect_param);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "Manual: dump all channels of order 12 in 2ND_PM.S3M"]
+fn dump_2nd_pm_order12_all() {
+    dump_all_channels_at_order("/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M", 12);
+}
+
+#[test]
+#[ignore = "Manual: find orders where inst 33 (0x21) appears with note ~70"]
+fn find_inst_33_a5() {
+    let path = "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M";
+    let (song_handle, _) = match SongState::new(path) { Ok(s) => s, Err(e) => { eprintln!("{}", e); return; } };
+    let song = song_handle.get_song().lock().unwrap();
+    for (order_idx, &pat_idx) in song.song_data.pattern_order.iter().enumerate() {
+        let pat = &song.song_data.patterns[pat_idx as usize];
+        for (r, row) in pat.rows.iter().enumerate() {
+            for (ch, c) in row.channels.iter().enumerate() {
+                if c.instrument == 33 && c.note >= 60 && c.note <= 80 {
+                    println!("order {:>3} pat {:>3} row {:>2} ch {} : note {} inst {} vol {} eff {:02x}{:02x}",
+                             order_idx, pat_idx, r, ch, c.note, c.instrument, c.volume, c.effect, c.effect_param);
+                }
+            }
+        }
+    }
+}
+
+fn trace_voice_volume(path: &str, target_order: usize, channel_idx: usize) {
     let (song_handle, _) = match SongState::new(path) {
         Ok(s) => s,
         Err(e) => { eprintln!("can't open {}: {}", path, e); return; }
     };
     let mut song = song_handle.get_song().lock().unwrap();
-    println!("=== {}  voice-vol trace, order {} ===", path, target_order);
+    println!("=== {}  voice-vol trace, order {}, ch {} ===", path, target_order, channel_idx);
 
-    // Step until we reach target_order, then trace tick by tick.
     let mut last_print_row = usize::MAX;
     loop {
         if song.song_position > target_order { break; }
         let was_in_target = song.song_position == target_order;
         let pre_tick = song.tick;
         let pre_row = song.row;
-        // Capture pattern row info BEFORE process_tick (in case process_tick
-        // would advance row — it doesn't, but just to be safe).
         let pat_idx_pre = song.song_data.pattern_order[song.song_position] as usize;
-        let pat_row_pre = song.song_data.patterns[pat_idx_pre].rows[pre_row].channels[0].clone();
+        let pat_row_pre = song.song_data.patterns[pat_idx_pre].rows[pre_row].channels[channel_idx].clone();
         song.process_tick();
         if was_in_target {
-            // Print POST process_tick state — this is what gets mixed into audio.
-            let ch = &song.channels[0];
+            let ch = &song.channels[channel_idx];
             let v = ch.voice_idx.map(|i| (i, &song.voices[i]));
             let new_row = pre_row != last_print_row;
             if new_row {
@@ -80,6 +124,13 @@ fn trace_voice_volume(path: &str, target_order: usize) {
 #[test]
 #[ignore = "Manual: tick-by-tick voice-volume trace for ch 0 across order 3"]
 fn trace_2nd_pm_order3_ch0_voice_volume() {
-    trace_voice_volume("/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M", 3);
-    trace_voice_volume("/Users/gil-ad/work/modplayer/scratch/2ND_PM.xm",  3);
+    trace_voice_volume("/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M", 3, 0);
+    trace_voice_volume("/Users/gil-ad/work/modplayer/scratch/2ND_PM.xm",  3, 0);
+}
+
+#[test]
+#[ignore = "Manual: trace ch 7 (display CH08) across order 18 (user's '0x12')"]
+fn trace_2nd_pm_order18_ch7_voice_volume() {
+    trace_voice_volume("/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M", 18, 7);
+    trace_voice_volume("/Users/gil-ad/work/modplayer/scratch/2ND_PM.xm",  18, 7);
 }

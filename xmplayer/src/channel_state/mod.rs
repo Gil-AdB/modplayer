@@ -244,6 +244,25 @@ impl Voice {
         }
     }
 
+    /// Re-arm volume + envelopes for an instrument number that landed on a
+    /// porta-to-note row. The note itself doesn't retrigger (no
+    /// sample_position reset, no fadeout reset of `sustained`), but the
+    /// instrument number causes the voice to re-read its sample's default
+    /// volume and rewind its envelope phases — matching ST3/FT2/IT.
+    pub(crate) fn porta_retrig_for_instrument(&mut self, instruments: &Instruments) {
+        let instrument = &instruments[self.instrument];
+        let sample_vol = if self.sample < instrument.samples.len() {
+            instrument.samples[self.sample].volume as i32
+        } else {
+            64
+        };
+        self.volume.retrig(sample_vol);
+        self.volume_envelope_state.reset(0, &instrument.volume_envelope);
+        self.panning_envelope_state.reset(0, &instrument.panning_envelope);
+        self.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
+        self.vibrato_envelope_state.reset(&instrument.vibrato_envelope);
+    }
+
     pub(crate) fn trigger_note(&mut self, instruments: &Instruments, reset_envelopes: bool, vibrato_retrig: bool, tremolo_retrig: bool) {
         self.sample_position = 4.0;
         self.loop_started = false;

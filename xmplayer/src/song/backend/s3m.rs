@@ -109,6 +109,18 @@ impl ModuleBackend for S3MBackend {
             NoteAction::Fade | NoteAction::None => {}
             }
 
+            // Instrument number on a porta-to-note row re-reads sample volume
+            // and rewinds envelopes (no audio retrigger). This fires
+            // unconditionally w.r.t. note_action — instrument-only porta rows
+            // (no note byte) still apply, matching master/ST3.
+            if first_tick && pattern.is_porta_to_note(r.song_data.song_type) && pattern.instrument != 0 {
+                if let Some(v_idx) = channel.voice_idx {
+                    if r.voices[v_idx].channel_idx == i {
+                        r.voices[v_idx].porta_retrig_for_instrument(instruments);
+                    }
+                }
+            }
+
             let mut voice_ref = channel.voice_idx.and_then(|idx| {
                 if r.voices[idx].channel_idx == i {
                     Some(&mut r.voices[idx])

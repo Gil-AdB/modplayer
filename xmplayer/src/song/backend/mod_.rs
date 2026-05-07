@@ -107,6 +107,17 @@ impl ModuleBackend for ModBackend {
             _ => {}
             }
 
+            // Sample number on a porta-to-note row (effects 0x03 / 0x05)
+            // re-reads sample volume — fires unconditionally w.r.t.
+            // note_action so instrument-only porta rows still apply.
+            if first_tick && (pattern.effect == 0x03 || pattern.effect == 0x05) && pattern.instrument != 0 {
+                if let Some(v_idx) = channel.voice_idx {
+                    if r.voices[v_idx].channel_idx == i {
+                        r.voices[v_idx].porta_retrig_for_instrument(instruments);
+                    }
+                }
+            }
+
             let mut voice_ref = channel.voice_idx.and_then(|idx| {
                 if r.voices[idx].channel_idx == i {
                     Some(&mut r.voices[idx])

@@ -110,14 +110,10 @@
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize)?;
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize)?;
 
-        let channel_volumes = file.read_bytes(32)?;
-        let mut initial_channel_volume = [64u8; 64];
-        for i in 0..32 {
-            if channel_map[i] != 255 {
-                let vol = channel_volumes[i];
-                initial_channel_volume[channel_map[i] as usize] = if vol > 64 { 64 } else { vol };
-            }
-        }
+        // S3M has no per-channel-volume block in the header. Channel volumes
+        // start at 64 and are only ever altered at runtime by Mxx (Set
+        // Channel Volume). Master hardcodes [64; 64] here too.
+        let initial_channel_volume = [64u8; 64];
 
         let mut initial_channel_panning = [128u8; 64];
         /* 
@@ -213,13 +209,16 @@
 
             let mut pattern = Patterns::new(row_count, channel_count);
 
-            let _size = file.read_u16()?;
+            let size = file.read_u16()? as usize;
+            let mut bytes_read = 0;
 
             for row in pattern.rows.iter_mut() {
+                if bytes_read >= size { break; }
                 let channels = &mut row.channels;
 
                 loop {
                     let pattern_data = file.read_u8()?;
+                    bytes_read += 1;
                     if pattern_data == 0 { break; }
 
                     let channel_num = pattern_data & 31;
@@ -234,6 +233,7 @@
                     if pattern_data & 32 == 32 {
                         let note_val = file.read_u8()?;
                         instrument = file.read_u8()?;
+                        bytes_read += 2;
 
                         if note_val == 255 {
                             note = 0;
@@ -252,19 +252,18 @@
 
                     if pattern_data & 64 == 64 {
                         volume = file.read_u8()?;
+                        bytes_read += 1;
                     }
 
                     if pattern_data & 128 == 128 {
                         effect = file.read_u8()?;
                         effect_param = file.read_u8()?;
+                        bytes_read += 2;
                     }
 
                     if channel_map[channel_num as usize] == 255 { continue; }
                     let channel = &mut channels[channel_id];
 
-                    // Packed S3M: each cell carries a subset of fields (see docs/s3m.txt bits 32/64/128).
-                    // Subsequent cells on the same row merge into that channel — do not wipe fields
-                    // that this cell omitted (fixes wrong volumes / lost notes vs ST3/OpenMPT).
                     if pattern_data & 32 != 0 {
                         channel.note = note;
                         channel.instrument = instrument;
@@ -276,6 +275,7 @@
                         channel.effect = effect;
                         channel.effect_param = effect_param;
                     }
+                    if bytes_read >= size { break; }
                 }
             }
             patterns.push(pattern)
