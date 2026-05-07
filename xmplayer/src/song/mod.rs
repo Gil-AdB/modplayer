@@ -1,7 +1,7 @@
 use rustfft::{FftPlanner, Fft};
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
@@ -285,7 +285,7 @@ impl Default for ChannelStatus {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum FilterType {
     None,
     Linear,

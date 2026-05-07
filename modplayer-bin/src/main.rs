@@ -17,6 +17,9 @@ use crossterm::cursor::{Hide, MoveTo, Show};
 use display::display::{Display, TargetPlatform};
 use display::{ViewPort, Grid};
 
+mod settings;
+use settings::Settings;
+
 fn main() {
     if env::args().len() < 2 {return;}
 
@@ -107,6 +110,20 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
 
     let mut audio = AudioOutput::new(consumer, SAMPLE_RATE);
 
+    // Apply persisted UI preferences before the audio thread starts.
+    // Direct field mutation (rather than send-cycle-N-times) is safe here
+    // because the audio thread isn't running yet — `song_data.start()` is
+    // what spawns it.
+    let settings = Settings::load();
+    {
+        let mut song = song_data.get_song().lock().unwrap();
+        song.theme_id = settings.theme_id;
+        song.filter = settings.filter;
+        song.view_mode = settings.view_mode;
+        song.visualizer_enabled = settings.visualizer_enabled;
+        song.visualizer_mode = settings.visualizer_mode;
+    }
+
     let handle = song_data.start(|data, instruments, patterns, order| {
 
         let mut view_port = ViewPort {
@@ -140,6 +157,20 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
 
     audio.start_audio_output();
     mainloop(song_data);
+
+    // Snapshot current UI prefs and persist on graceful exit. The audio
+    // thread is still alive at this point — lock briefly and copy out.
+    {
+        let song = song_data.get_song().lock().unwrap();
+        let s = Settings {
+            theme_id: song.theme_id,
+            filter: song.filter,
+            view_mode: song.view_mode,
+            visualizer_enabled: song.visualizer_enabled,
+            visualizer_mode: song.visualizer_mode,
+        };
+        s.save();
+    }
 
     song_data.close();
     if handle.0.is_some() {
