@@ -31,3 +31,10 @@ modplayer-wasm/www/modplayer-wasm-app-*.tgz
 # debugging). Not part of any crate.
 scratch/
 ft2-clone/
+
+# Auto-regenerated state dumps. `tests/state_dump_test.rs` rewrites these
+# on every test run, so keeping them in git just makes every commit diff
+# noisy with thousands of unrelated lines. Generate locally as needed.
+# (`*_master.txt` are legacy frozen master-format dumps and stay tracked.)
+xmplayer/test_data/*_refactor.txt
+xmplayer/test_data/*_dump.txt
