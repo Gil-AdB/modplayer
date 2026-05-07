@@ -1,6 +1,7 @@
 use xmplayer::song::{PlaybackCmd, UserData};
 use xmplayer::module_reader::print_module;
 use std::env;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::io::{stdout, Write};
 
@@ -21,27 +22,45 @@ mod settings;
 use settings::Settings;
 
 fn main() {
-    if env::args().len() < 2 {return;}
+    if env::args().len() < 2 { return; }
 
-	let _ = dbg!(env::args());
+    let cli_args: Vec<String> = env::args().skip(1).collect();
+    let dump_mode = cli_args.iter().any(|a| a == "--dump");
+    let non_flag: Vec<&String> = cli_args.iter().filter(|a| !a.starts_with("--")).collect();
+    if non_flag.is_empty() { return; }
 
-    let path = env::args().nth(1).unwrap();
-    //let file = File::open(path).expect("failed to open the file");
+    // Heuristic: treat extra args as a playlist only if every one of them is
+    // an existing file. If any extra isn't a file, fall back to the legacy
+    // print_module debug shorthand (`modplayer file.s3m 5 10` → debug-print
+    // patterns 5 and 10 of the first file). This keeps backward compat for
+    // the existing single-file flow while making `modplayer a.s3m b.xm c.it`
+    // do the obvious thing.
+    let all_files = non_flag.iter().all(|a| Path::new(a.as_str()).is_file());
 
-   // let data = read_module(path.as_str()).unwrap();
-
-    let (mut song, consumer) = match SongState::new(&path) {
-        Ok(s) => {s}
-        Err(e) => {dbg!(e);return;}
-    };
-
-    if env::args().any(|arg| arg == "--dump") {
-        run_dump(&mut song, consumer);
-    } else if env::args().len() > 2 {
-        print_module(&song, env::args().skip(2));
-    } else {
-        run(&mut song, consumer);
+    if dump_mode {
+        // Dump mode is a developer affordance; only the first file is dumped.
+        let path = non_flag[0].clone();
+        match SongState::new(&path) {
+            Ok((mut song, consumer)) => run_dump(&mut song, consumer),
+            Err(e) => { dbg!(e); }
+        }
+        return;
     }
+
+    if !all_files && non_flag.len() > 1 {
+        // Legacy print_module path — first arg is the file, rest are pattern
+        // indices to debug-print.
+        let path = non_flag[0].clone();
+        let extras: Vec<String> = non_flag[1..].iter().map(|s| s.to_string()).collect();
+        match SongState::new(&path) {
+            Ok((song, _consumer)) => print_module(&song, extras.into_iter()),
+            Err(e) => { dbg!(e); }
+        }
+        return;
+    }
+
+    let playlist: Vec<PathBuf> = non_flag.iter().map(|s| PathBuf::from(s.as_str())).collect();
+    run_playlist(playlist);
 }
 
 fn run_dump(song_data: &mut SongHandle, consumer: AudioConsumer) {
@@ -102,11 +121,61 @@ impl Drop for TerminalModeSetter {
 }
 
 
-fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
+/// What ended the inner mainloop — drives playlist navigation.
+enum LoopExit {
+    /// User pressed q / Esc; tear everything down and stop.
+    Quit,
+    /// Song reached natural end; advance to next playlist item.
+    SongEnded,
+    /// User pressed `>`; jump to next playlist item.
+    NextSong,
+    /// User pressed `<`; jump to previous playlist item.
+    PrevSong,
+}
+
+fn run_playlist(items: Vec<PathBuf>) {
+    let _mode_setter = TerminalModeSetter::new();
+
+    // Load once at session start; carry the latest UI state forward
+    // between tracks so toggling theme on track 1 sticks for track 2.
+    // Save on every track end (not just the final one) so a kill -9 mid-
+    // playlist keeps the user's preferences.
+    let mut settings = Settings::load();
+    let mut idx: usize = 0;
+
+    while idx < items.len() {
+        let path = items[idx].to_string_lossy().to_string();
+        let (mut song_data, consumer) = match SongState::new(&path) {
+            Ok(s) => s,
+            Err(e) => { dbg!(e); idx += 1; continue; }
+        };
+
+        let exit = run_one(&mut song_data, consumer, &settings);
+
+        // Refresh `settings` from the song's final UI state and persist.
+        {
+            let song = song_data.get_song().lock().unwrap();
+            settings = Settings {
+                theme_id: song.theme_id,
+                filter: song.filter,
+                view_mode: song.view_mode,
+                visualizer_enabled: song.visualizer_enabled,
+                visualizer_mode: song.visualizer_mode,
+            };
+        }
+        settings.save();
+
+        match exit {
+            LoopExit::Quit => break,
+            LoopExit::SongEnded | LoopExit::NextSong => { idx = idx.saturating_add(1); }
+            LoopExit::PrevSong => { idx = idx.saturating_sub(1); }
+        }
+    }
+}
+
+fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Settings) -> LoopExit {
     const _CHANNELS: i32 = 2;
     const SAMPLE_RATE: f32 = 48_000.0;
-
-    let _mode_setter = TerminalModeSetter::new();
 
     let mut audio = AudioOutput::new(consumer, SAMPLE_RATE);
 
@@ -114,7 +183,6 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
     // Direct field mutation (rather than send-cycle-N-times) is safe here
     // because the audio thread isn't running yet — `song_data.start()` is
     // what spawns it.
-    let settings = Settings::load();
     {
         let mut song = song_data.get_song().lock().unwrap();
         song.theme_id = settings.theme_id;
@@ -156,21 +224,7 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
     });
 
     audio.start_audio_output();
-    mainloop(song_data);
-
-    // Snapshot current UI prefs and persist on graceful exit. The audio
-    // thread is still alive at this point — lock briefly and copy out.
-    {
-        let song = song_data.get_song().lock().unwrap();
-        let s = Settings {
-            theme_id: song.theme_id,
-            filter: song.filter,
-            view_mode: song.view_mode,
-            visualizer_enabled: song.visualizer_enabled,
-            visualizer_mode: song.visualizer_mode,
-        };
-        s.save();
-    }
+    let exit = mainloop(song_data);
 
     song_data.close();
     if handle.0.is_some() {
@@ -181,10 +235,10 @@ fn run(song_data: &mut SongHandle, consumer: AudioConsumer) {
     }
 
     audio.close();
-    if let Err(_e) = crossterm::execute!(stdout(), LeaveAlternateScreen) {}
+    exit
 }
 
-fn mainloop(song_data: &SongState) {
+fn mainloop(song_data: &SongState) -> LoopExit {
 
     if let Ok(size) = crossterm::terminal::size() {
         let tx = song_data.get_sender();
@@ -196,7 +250,8 @@ fn mainloop(song_data: &SongState) {
 
     if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
     loop {
-        if song_data.is_stopped() {break;}
+        // Natural song-end → advance to next playlist item.
+        if song_data.is_stopped() { return LoopExit::SongEnded; }
         // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
         if crossterm::event::poll(Duration::from_millis(10)).is_ok() {
             // It's guaranteed that the `read()` won't block when the `poll()`
@@ -223,7 +278,7 @@ fn mainloop(song_data: &SongState) {
                         KeyCode::Esc => {
                             let tx = song_data.get_sender();
                             let _ = tx.send(PlaybackCmd::Quit);
-                            break;
+                            return LoopExit::Quit;
                         }
                         // KeyCode::Home => {}
                         // KeyCode::End => {}
@@ -257,14 +312,30 @@ fn mainloop(song_data: &SongState) {
                             match ch {
                                 'q' => {
                                     let _ = tx.send(PlaybackCmd::Quit);
-                                    break;
+                                    return LoopExit::Quit;
+                                }
+                                '>' => {
+                                    // Next playlist track (Shift-period).
+                                    let _ = tx.send(PlaybackCmd::Quit);
+                                    return LoopExit::NextSong;
+                                }
+                                '<' => {
+                                    // Previous playlist track (Shift-comma).
+                                    let _ = tx.send(PlaybackCmd::Quit);
+                                    return LoopExit::PrevSong;
                                 }
                                 'c' => {
                                     let _ = tx.send(PlaybackCmd::ModifyUserDataAddUSize("view_mode".to_string(), 1));
                                 }
                                 '0'..='9' => {
-                                    let ch_idx = if ch == '0' { 9 } else { ch as u8 - '1' as u8 };
-                                    if event.modifiers.contains(KeyModifiers::SHIFT) {
+                                    // Bare digit: channels 1-10 (0 = ch10).
+                                    // Alt+digit:  channels 11-20 for files with >10 channels.
+                                    // Shift+digit: solo (mutes everything else).
+                                    let base = if ch == '0' { 9 } else { ch as u8 - b'1' };
+                                    let alt = event.modifiers.contains(KeyModifiers::ALT);
+                                    let shift = event.modifiers.contains(KeyModifiers::SHIFT);
+                                    let ch_idx = base + if alt { 10 } else { 0 };
+                                    if shift {
                                         let _ = tx.send(PlaybackCmd::ChannelSolo(ch_idx));
                                     } else {
                                         let _ = tx.send(PlaybackCmd::ChannelToggle(ch_idx));
