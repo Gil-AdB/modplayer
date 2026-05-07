@@ -81,25 +81,22 @@
 
         let _signed_samples = file.read_u16()?;
 
+
         let signature = file.read_string(4);
 
         if signature != "SCRM" {
             return Err(SimpleError::new("Unknown s3m format - signature"));
         }
 
-        let _global_volume = file.read_u8()?;
-
-        let speed = file.read_u8()?;
-
-        let bpm = file.read_u8()?;
-
-        let _master_volume = file.read_u8()?;
-
-        let _ = file.read_u8()?;
-
-        let _default_panning = file.read_u8()?;
-
-        file.seek(SeekFrom::Current(10))?;
+        let global_volume = file.read_u8()?;
+        let mut speed = file.read_u8()?;
+        let mut bpm = file.read_u8()?;
+        if speed == 0 { speed = 6; }
+        if bpm == 0 { bpm = 125; }
+        let master_volume = file.read_u8()?; // SCRM Master Volume
+        let _ultra_click_removal = file.read_u8()?;
+        let default_panning_present = file.read_u8()?;
+        file.seek(SeekFrom::Current(10))?; // Skip reserved
 
         let channel_data = file.read_bytes(32)?;
         let mut channel_map = [255u8; 32];
@@ -117,17 +114,27 @@
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize)?;
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize)?;
 
-        // Now we should read the panning positions. Or not. Whatever. Maybe some other time.
+        let mut initial_channel_panning = [32u8; 64];
+        if default_panning_present == 252 {
+            let panning_data = file.read_bytes(32)?;
+            for i in 0..32 {
+                if panning_data[i] & 32 != 0 {
+                    let p = panning_data[i] & 15;
+                    initial_channel_panning[i] = p * 16 + 8; // Map 0-15 to 0-255 scale
+                }
+            }
+        }
+
         let instruments = read_instruments(file, &instrument_ptrs)?;
         let mut patterns = read_patterns(file, &pattern_ptrs, num_channels as usize, &channel_map)?;
 
         patterns.push(Patterns {
             rows: vec![Row {
                 channels: vec![Pattern {
-                    note: 0,
-                    instrument: 0,
-                    volume: 0,
-                    effect: 0,
+                    note: 255,
+                    instrument: 255,
+                    volume: 255,
+                    effect: 255,
                     effect_param: 0
                 }; num_channels as usize]
             }; 64]
@@ -146,10 +153,21 @@
             frequency_type: FrequencyType::AMIGA,
             tempo: speed as u16,
             bpm: bpm as u16,
-            pattern_order: Vec::from_iter(pattern_order.iter().cloned()),
+            pattern_order: {
+                let mut order = Vec::from_iter(pattern_order.iter().cloned());
+                truncate_patterns(&mut order);
+                order
+            },
             instruments,
             use_amiga: true,
             song_message: "".to_string(),
+            initial_channel_volume: [64; 64],
+            initial_channel_panning,
+            global_volume:           global_volume,
+            master_volume:           master_volume & 0x7F, // Bit 7 is stereo/mono, 0-6 is vol
+            mixing_volume:           128, // Default S3M mixing volume (modern tracker style)
+            old_effects:             false,
+            compatible_g:            true, // S3M always uses compatible G behavior
         })
     }
 
@@ -181,9 +199,6 @@
 
             let _size = file.read_u16()?;
 
-            let mut last_effect_param       = [0u8; 32];
-            let mut last_effect             = [0u8; 32];
-            let mut last_vibrato_param      = [0u8; 32];
             let mut last_instrument = [0u8; 32];
 
             for row in pattern.rows.iter_mut() {
@@ -196,10 +211,10 @@
                     let channel_num = pattern_data & 31;
                     let channel_id = channel_map[channel_num as usize] as usize;
 
-                    let mut note = 0u8;
-                    let mut instrument = 0u8;
-                    let mut volume = 0u8;
-                    let mut effect = 0u8;
+                    let mut note = 255u8;
+                    let mut instrument = 255u8;
+                    let mut volume = 255u8;
+                    let mut effect = 255u8;
                     let mut effect_param = 0u8;
 
                     if pattern_data & 32 == 32 {
@@ -218,7 +233,7 @@
 
                     if pattern_data & 64 == 64 {
                         volume = file.read_u8()?;
-                        if volume <= 64 {volume += 0x10} else { volume = 0;}
+                        if volume > 64 { volume = 64; }
                     }
 
                     if pattern_data & 128 == 128 {
@@ -232,25 +247,20 @@
                     channel.note = note;
                     channel.instrument = instrument;
                     channel.volume = volume;
-                    channel.effect = effect;
-                    channel.effect_param = effect_param;
 
                     if pattern_data & 128 == 128 {
-                        fix_effects(
-                            channel,
-                            &mut last_effect[channel_id],
-                            &mut last_effect_param[channel_id],
-                            &mut last_vibrato_param[channel_id],
-                            &mut last_instrument[channel_id]
-                        );
+                        map_s3m_effect(channel, effect, effect_param, &mut last_instrument[channel_id]);
+                    } else {
+                        channel.effect = 255;
+                        channel.effect_param = 0;
                     }
 
-                    if channel.instrument != 0 && channel.effect != 0x3 {
+                    if channel.instrument != 255 && channel.instrument != 0 {
                         last_instrument[channel_id] = channel.instrument;
                     }
 
-                    if channel.effect > 35 {
-                        channel.effect = 0;
+                    if channel.effect != 255 && channel.effect > 35 {
+                        channel.effect = 255;
                         channel.effect_param = 0;
                     }
                 }
@@ -261,192 +271,39 @@
         Ok(patterns)
     }
 
-    fn fix_effects(pattern : &mut Pattern, last_effect: &mut u8, last_effect_param: &mut u8, last_vibrato_param: &mut u8,last_instrument: &mut u8) {
-        // lifted from FT2 - effect memory handling seems somewhat wrong - it should be handled during effect processing
-        //                   Fixing it needs additional work in the player code - seems like this workaround will suffice for now
-        if pattern.effect_param > 0 {
-            *last_effect_param = pattern.effect_param;
-            if pattern.effect == 8 || pattern.effect == 21 {
-                *last_vibrato_param = pattern.effect_param;
-            }
+    fn map_s3m_effect(pattern : &mut Pattern, effect: u8, effect_param: u8, last_instrument: &mut u8) {
+        if effect == 255 {
+            pattern.effect = 255;
+            pattern.effect_param = 0;
+            return;
         }
+        pattern.effect = 0;
+        pattern.effect_param = effect_param;
 
-        if pattern.effect_param == 0 && pattern.effect != 7 {
-            if pattern.effect == 8 || pattern.effect == 21 {
-                pattern.effect_param = *last_vibrato_param;
-            } else if (pattern.effect >= 4 && pattern.effect <= 12) || (pattern.effect >= 17 && pattern.effect <= 19) {
-                pattern.effect_param = *last_effect_param;
-            }
-
-            if pattern.effect == *last_effect && pattern.effect != 10 && pattern.effect != 19 {
-                let extra_fine_pitch_slides = (pattern.effect == 5 || pattern.effect == 6) && ((pattern.effect_param & 0xF0) == 0xE0);
-                let fine_vol_slides = (pattern.effect == 4 || pattern.effect == 11) &&
-                    ((pattern.effect_param > 0xF0) || (((pattern.effect_param & 0xF) == 0xF) && ((pattern.effect_param & 0xF0) > 0)));
-
-                if !extra_fine_pitch_slides && !fine_vol_slides {
-                    pattern.effect_param = 0;
-                }
-            }
-        }
-
-        if pattern.effect > 0 {
-            *last_effect = pattern.effect;
-        }
-        
-        match pattern.effect {
-            1 => // A - Set speed - don't support speeds > 1F
+        match effect {
+            1 => // A - Set speed
                 {
-                    pattern.effect = 0xF;
-                    if pattern.effect_param == 0 || pattern.effect_param > 0x1F {
-                        pattern.effect = 0;
-                        pattern.effect_param = 0;
-                    }
+                    pattern.effect = 1; // A in IT
                 }
-
-            2 => pattern.effect = 0xB,  // B - Pattern Jump
-            3 => pattern.effect = 0xD,  // C - Volume slide
-            4 => // D
-                {
-                    if pattern.effect_param > 0xF0 { // fine slide up
-                        pattern.effect = 0xE;
-                        pattern.effect_param = 0xB0 | (pattern.effect_param & 0xF);
-                    } else if (pattern.effect_param & 0x0F) == 0x0F && (pattern.effect_param & 0xF0) > 0 { // fine slide down
-                        pattern.effect = 0xE;
-                        pattern.effect_param = 0xA0 | (pattern.effect_param >> 4);
-                    } else {
-                        pattern.effect = 0xA;
-                        if (pattern.effect_param & 0x0F) != 0 { // on D/K (Volume slide/Vibrato + Volume slide), last nybble has first priority in ST3
-                            pattern.effect_param &= 0x0F;
-                        }
-                    }
-                }
-
-            5 | 6 => { // E, F - porta up/down
-                if (pattern.effect_param & 0xF0) >= 0xE0 {
-                    // convert to fine slide
-                    let new_effect = if (pattern.effect_param & 0xF0) == 0xE0 { 0x21 } else { 0xE };
-
-                    pattern.effect_param &= 0x0F;
-
-                    if pattern.effect == 0x05 {
-                        pattern.effect_param |= 0x20;
-                    } else {
-                        pattern.effect_param |= 0x10;
-                    }
-                    pattern.effect = new_effect;
-
-                    if pattern.effect == 0x21 && pattern.effect_param == 0 {
-                        pattern.effect_param = 0;
-                    }
-                } else {
-                    // convert to normal 1xx/2xx slide
-                    pattern.effect = 7 - pattern.effect;
-                }
-            }
-
-            7 => { // G - Porta to note
-                pattern.effect = 0x03;
-
-                // fix illegal slides (to new instruments)
-                if pattern.instrument != 0 && pattern.instrument != *last_instrument {
-                    pattern.instrument = *last_instrument;
-                }
-            }
-
-            11 => { // K - Vibrato + volume slide
-                if pattern.effect_param > 0xF0 { // fine slide up
-                    pattern.effect = 0xE;
-                    pattern.effect_param = 0xB0 | (pattern.effect_param & 0xF);
-
-                    // if volume column is unoccupied, set to vibrato
-                    if pattern.volume == 0 {
-                        pattern.volume = 0xB0;
-                    }
-                } else if (pattern.effect_param & 0x0F) == 0x0F && (pattern.effect_param & 0xF0) > 0 { // fine slide down
-                    pattern.effect = 0xE;
-                    pattern.effect_param = 0xA0 | (pattern.effect_param >> 4);
-
-                    // if volume column is unoccupied, set to vibrato
-                    if pattern.volume == 0 {
-                        pattern.volume = 0xB0;
-                    }
-                } else {
-                    pattern.effect = 0x6;
-                    if (pattern.effect_param & 0x0F) != 0 { // on D/K, last nybble has first priority in ST3
-                        pattern.effect_param &= 0x0F;
-                    }
-                }
-            }
-            8 =>  { pattern.effect = 0x04; } // H - Vibrato
-            9 =>  { pattern.effect = 0x1D; } // I - Tremor
-            10 => { pattern.effect = 0x00; } // J - Arpeggio
-            12 => { pattern.effect = 0x05; } // L - Porta + Volume slide
-            15 => { pattern.effect = 0x09; } // O - Sample offset
-            17 => { pattern.effect = 0x1B; } // Q - Retrig + Volume slide
-            18 => { pattern.effect = 0x07; } // R - Tremolo
+            2 => pattern.effect = 2,  // B - Pattern Jump
+            3 => pattern.effect = 3,  // C - Pattern Break
+            4 => pattern.effect = 4,  // D - Volume Slide
+            5 => pattern.effect = 5,  // E - Porta Down
+            6 => pattern.effect = 6,  // F - Porta Up
+            7 => pattern.effect = 7,  // G - Porta to note
+            8 => pattern.effect = 8,  // H - Vibrato
+            11 => pattern.effect = 11, // K - Vibrato + VolSlide
+            12 => pattern.effect = 12, // L - Porta + VolSlide
+            15 => pattern.effect = 15, // O - Sample offset
             19 => { // S - Extended commands
-                pattern.effect = 0xE;
-                let subcommand = pattern.get_x();
-                pattern.effect_param &= 0x0F;
-
-                match subcommand {
-                    0x1 => { pattern.effect_param |= 0x30; } // Glissando
-                    0x2 => { pattern.effect_param |= 0x50; } // Set finetune
-                    0x3 => { pattern.effect_param |= 0x40; } // Set Vibrato Waveform
-                    0x4 => { pattern.effect_param |= 0x70; } // Set Tremolo Waveform (Firelight S3M tutorial is wrong here)
-                    0xB => { pattern.effect_param |= 0x60; } // Channel pan position. ignore S8x because it's not compatible with FT2 panning
-                    0xC => {
-                        pattern.effect_param |= 0xC0;
-                        if pattern.effect_param == 0xC0 {
-                            // EC0 does nothing in ST3 but cuts voice in FT2, remove effect
-                            pattern.effect = 0;
-                            pattern.effect_param = 0;
-                        }
-                    }
-                    0xD => { // Note Delay
-                        pattern.effect_param |= 0xD0;
-                        if pattern.note == 0 || pattern.note == 97 {
-                            // EDx without a note does nothing in ST3 but retrigs in FT2, remove effect
-                            pattern.effect = 0;
-                            pattern.effect_param = 0;
-                        } else if pattern.effect_param == 0xD0 {
-                            // ED0 prevents note/smp/vol from updating in ST3, remove everything
-                            pattern.note = 0;
-                            pattern.instrument = 0;
-                            pattern.volume = 0;
-                            pattern.effect = 0;
-                            pattern.effect_param = 0;
-                        }
-                    }
-                    0xE => { pattern.effect_param |= 0xE0; } // Pattern Delay
-                    0xF => { pattern.effect_param |= 0xF0; } // Funk Repeat - not supported anyway...
-                    _ => {
-                        pattern.effect = 0;
-                        pattern.effect_param = 0;
-                    }
-                }
+                pattern.effect = 19; // S in IT
             }
-
-            20 => { // T - Set Tempo/BPM
-                pattern.effect = 0x0F;
-                if pattern.effect_param < 0x21 {// Txx with a value lower than 33 (0x21) does nothing in ST3, remove effect
-                    pattern.effect = 0;
-                    pattern.effect_param = 0;
-                }
-            }
-            22 => { // V - Set Global Volume
-                pattern.effect = 0x10;
-                if pattern.effect_param > 0x40 {
-                    // Vxx > 0x40 does nothing in ST3
-                    pattern.effect = 0;
-                    pattern.effect_param = 0;
-                }
-            }
-
-            _ => {
-                pattern.effect = 0;
-                pattern.effect_param = 0;
-            }
+            20 => pattern.effect = 1,  // T - Set BPM
+            22 => pattern.effect = 16, // V - Set Global Volume
+            _ => { pattern.effect = 0; }
+        }
+        if pattern.instrument != 255 && pattern.instrument != 0 && pattern.effect != 0x03 {
+            *last_instrument = pattern.instrument;
         }
     }
 
@@ -465,9 +322,9 @@
             let _type_ = file.read_u8()?;
             let _dos_name = file.read_string(12);
             let sample_ptr = file.read_u24_s3m()?;
-            let sample_len = file.read_u32()? & 0xFFFF;
-            let sample_loop_start = file.read_u32()? & 0xFFFF;
-            let sample_loop_end = file.read_u32()? & 0xFFFF;
+            let sample_len = file.read_u32()?;
+            let sample_loop_start = file.read_u32()?;
+            let sample_loop_end = file.read_u32()?;
             let sample_volume = file.read_u8()?;
             let _ = file.read_u8()?;
             let sample_packing = file.read_u8()?;
@@ -494,14 +351,15 @@
                 panning: 128,
                 relative_note,
                 name: sample_name.clone().to_string(),
+                global_volume: 64,
+                surround: false,
                 is_ping_pong: false,
                 original_loop_end: 0,
                 data: vec![]
             };
             sample.read_s3m_sample_data(file, sample_ptr)?;
-            instrument.name = sample.name.clone();
-            instrument.idx = instrument_idx as u8;
             instrument.samples = vec![sample];
+            instrument.sample_indexes = vec![(0, 1); 120]; // Default mapping: All notes to primary sample
             instruments.push(instrument);
         }
         Ok(instruments)
