@@ -334,6 +334,47 @@ fn test_seek_forward_pattern_terminates_when_looping() {
 }
 
 #[test]
+fn test_porta_to_note_does_not_underflow_on_large_speed() {
+    // Regression: PortaToNoteState::next_tick used u16 wrapping arithmetic
+    // and a post-subtract `< target` check. When the slide speed exceeded
+    // the current period, the subtraction wrapped to ~65000 and the check
+    // misread that as "still above target" — leaving the period stuck at
+    // a huge value (a sub-Hz drone, i.e. channel ON but inaudible). The
+    // fix widens to i32 so .min/.max clamp correctly. Reproduces against
+    // 2ND_PM.S3M order 0x14 row 0x3C, where porta-to-A-5 from period 551
+    // with speed-from-memory overshot to period 65511.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.instruments[1].samples[0].data = vec![0.0; 100000];
+    builder.instruments[1].samples[0].length = 100000;
+    builder.add_empty_pattern(4);
+    // Row 0: trigger a high note so the period is small.
+    builder.add_pattern_row(0, 0, 73, 1, 64, 0, 0);
+    // Row 1: porta-to-note even higher (smaller period) with huge speed
+    // (FF * 4 stored), forcing speed > current_period and an underflow
+    // in the (buggy) u16 subtraction.
+    builder.add_pattern_row(0, 1, 85, 1, 255, 7, 0xFF);
+    builder.add_pattern_row(0, 2, 0, 0, 255, 7, 0);
+    builder.add_pattern_row(0, 3, 0, 0, 255, 0, 0);
+    let mut tester = builder.get_tester();
+
+    tester.run_row();
+    let trigger_period = tester.song.channels[0].note.period;
+    assert!(trigger_period > 0);
+
+    tester.run_row();
+    tester.run_row();
+
+    // After overshoot ticks, the period must have clamped to the target
+    // (a small but non-zero value), not wrapped to a huge u16.
+    let target = tester.song.channels[0].porta_to_note.target_note.period;
+    let current = tester.song.channels[0].note.period;
+    assert!(target > 0, "target_period should be set");
+    assert_eq!(current, target,
+               "porta should clamp to target; got period={} target={}",
+               current, target);
+}
+
+#[test]
 fn test_step_forward_row_helper() {
     // Unit test for the silent step helper (still public, used elsewhere).
     let mut builder = MockSongBuilder::new(SongType::S3M, 1);

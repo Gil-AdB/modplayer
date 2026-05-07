@@ -43,18 +43,25 @@ impl PortaToNoteState {
 
     pub(crate) fn next_tick(&mut self, current_note: &mut Note) {
         if self.speed == 0 || self.target_note.period == 0 { return; }
-        
-        if current_note.period < self.target_note.period {
-            current_note.period = (std::num::Wrapping(current_note.period) + std::num::Wrapping(self.speed)).0;
-            if current_note.period > self.target_note.period {
-                current_note.period = self.target_note.period;
-            }
-        } else if current_note.period > self.target_note.period {
-            current_note.period = (std::num::Wrapping(current_note.period) - std::num::Wrapping(self.speed)).0;
-            if current_note.period < self.target_note.period {
-                current_note.period = self.target_note.period;
-            }
-        }
+
+        // Widen to i32 so the clamp catches overshoot. The previous u16-
+        // wrapping arithmetic looked like it clamped, but a downward slide
+        // larger than `current` underflowed to ~65000 and the
+        // `< target` check then read it as "haven't reached yet" — leaving
+        // the period at a huge value (audible as a sub-Hz drone, i.e. the
+        // channel still ON but inaudible). Matches master's i32-widened
+        // min/max clamp at scratch/channel_master.rs:427-432.
+        let cur = current_note.period as i32;
+        let target = self.target_note.period as i32;
+        let speed = self.speed as i32;
+        let next = if cur < target {
+            (cur + speed).min(target)
+        } else if cur > target {
+            (cur - speed).max(target)
+        } else {
+            cur
+        };
+        current_note.period = next as u16;
     }
 }
 

@@ -203,6 +203,59 @@ fn trace_2nd_pm_order_0x13_ch67_period() {
     );
 }
 
+fn trace_full_state(path: &str, target_order: usize, channels: &[usize], rows: std::ops::Range<usize>) {
+    let (song_handle, _) = match SongState::new(path) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("can't open {}: {}", path, e); return; }
+    };
+    let mut song = song_handle.get_song().lock().unwrap();
+    println!("=== {}  full-state trace, order 0x{:x}, rows {:?}, ch {:?} ===",
+             path, target_order, rows, channels);
+
+    loop {
+        if song.song_position > target_order { break; }
+        let was_in_target = song.song_position == target_order && rows.contains(&song.row);
+        let pre_tick = song.tick;
+        let pre_row = song.row;
+        let pat_idx_pre = song.song_data.pattern_order[song.song_position] as usize;
+        let pat_rows = &song.song_data.patterns[pat_idx_pre].rows[pre_row].channels;
+        let row_pat: Vec<_> = channels.iter().map(|&c| pat_rows[c].clone()).collect();
+        song.process_tick();
+        if was_in_target {
+            for (i, &c) in channels.iter().enumerate() {
+                let p = &row_pat[i];
+                let ch = &song.channels[c];
+                let v = ch.voice_idx.map(|i| (i, &song.voices[i]));
+                if pre_tick == 0 {
+                    println!(
+                        "row {:02x} ch{} pat: note={:>3} inst={:>3} vol={:>3} eff={:02x}{:02x}",
+                        pre_row, c, p.note, p.instrument, p.volume, p.effect, p.effect_param,
+                    );
+                }
+                match v {
+                    None => println!("  t{} ch{} | (no host voice)", pre_tick, c),
+                    Some((vi, v)) => println!(
+                        "  t{} ch{} | v{:>2} on={} freq={:>9.2} pos={:>10.1} period={:>4} vol={:>3} out={:.4} fadeout={:>5} env={:>4} chvol={:>3}",
+                        pre_tick, c, vi, v.on as u8, v.frequency, v.sample_position,
+                        ch.note.period, v.volume.volume, v.volume.output_volume,
+                        v.volume.fadeout_vol, v.volume.envelope_vol, ch.channel_volume,
+                    ),
+                }
+            }
+        }
+        if !song.next_tick() { break; }
+    }
+}
+
+#[test]
+#[ignore = "Manual: order 0x14 ch7 (display CH08) full state across rows 0x30-0x40"]
+fn trace_2nd_pm_order_0x14_ch7_full() {
+    trace_full_state(
+        "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M",
+        0x14, &[7], 0x30..0x40,
+    );
+}
+
 #[test]
 #[ignore = "Manual: dump inst 33 sample params"]
 fn dump_inst_33_params() {
