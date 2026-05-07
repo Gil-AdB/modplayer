@@ -218,6 +218,33 @@ fn test_s3m_porta_with_instrument_retrigs_volume() {
 }
 
 #[test]
+fn test_xm_porta_with_instrument_retrigs_volume() {
+    // XM mirror of test_s3m_porta_with_instrument_retrigs_volume. XM uses
+    // effect 0x03 for tone porta (S3M uses 0x07) and encodes vol-col set
+    // volume as 0x10..=0x50 (raw value + 0x10), so a vol-col byte of
+    // 0x10+20 = 0x24 sets the voice volume to 20. Same audible bug
+    // observed in 2ND_PM.xm; same fix path (porta_retrig_for_instrument).
+    let mut builder = MockSongBuilder::new(SongType::XM, 1);
+    builder.instruments[1].samples[0].data = vec![0.0; 100000];
+    builder.instruments[1].samples[0].length = 100000;
+    builder.add_empty_pattern(4);
+    builder.add_pattern_row(0, 0, 49, 1, 0, 0, 0);
+    // Vol-col 0x24 (= 0x10 + 20) → set volume to 20.
+    builder.add_pattern_row(0, 1, 0, 0, 0x24, 0, 0);
+    // XM tone porta: effect 0x03.
+    builder.add_pattern_row(0, 2, 51, 1, 0, 3, 4);
+    let mut tester = builder.get_tester();
+
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 64);
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 20);
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 64,
+               "XM porta+instrument should retrig volume to sample default");
+}
+
+#[test]
 fn test_s3m_porta_without_instrument_keeps_volume() {
     // Counterpart guard: porta-to-note WITHOUT an instrument number must
     // NOT touch the voice volume — only the instrument byte triggers the
