@@ -831,36 +831,54 @@ impl Display {
         let c1 = 2;
         let c2 = 36;
         let c3 = 68;
+        let acc = theme.accent_fg;
+        let fg = theme.col_note;
+        let bg_h = theme.row_bg_even;
+        let bg = theme.row_bg_odd;
 
-        grid.print(c1, start_y,     "--- VIEW MODES ---", theme.accent_fg, theme.row_bg_even);
-        grid.print(c1, start_y + 1, "F1: Pattern View", theme.col_note, theme.row_bg_odd);
-        grid.print(c1, start_y + 2, "F2: Instrument View", theme.col_note, theme.row_bg_odd);
-        grid.print(c1, start_y + 3, "F3: Message View", theme.col_note, theme.row_bg_odd);
-        grid.print(c1, start_y + 4, "F4: Help View", theme.col_note, theme.row_bg_odd);
+        // ---- top row of sections ----
+        grid.print(c1, start_y,     "--- VIEW MODES ---",            acc, bg_h);
+        grid.print(c1, start_y + 1, "F1     : Pattern View",         fg, bg);
+        grid.print(c1, start_y + 2, "F2     : Instrument View",      fg, bg);
+        grid.print(c1, start_y + 3, "F3     : Message View",         fg, bg);
+        grid.print(c1, start_y + 4, "F4     : Help View",            fg, bg);
+        grid.print(c1, start_y + 5, "c      : Cycle View Mode",      fg, bg);
 
-        grid.print(c2, start_y,     "--- NAVIGATION ---", theme.accent_fg, theme.row_bg_even);
-        grid.print(c2, start_y + 1, "n / p: Next/Prev Module", theme.col_note, theme.row_bg_odd);
-        grid.print(c2, start_y + 2, "r    : Restart Module", theme.col_note, theme.row_bg_odd);
-        grid.print(c2, start_y + 3, "Space: Pause / Resume", theme.col_note, theme.row_bg_odd);
-        grid.print(c2, start_y + 4, "q/Esc: Quit Player", theme.col_note, theme.row_bg_odd);
+        grid.print(c2, start_y,     "--- PLAYBACK ---",              acc, bg_h);
+        grid.print(c2, start_y + 1, "Space  : Pause / Resume",       fg, bg);
+        grid.print(c2, start_y + 2, "n / P  : Next / Prev Pattern",  fg, bg);
+        grid.print(c2, start_y + 3, "> / <  : Next / Prev Song",     fg, bg);
+        grid.print(c2, start_y + 4, "L / R  : Seek -10s / +10s",     fg, bg);
+        grid.print(c2, start_y + 5, "r      : Restart Module",       fg, bg);
+        grid.print(c2, start_y + 6, "/      : Loop Pattern Toggle",  fg, bg);
+        grid.print(c2, start_y + 7, "q / Esc: Quit Player",          fg, bg);
 
-        grid.print(c3, start_y,     "--- TRACKER ---", theme.accent_fg, theme.row_bg_even);
-        grid.print(c3, start_y + 1, "[ / ]: Scroll Channels", theme.col_note, theme.row_bg_odd);
-        grid.print(c3, start_y + 2, "3    : Cycle Channel Height", theme.col_note, theme.row_bg_odd);
-        grid.print(c3, start_y + 3, "/    : Loop Pattern", theme.col_note, theme.row_bg_odd);
-        grid.print(c3, start_y + 4, "0-9  : Toggle Channel (2-digit)", theme.col_note, theme.row_bg_odd);
+        grid.print(c3, start_y,     "--- CHANNELS ---",              acc, bg_h);
+        grid.print(c3, start_y + 1, "1..0     : Toggle ch 1..10",    fg, bg);
+        grid.print(c3, start_y + 2, "Alt+1..0 : Toggle ch 11..20",   fg, bg);
+        grid.print(c3, start_y + 3, "Shift+#  : Solo channel",       fg, bg);
+        grid.print(c3, start_y + 4, "m / a    : Mute / Unmute All",  fg, bg);
 
-        grid.print(c1, start_y + 7, "--- AUDIO ---", theme.accent_fg, theme.row_bg_even);
-        grid.print(c1, start_y + 8, "+ / -: Increase/Decrease Speed", theme.col_note, theme.row_bg_odd);
-        grid.print(c1, start_y + 9, ". / ,: Increase/Decrease BPM", theme.col_note, theme.row_bg_odd);
-        grid.print(c1, start_y + 10,"f    : Cycle Low-pass Filter", theme.col_note, theme.row_bg_odd);
-        grid.print(c1, start_y + 11,"a / l: Amiga / Linear Tables", theme.col_note, theme.row_bg_odd);
+        // ---- bottom row of sections ----
+        grid.print(c1, start_y + 9,  "--- TEMPO / AUDIO ---",        acc, bg_h);
+        grid.print(c1, start_y + 10, "+ / -  : Inc / Dec Speed",     fg, bg);
+        grid.print(c1, start_y + 11, ". / ,  : Inc / Dec BPM",       fg, bg);
+        grid.print(c1, start_y + 12, "f      : Cycle Filter",        fg, bg);
+        grid.print(c1, start_y + 13, "A / l  : Amiga / Linear Tab.", fg, bg);
+        grid.print(c1, start_y + 14, "( / )  : Visual Latency -/+",  fg, bg);
 
-        grid.print(c2, start_y + 7, "--- VISUALS ---", theme.accent_fg, theme.row_bg_even);
-        grid.print(c2, start_y + 8, "T    : Cycle Color Theme", theme.col_note, theme.row_bg_odd);
-        grid.print(c2, start_y + 9, "v    : Cycle Master Visualizer", theme.col_note, theme.row_bg_odd);
-        grid.print(c2, start_y + 10,"S    : Toggle Channel Scopes", theme.col_note, theme.row_bg_odd);
-        grid.print(c2, start_y + 11,"d    : Toggle LCD Display", theme.col_note, theme.row_bg_odd);
+        grid.print(c2, start_y + 9,  "--- VISUALS ---",              acc, bg_h);
+        grid.print(c2, start_y + 10, "t / T  : Cycle Theme",         fg, bg);
+        grid.print(c2, start_y + 11, "v / V  : Cycle Visualizer",    fg, bg);
+        grid.print(c2, start_y + 12, "s / S  : Toggle Scopes",       fg, bg);
+        grid.print(c2, start_y + 13, "d      : Toggle LCD Display",  fg, bg);
+
+        grid.print(c3, start_y + 9,  "--- VIEWPORT ---",             acc, bg_h);
+        grid.print(c3, start_y + 10, "[ / ]  : Scroll X (-/+)",      fg, bg);
+        grid.print(c3, start_y + 11, "Up/Down: Scroll Y",            fg, bg);
+
+        grid.print(c1, start_y + 16, "Settings (theme, filter, view, visualizer) persist across runs.", fg, bg);
+        grid.print(c1, start_y + 17, "Pass multiple files on the command line to queue them as a playlist.", fg, bg);
     }
 
     fn fixed_width(s: &str, width: usize) -> String {
