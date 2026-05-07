@@ -15,10 +15,14 @@ impl Song {
                         return false;
                     }
                     PlaybackCmd::Next => {
-                        self.seek_forward_pattern();
+                        // Paused: frame-step by row for inspection. Playing:
+                        // jump full pattern as before.
+                        if self.pause { self.step_forward_row(); }
+                        else          { self.seek_forward_pattern(); }
                     }
                     PlaybackCmd::Prev => {
-                        self.seek_backward_pattern();
+                        if self.pause { self.step_backward_row(); }
+                        else          { self.seek_backward_pattern(); }
                     }
                     PlaybackCmd::SeekForward10s => {
                         self.seek_forward_seconds(10.0);

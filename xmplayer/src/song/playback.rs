@@ -107,8 +107,17 @@ impl Song {
 
         let current_display = self.display;
         let current_ff = self.is_fast_forwarding;
+        // Suspend pause / loop_pattern for the duration of the seek. Either
+        // would deadlock the loop below: pause makes get_next_tick early-return
+        // without advancing time, and loop_pattern makes next_pattern() a no-op
+        // so position-based conditions never become true. Both states are
+        // restored before we return so the user's UI toggle is preserved.
+        let current_pause = self.pause;
+        let current_loop_pattern = self.loop_pattern;
         self.display = false;
         self.is_fast_forwarding = true;
+        self.pause = false;
+        self.loop_pattern = false;
 
         while !condition(self) {
             if let CallbackState::Complete = self.get_next_tick(&mut adapter, &mut rx) {
@@ -119,6 +128,8 @@ impl Song {
 
         self.display = current_display;
         self.is_fast_forwarding = current_ff;
+        self.pause = current_pause;
+        self.loop_pattern = current_loop_pattern;
     }
 
     pub fn seek_forward_pattern(&mut self) {
@@ -130,6 +141,57 @@ impl Song {
         let target = self.song_position.saturating_sub(1);
         self.reset();
         self.fast_forward_until(|s| s.song_position >= target);
+    }
+
+    /// Advance state by exactly one row. Used as the paused-mode response to
+    /// PlaybackCmd::Next so the user can frame-step through a song. Walks
+    /// process_tick + next_tick directly (no buffer fill, no pause gate),
+    /// which is precise to a single tick — fast_forward_until is buffer-
+    /// granular and would over-run by tens of ticks.
+    pub fn step_forward_row(&mut self) {
+        if self.song_position >= self.song_data.song_length as usize { return; }
+        let saved_loop = self.loop_pattern;
+        self.loop_pattern = false;
+        let start_row = self.row;
+        let start_pos = self.song_position;
+        // Sanity bound: a row can't legitimately span thousands of ticks.
+        // Stops a degenerate effect sequence from hanging the UI thread.
+        let mut guard = 0u32;
+        while self.row == start_row && self.song_position == start_pos {
+            self.process_tick();
+            if !self.next_tick() { break; }
+            guard += 1;
+            if guard > 4096 { break; }
+        }
+        self.loop_pattern = saved_loop;
+    }
+
+    /// Step state back by exactly one row. Resets and walks forward to the
+    /// previous (position, row), tick-precise. Cheap because we skip buffer
+    /// fill — same per-tick cost as compute_total_duration.
+    pub fn step_backward_row(&mut self) {
+        let (target_pos, target_row) = if self.row > 0 {
+            (self.song_position, self.row - 1)
+        } else if self.song_position > 0 {
+            let prev_pos = self.song_position - 1;
+            let pat_idx = self.song_data.pattern_order[prev_pos] as usize;
+            let last_row = self.song_data.patterns[pat_idx].rows.len().saturating_sub(1);
+            (prev_pos, last_row)
+        } else {
+            return;
+        };
+        let saved_loop = self.loop_pattern;
+        self.reset();
+        self.loop_pattern = false;
+        loop {
+            if self.song_position == target_pos && self.row == target_row { break; }
+            // Bail if pattern_break / jump took us past the target.
+            if self.song_position > target_pos { break; }
+            if self.song_position == target_pos && self.row > target_row { break; }
+            self.process_tick();
+            if !self.next_tick() { break; }
+        }
+        self.loop_pattern = saved_loop;
     }
 
     pub fn seek_forward_seconds(&mut self, seconds: f32) {

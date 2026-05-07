@@ -308,3 +308,89 @@ fn test_s3m_porta_without_instrument_keeps_volume() {
     assert_eq!(tester.song.voices[0].volume.volume, 20,
                "porta without instrument byte must not retrig volume");
 }
+
+#[test]
+fn test_seek_forward_pattern_terminates_when_looping() {
+    // Regression: seeking forward while `loop_pattern` is set used to
+    // hot-spin the player at 100% CPU. next_pattern() is a no-op when
+    // loop_pattern is true, so song_position never advances past
+    // `current` and the seek_forward_pattern condition never becomes
+    // true. The fix saves the flag, clears it around fast_forward_until,
+    // and restores it.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.add_empty_pattern(4);
+    builder.add_empty_pattern(4);
+    builder.set_order(vec![0, 1]);
+    let mut tester = builder.get_tester();
+
+    tester.song.loop_pattern = true;
+    let pos_before = tester.song.song_position;
+
+    tester.song.seek_forward_pattern();
+
+    assert!(tester.song.song_position > pos_before,
+            "seek_forward_pattern should advance even with loop_pattern set");
+    assert!(tester.song.loop_pattern, "loop_pattern must be restored after seek");
+}
+
+#[test]
+fn test_step_forward_row_when_paused() {
+    // Paused-mode UX: PlaybackCmd::Next advances by exactly one row, not
+    // a full pattern. Verifies the tick-precise stepper used to replace
+    // the per-pattern jump while paused (see commands.rs Next handler).
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.add_empty_pattern(8);
+    let mut tester = builder.get_tester();
+
+    tester.song.pause = true;
+    let row_before = tester.song.row;
+
+    tester.song.step_forward_row();
+
+    assert_eq!(tester.song.row, row_before + 1,
+               "step_forward_row should land on the next row");
+    assert_eq!(tester.song.tick, 0,
+               "step_forward_row should land on tick 0 of the new row");
+    assert!(tester.song.pause, "pause flag must persist after row-step");
+}
+
+#[test]
+fn test_step_backward_row_when_paused() {
+    // Paused-mode UX: PlaybackCmd::Prev rewinds by exactly one row.
+    // Implemented via reset + walk forward to (target_pos, target_row),
+    // so we verify it lands precisely — not buffer-granular over-run.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.add_empty_pattern(8);
+    let mut tester = builder.get_tester();
+
+    // Walk forward to row 3 first.
+    tester.run_row();
+    tester.run_row();
+    tester.run_row();
+    assert_eq!(tester.song.row, 3);
+
+    tester.song.pause = true;
+    tester.song.step_backward_row();
+
+    assert_eq!(tester.song.row, 2,
+               "step_backward_row should land on row - 1");
+    assert_eq!(tester.song.song_position, 0);
+    assert!(tester.song.pause, "pause flag must persist after row-step");
+}
+
+#[test]
+fn test_step_forward_row_terminates_at_song_end() {
+    // The internal walk has a sanity bound to prevent UI hangs from
+    // pathological row-progression. More importantly, hitting end-of-
+    // song must just stop, not loop.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.add_empty_pattern(2);
+    let mut tester = builder.get_tester();
+    tester.song.pause = true;
+
+    // Step through all rows + past end.
+    for _ in 0..10 {
+        tester.song.step_forward_row();
+    }
+    // No assertion on final position — just that we returned cleanly.
+}
