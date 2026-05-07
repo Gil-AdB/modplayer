@@ -97,8 +97,13 @@
         let channel_data = file.read_bytes(32)?;
         let mut channel_map = [255u8; 32];
 
+        // Per s3m.txt:93-98, values 0-15 are L/R sample channels (8 each),
+        // 16-31 are Adlib (FM synth — no digital playback), high bit 0x80
+        // marks the channel disabled, 0xFF is an unused slot. Only allocate
+        // engine channel slots for *sample* channels; everything else gets
+        // channel_map[i] = 255, which the pattern reader skips at l. 268.
         for i in 0..channel_data.len() {
-            if channel_data[i] != 255 {
+            if channel_data[i] < 16 {
                 channel_map[i] = num_channels;
                 num_channels += 1;
             }
