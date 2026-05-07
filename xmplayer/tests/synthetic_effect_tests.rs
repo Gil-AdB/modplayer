@@ -179,3 +179,64 @@ fn test_s3m_note_off_cut() {
     tester.tick(); // row 1 tick 0
     tester.assert_voice_on(0, false);
 }
+
+#[test]
+fn test_s3m_porta_with_instrument_retrigs_volume() {
+    // Regression: on a porta-to-note row with an instrument number, the
+    // instrument byte must re-read the sample's default volume on the
+    // existing voice. The note itself doesn't audibly retrigger (no
+    // sample_position reset, no envelope phase reset of `sustained`),
+    // but the instrument number does — matching ST3 / FT2 / IT and the
+    // canonical block in master at song.rs:1539.
+    //
+    // Without this, vol-col changes between porta+inst rows would stick
+    // forever instead of oscillating back to the sample default. This
+    // test reproduces the observed 2ND_PM.S3M order-18 channel-7 pattern.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.instruments[1].samples[0].data = vec![0.0; 100000];
+    builder.instruments[1].samples[0].length = 100000;
+    builder.add_empty_pattern(4);
+    // Row 0: regular trigger; voice.volume.volume <- sample default (64).
+    builder.add_pattern_row(0, 0, 49, 1, 255, 0, 0);
+    // Row 1: vol-col 20 → voice.volume.volume = 20.
+    builder.add_pattern_row(0, 1, 0, 0, 20, 0, 0);
+    // Row 2: porta-to-note (S3M effect G == 7) + same instrument byte, no
+    //   vol col. The retrig path must reset volume back to 64 even though
+    //   the audio doesn't retrigger.
+    builder.add_pattern_row(0, 2, 51, 1, 255, 7, 4);
+    let mut tester = builder.get_tester();
+
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 64,
+               "row 0 trigger should set volume to sample default");
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 20,
+               "row 1 vol-col 20 should land");
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 64,
+               "row 2 porta+instrument should retrig volume to sample default");
+}
+
+#[test]
+fn test_s3m_porta_without_instrument_keeps_volume() {
+    // Counterpart guard: porta-to-note WITHOUT an instrument number must
+    // NOT touch the voice volume — only the instrument byte triggers the
+    // retrig path. This catches a too-eager retrig that fires on every
+    // porta row regardless of instrument presence.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.instruments[1].samples[0].data = vec![0.0; 100000];
+    builder.instruments[1].samples[0].length = 100000;
+    builder.add_empty_pattern(4);
+    builder.add_pattern_row(0, 0, 49, 1, 255, 0, 0);
+    builder.add_pattern_row(0, 1, 0, 0, 20, 0, 0);
+    // Row 2: porta-to-note WITHOUT instrument byte (instrument = 0).
+    builder.add_pattern_row(0, 2, 51, 0, 255, 7, 4);
+    let mut tester = builder.get_tester();
+
+    tester.run_row();
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 20);
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 20,
+               "porta without instrument byte must not retrig volume");
+}
