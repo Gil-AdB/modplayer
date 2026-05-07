@@ -5,18 +5,28 @@
 //
 // `Song` calls a single `ModuleBackend::process_tick` per tick. Each format
 // (XM / MOD / S3M / IT) has its own backend struct in the `backend/` sub-
-// module that implements the trait. The backends are structurally similar:
+// module that implements the trait. The backends share a common shape that
+// lives mostly in this file as small helpers; each per-format file slots
+// in its own note-action / volume-column / voice-mixdown logic between the
+// shared scaffolding calls.
+//
+// Per-channel iteration shape:
 //
 //   for each channel:
-//     reset transient flags (e.g. tremor_silenced)
-//     update last_instrument from pattern.instrument if set
-//     match pattern.note_action(song_type) {
-//       Trigger(_) => maybe-porta-target / NNA-cut / alloc voice / init / trigger_note
-//       Off / Cut / Fade / None => format-specific
-//     }
-//     volume column   (per-format encoding)
-//     effect column   (table-driven dispatch, see below)
-//   for each voice: format's volume formula, then mute_silent_voices
+//     init_channel_iter            transient flag reset + last_instrument
+//                                  latch + note-delay gate
+//     [per-format: note-action match]   Trigger / Off / Cut / Fade / None
+//     apply_porta_retrig_if_needed instrument-on-porta-row vol+envelope reset
+//     bind_voice_for_channel       Option<&mut Voice> with back-pointer guard
+//     [per-format: volume column]
+//     apply_flow_control_effect    short-circuits the rest of effect dispatch
+//                                  if it fires; identical impl is reused by
+//                                  the duration-calc fast path in playback.rs
+//     dispatch_main_and_extended   main effect (32-entry table) + Exy/Sxy
+//                                  follow-up (16-entry table) when Extended
+//     update_frequency_voice       refresh voice frequency from period
+//   for each voice: [per-format: volume formula]
+//   mute_silent_voices             end-of-tick cleanup
 //
 // Effect dispatch is data-driven through three layers:
 //
@@ -38,8 +48,9 @@
 //      tables. Same shape as layer 2, but indexed by the param's high
 //      nibble.
 //
-// Per-tick context shared between layers 2 and 3 lives in `EffectCtx<'a>`,
-// constructed once per channel iteration.
+// `dispatch_main_and_extended` wraps layers 2 and 3 so a backend just
+// passes its two tables. Per-tick context shared between layers 2 and 3
+// lives in `EffectCtx<'a>`, constructed once per channel iteration.
 //
 // Per-channel "memory" for "param=0 means recall last param" semantics
 // lives on `ChannelState::effect_memory: [u8; N]` indexed by the
@@ -47,7 +58,20 @@
 // `recall_or_set` / `recall_or_set_shared` helpers wrap the canonical
 // "if param != 0 update; else recall" pattern.
 //
-// Voice handling shared across formats:
+// Per-channel scaffolding (used by every backend, shape above):
+//
+//   init_channel_iter             tremor reset + last_instrument latch +
+//                                 note-delay gate; returns
+//                                 note_delay_first_tick
+//   apply_porta_retrig_if_needed  on porta-to-note + instrument byte: the
+//                                 instrument re-reads sample default vol
+//                                 and rewinds envelopes (no audio retrig).
+//                                 Matches ST3/FT2/IT.
+//   bind_voice_for_channel        Option<&mut Voice> with channel.voice_idx
+//                                 guard against stolen slots
+//   dispatch_main_and_extended    main + Exy/Sxy effect dispatch
+//
+// Voice / instrument helpers shared across formats:
 //
 //   alloc_voice                 prefer-idle / steal-quietest pick
 //   cut_or_nna_existing_voice   apply prev-voice cut or NNA before alloc
