@@ -334,24 +334,42 @@ fn test_seek_forward_pattern_terminates_when_looping() {
 }
 
 #[test]
-fn test_step_forward_row_when_paused() {
-    // Paused-mode UX: PlaybackCmd::Next advances by exactly one row, not
-    // a full pattern. Verifies the tick-precise stepper used to replace
-    // the per-pattern jump while paused (see commands.rs Next handler).
+fn test_step_forward_row_helper() {
+    // Unit test for the silent step helper (still public, used elsewhere).
     let mut builder = MockSongBuilder::new(SongType::S3M, 1);
     builder.add_empty_pattern(8);
     let mut tester = builder.get_tester();
 
-    tester.song.pause = true;
     let row_before = tester.song.row;
-
     tester.song.step_forward_row();
+    assert_eq!(tester.song.row, row_before + 1);
+    assert_eq!(tester.song.tick, 0);
+}
 
-    assert_eq!(tester.song.row, row_before + 1,
-               "step_forward_row should land on the next row");
-    assert_eq!(tester.song.tick, 0,
-               "step_forward_row should land on tick 0 of the new row");
-    assert!(tester.song.pause, "pause flag must persist after row-step");
+#[test]
+fn test_play_one_row_when_paused_auto_pauses() {
+    // PlaybackCmd::Next while paused triggers "play one row of audio then
+    // re-pause" by setting play_rows_remaining=1 and clearing pause. We
+    // simulate that flag state directly and drive ticks; auto-pause must
+    // trip on the row boundary.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.add_empty_pattern(8);
+    let mut tester = builder.get_tester();
+    let speed = tester.song.speed;
+
+    tester.song.pause = false;
+    tester.song.play_rows_remaining = 1;
+
+    // `speed` ticks worth of process_tick + next_tick should land us on
+    // row 1 tick 0, with the row-advance hook having tripped the pause.
+    for _ in 0..speed {
+        tester.tick();
+    }
+
+    assert!(tester.song.pause, "auto-pause should trip on row boundary");
+    assert_eq!(tester.song.play_rows_remaining, 0);
+    assert_eq!(tester.song.row, 1, "should land on the next row");
+    assert_eq!(tester.song.tick, 0);
 }
 
 #[test]

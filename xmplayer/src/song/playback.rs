@@ -300,6 +300,16 @@ impl Song {
             if self.song_position >= self.song_data.song_length as usize { return false; }
             self.tick = 0;
             self.pattern_change.reset();
+            // Paused-mode "play one row" UX: decrement on each row advance
+            // and re-pause when the budget runs out. Placed here (after the
+            // pattern-delay early-return above) so a delayed row counts as
+            // one row of playback, not several.
+            if self.play_rows_remaining > 0 {
+                self.play_rows_remaining -= 1;
+                if self.play_rows_remaining == 0 {
+                    self.pause = true;
+                }
+            }
         }
         true
     }

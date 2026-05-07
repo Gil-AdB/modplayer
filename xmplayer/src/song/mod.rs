@@ -494,6 +494,11 @@ pub struct Song {
     pub bpm:                        BPM,
     pub loop_pattern:               bool,
     pub pause:                      bool,
+    /// Counter for the paused-mode "play one row" UX. When > 0, playback
+    /// runs as normal; each time `next_tick` advances to a new row this
+    /// is decremented, and on reaching 0 `pause` is set back to true.
+    /// Set to 1 by PlaybackCmd::Next while paused (see commands.rs).
+    pub play_rows_remaining:        u32,
     pub filter:                     FilterType,
     pub display:                    bool,
     pub frequency_tables:           &'static AudioTables,
@@ -590,6 +595,7 @@ impl Song {
             loop_pattern: false,
             pattern_change: PatternChange::new(),
             pause: false,
+            play_rows_remaining: 0,
             filter: FilterType::Sinc,
             display: true,
             frequency_tables,

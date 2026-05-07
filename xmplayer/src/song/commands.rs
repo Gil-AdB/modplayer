@@ -15,12 +15,20 @@ impl Song {
                         return false;
                     }
                     PlaybackCmd::Next => {
-                        // Paused: frame-step by row for inspection. Playing:
-                        // jump full pattern as before.
-                        if self.pause { self.step_forward_row(); }
-                        else          { self.seek_forward_pattern(); }
+                        // Paused: resume for exactly one row of audio, then
+                        // auto-pause (handled in next_tick via
+                        // play_rows_remaining). Playing: full pattern jump.
+                        if self.pause {
+                            self.pause = false;
+                            self.play_rows_remaining = 1;
+                        } else {
+                            self.seek_forward_pattern();
+                        }
                     }
                     PlaybackCmd::Prev => {
+                        // Paused: silent rewind one row (no audio — playing
+                        // backward isn't a thing). Use Next afterwards to
+                        // re-hear the row. Playing: full pattern jump back.
                         if self.pause { self.step_backward_row(); }
                         else          { self.seek_backward_pattern(); }
                     }
