@@ -466,9 +466,19 @@ impl ChannelState {
 
         if let Some(v) = voice {
             if first_tick {
-                v.vibrato_state.speed = cur_speed as i8;
-                let multiplier: u16 = if fine { 1 } else if old_effects { 8 } else { 4 };
-                v.vibrato_state.depth = ((cur_depth as u16) * multiplier) as i16;
+                // Speed is stored ×4 to allow finer-than-1-tick wave
+                // resolution (per ST3 / FT2 / master at song.rs:1654 — the
+                // master comment reads "S3M did this in order to support
+                // finer vibrato"). Depth is stored raw — the fine variant
+                // gets its smaller swing through `vibrato_state.fine` (an
+                // extra >>2 in get_frequency_shift), not by scaling depth
+                // here. The previous depth-×{4,8} multiplier produced 4-8×
+                // the swing master/FT2 use, audible as a clear detune on
+                // long held vibrato notes (e.g. 2ND_PM.S3M order 0x13 ch7).
+                let _ = old_effects; // historic XM-old-fx mode unaffected by these scales
+                v.vibrato_state.speed = (cur_speed as u16 * 4) as i8;
+                v.vibrato_state.depth = cur_depth as i16;
+                v.vibrato_state.fine = fine;
             } else {
                 v.vibrato_state.next_tick();
             }

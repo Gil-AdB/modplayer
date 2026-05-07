@@ -213,24 +213,43 @@ fn test_vibrato_parameter_memory() {
 fn test_vibrato_waveforms() {
     let mut builder = MockSongBuilder::new(SongType::XM, 1);
     builder.add_empty_pattern(64);
-    
-    // Test Square Wave (E42)
+
+    // Square wave vibrato (E42): the wave generator returns ±max with no
+    // intermediate values, so the magnitude of the frequency deviation
+    // from the unmodulated baseline must be constant across ticks (only
+    // the sign flips at the half-cycle boundary). The previous version of
+    // this test asserted f1 == f2 outright, which only held when speed was
+    // stored ×1 — now that speed is ×4 (matching master / ST3 / FT2), pos
+    // can wrap inside two ticks and the sign legitimately flips.
     builder.set_pattern_row(0, 0, 0, Pattern {
         note: 49, instrument: 1, volume: 255, effect: 0x0E, effect_param: 0x42,
     });
     builder.set_pattern_row(0, 1, 0, Pattern {
         note: 0, instrument: 0, volume: 255, effect: 0x04, effect_param: 0x44,
     });
-    
+
     let mut tester = builder.get_tester();
-    tester.run_row(); // Row 0 (Sets waveform)
-    
-    tester.tick(); // Row 1, Tick 0: 8363
-    tester.tick(); // Tick 1: Should be shifted
-    let f1 = tester.song.voices[0].frequency;
-    tester.tick(); // Tick 2: Should be same as f1 (square wave)
-    let f2 = tester.song.voices[0].frequency;
-    assert_eq!(f1, f2);
+    tester.tick();    // Row 0 tick 0: E42 only; no vibrato yet.
+    let base_unmod = tester.song.voices[0].frequency;
+    tester.run_row(); // finish row 0; advance to row 1 tick 0.
+
+    // Walk row 1 long enough for the square wave to sweep both halves —
+    // with speed×4 (=16), pos wraps within 2 next_ticks, so a full ± pair
+    // is visible in 6 ticks. Square produces only ±one magnitude relative
+    // to the *unmodulated* baseline; check exactly that.
+    let mut max_dev: f32 = 0.0;
+    let mut min_nonzero_dev: f32 = f32::INFINITY;
+    for _ in 0..6 {
+        tester.tick();
+        let dev = (tester.song.voices[0].frequency - base_unmod).abs();
+        if dev > max_dev { max_dev = dev; }
+        if dev > 0.001 && dev < min_nonzero_dev { min_nonzero_dev = dev; }
+    }
+
+    assert!(max_dev > 0.0, "square vibrato should deviate from baseline");
+    assert!((max_dev - min_nonzero_dev).abs() < 0.001,
+            "square wave deviations must share one magnitude: max={} min_nonzero={}",
+            max_dev, min_nonzero_dev);
 }
 
 #[test]

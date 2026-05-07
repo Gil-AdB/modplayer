@@ -245,6 +245,47 @@ fn test_xm_porta_with_instrument_retrigs_volume() {
 }
 
 #[test]
+fn test_s3m_vibrato_no_persistent_detune_after_stop() {
+    // Regression: with the previous depth-×4 / speed-×1 vibrato scaling,
+    // the wave was 4× wider amplitude and ~4× slower oscillation than
+    // master / ST3 / FT2. When the H effect ended, the wave often froze
+    // mid-cycle and left a constant ~25-70 cents detune on the voice
+    // until something else moved the period. Audible as wrong pitch on
+    // 2ND_PM.S3M order 0x13 ch7.
+    //
+    // With the speed-×4 / depth-raw fix the wave cycles fast enough that
+    // when H stops, the residual shift resolves close to zero within a
+    // tick. Assert the post-H freq matches the unmodulated baseline.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.instruments[1].samples[0].data = vec![0.0; 100000];
+    builder.instruments[1].samples[0].length = 100000;
+    builder.add_empty_pattern(4);
+    // Row 0: regular trigger; baseline freq.
+    builder.add_pattern_row(0, 0, 49, 1, 64, 0, 0);
+    // Rows 1-2: vibrato H84 (speed 8, depth 4) running.
+    builder.add_pattern_row(0, 1, 0, 0, 255, 8, 0x84);
+    builder.add_pattern_row(0, 2, 0, 0, 255, 8, 0x00); // recall
+    // Row 3: no effect — voice should settle back at baseline.
+    builder.add_pattern_row(0, 3, 0, 0, 255, 0, 0);
+    let mut tester = builder.get_tester();
+
+    tester.run_row(); // row 0 (trigger). Freq is the post-trigger baseline.
+    let base = tester.song.voices[0].frequency;
+    tester.run_row(); // row 1: vibrato active
+    tester.run_row(); // row 2: vibrato active
+    tester.run_row(); // row 3: no effect
+    let after = tester.song.voices[0].frequency;
+    let delta = (after - base).abs();
+
+    // Allow a tiny rounding window (the wave end-position may not land
+    // *exactly* on zero), but anything more than ~5 Hz at this period
+    // would be the audible bug returning.
+    assert!(delta < 5.0,
+            "post-vibrato freq should match unmodulated baseline {}, got {} (Δ={})",
+            base, after, delta);
+}
+
+#[test]
 fn test_s3m_porta_without_instrument_keeps_volume() {
     // Counterpart guard: porta-to-note WITHOUT an instrument number must
     // NOT touch the voice volume — only the instrument byte triggers the

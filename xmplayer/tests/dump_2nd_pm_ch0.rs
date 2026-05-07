@@ -60,6 +60,12 @@ fn dump_2nd_pm_order12_all() {
 }
 
 #[test]
+#[ignore = "Manual: dump all channels of order 0x13 in 2ND_PM.S3M"]
+fn dump_2nd_pm_order_0x13_all() {
+    dump_all_channels_at_order("/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M", 0x13);
+}
+
+#[test]
 #[ignore = "Manual: find orders where inst 33 (0x21) appears with note ~70"]
 fn find_inst_33_a5() {
     let path = "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M";
@@ -133,4 +139,81 @@ fn trace_2nd_pm_order3_ch0_voice_volume() {
 fn trace_2nd_pm_order18_ch7_voice_volume() {
     trace_voice_volume("/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M", 18, 7);
     trace_voice_volume("/Users/gil-ad/work/modplayer/scratch/2ND_PM.xm",  18, 7);
+}
+
+fn trace_period_freq(path: &str, target_order: usize, channels: &[usize], rows: std::ops::Range<usize>) {
+    let (song_handle, _) = match SongState::new(path) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("can't open {}: {}", path, e); return; }
+    };
+    let mut song = song_handle.get_song().lock().unwrap();
+    println!("=== {}  period/freq trace, order {}, rows {:?}, ch {:?} ===",
+             path, target_order, rows, channels);
+
+    loop {
+        if song.song_position > target_order { break; }
+        let was_in_target = song.song_position == target_order && rows.contains(&song.row);
+        let pre_tick = song.tick;
+        let pre_row = song.row;
+        let pat_idx_pre = song.song_data.pattern_order[song.song_position] as usize;
+        let pat_rows = &song.song_data.patterns[pat_idx_pre].rows[pre_row].channels;
+        let row_pat: Vec<_> = channels.iter().map(|&c| pat_rows[c].clone()).collect();
+        song.process_tick();
+        if was_in_target {
+            for (i, &c) in channels.iter().enumerate() {
+                let p = &row_pat[i];
+                let ch = &song.channels[c];
+                let v = ch.voice_idx.map(|i| &song.voices[i]);
+                if pre_tick == 0 {
+                    println!(
+                        "row {:02} ch{} pat: note={:>3} inst={:>3} vol={:>3} eff={:02x}{:02x}",
+                        pre_row, c, p.note, p.instrument, p.volume, p.effect, p.effect_param,
+                    );
+                }
+                match v {
+                    None => println!("  tick {} ch{} | (no host voice)", pre_tick, c),
+                    Some(v) => println!(
+                        "  tick {} ch{} | period={:>5} freq={:>9.2} target_period={:>5}",
+                        pre_tick, c,
+                        ch.note.period, v.frequency,
+                        ch.porta_to_note.target_note.period,
+                    ),
+                }
+            }
+        }
+        if !song.next_tick() { break; }
+    }
+}
+
+#[test]
+#[ignore = "Manual: order 13 channels 6+7 (display CH07/CH08) period+freq trace"]
+fn trace_2nd_pm_order13_ch67_period() {
+    trace_period_freq(
+        "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M",
+        13, &[6, 7], 0x08..0x14,
+    );
+}
+
+#[test]
+#[ignore = "Manual: order 0x13 (=19) channels 6+7 period+freq trace"]
+fn trace_2nd_pm_order_0x13_ch67_period() {
+    trace_period_freq(
+        "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M",
+        0x13, &[6, 7], 0x08..0x14,
+    );
+}
+
+#[test]
+#[ignore = "Manual: dump inst 33 sample params"]
+fn dump_inst_33_params() {
+    let (h, _) = SongState::new("/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M").unwrap();
+    let song = h.get_song().lock().unwrap();
+    let inst = &song.song_data.instruments[33];
+    println!("inst 33 name={}", inst.name);
+    for (i, s) in inst.samples.iter().enumerate() {
+        println!("  sample {} name={} len={} relnote={} finetune={} vol={} c2spd_inferred=8363*2^(({}+{}/128)/12) = {:.2}",
+                 i, s.name, s.length, s.relative_note, s.finetune, s.volume,
+                 s.relative_note, s.finetune,
+                 8363.0 * 2.0_f64.powf(((s.relative_note as f64) + (s.finetune as f64) / 128.0) / 12.0));
+    }
 }

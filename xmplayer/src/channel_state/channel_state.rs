@@ -85,6 +85,12 @@ pub struct VibratoState {
     pub speed:  i8,
     pub depth:  i16,
     pub pos:    i8,
+    /// S3M Uxy / IT u: depth byte represents 1/64 semitone units, vs Hxy's
+    /// 1/16. We honor the 4× finer scale by extra-shifting the wave output
+    /// here. Set on first_tick by `vibrato_inner` (`fine` arg) and reset by
+    /// the regular vibrato path; persists with the rest of vibrato state
+    /// when no vibrato effect is on the current row.
+    pub fine:   bool,
 }
 
 impl VibratoState {
@@ -93,7 +99,8 @@ impl VibratoState {
         VibratoState {
             speed: 0,
             depth: 0,
-            pos: 0
+            pos: 0,
+            fine: false,
         }
     }
 
@@ -109,7 +116,10 @@ impl VibratoState {
             }
             WaveControl::SQUARE => { delta = 255; }
         }
-        ((delta >> 5) * (if self.pos < 0 { -1 } else { 1 })) as i32
+        // >> 5 produces ST3/FT2-compatible swing for Hxy (depth = 1/16
+        // semitone). Fine vibrato (Uxy / IT u) is 4× finer, so >> 7.
+        let shift = if self.fine { 7 } else { 5 };
+        ((delta >> shift) * (if self.pos < 0 { -1 } else { 1 })) as i32
     }
 
     pub(crate) fn next_tick(&mut self) {
