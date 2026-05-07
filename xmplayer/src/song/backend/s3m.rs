@@ -1,9 +1,9 @@
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_effect, apply_extended, apply_flow_control_effect,
-    cut_or_nna_existing_voice, init_voice_basics, mute_silent_voices,
-    set_channel_note, EffectCtx, ModuleBackend, SongPlaybackResources,
-    S3M_EFFECT_TABLE, S3M_S_TABLE,
+    alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
+    bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
+    init_channel_iter, init_voice_basics, mute_silent_voices, set_channel_note,
+    EffectCtx, ModuleBackend, SongPlaybackResources, S3M_EFFECT_TABLE, S3M_S_TABLE,
 };
 
 pub struct S3MBackend {}
@@ -17,20 +17,13 @@ impl ModuleBackend for S3MBackend {
         let instruments = &r.song_data.instruments;
         // 1. Process channels
         for (i, channel) in r.channels.iter_mut().enumerate() {
-            // Tremor silencing is per-tick; the handler re-sets this if the
-            // channel's row carries an I effect.
-            channel.tremor_silenced = false;
-
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
             let row = &patterns.rows[*r.row];
             let pattern = &row.channels[i];
 
-            let is_note_delay = pattern.is_note_delay(r.song_data.song_type);
-            let note_delay_first_tick = if is_note_delay { *r.tick == pattern.get_y() as u32 } else { first_tick };
-
-            if pattern.instrument != 0 {
-                channel.last_instrument = if (pattern.instrument as usize) < instruments.len() { pattern.instrument as usize } else { 0 };
-            }
+            let note_delay_first_tick = init_channel_iter(
+                channel, pattern, instruments, r.song_data.song_type, *r.tick, first_tick,
+            );
 
             // Note trigger logic
             // (S3M parser converts file-byte 254 -> engine 97 (Note Off);
@@ -109,25 +102,11 @@ impl ModuleBackend for S3MBackend {
             NoteAction::Fade | NoteAction::None => {}
             }
 
-            // Instrument number on a porta-to-note row re-reads sample volume
-            // and rewinds envelopes (no audio retrigger). This fires
-            // unconditionally w.r.t. note_action — instrument-only porta rows
-            // (no note byte) still apply, matching master/ST3.
-            if first_tick && pattern.is_porta_to_note(r.song_data.song_type) && pattern.instrument != 0 {
-                if let Some(v_idx) = channel.voice_idx {
-                    if r.voices[v_idx].channel_idx == i {
-                        r.voices[v_idx].porta_retrig_for_instrument(instruments);
-                    }
-                }
-            }
+            apply_porta_retrig_if_needed(
+                r.voices, channel, pattern, i, first_tick, instruments, r.song_data.song_type,
+            );
 
-            let mut voice_ref = channel.voice_idx.and_then(|idx| {
-                if r.voices[idx].channel_idx == i {
-                    Some(&mut r.voices[idx])
-                } else {
-                    None
-                }
-            });
+            let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
             // Volume Column (S3M volume range: 0-63, 255 = no volume present)
             if first_tick {
@@ -166,16 +145,10 @@ impl ModuleBackend for S3MBackend {
                 old_effects: r.old_effects,
                 compatible_g: r.compatible_g,
             };
-            let kind = if pattern.effect < 32 {
-                S3M_EFFECT_TABLE[pattern.effect as usize]
-            } else {
-                crate::song::backend::EffectKind::None
-            };
-            let is_extended = apply_effect(kind, channel, voice_ref.as_deref_mut(), &mut ctx, pattern);
-            if is_extended {
-                let ext = S3M_S_TABLE[pattern.get_x() as usize];
-                apply_extended(ext, channel, voice_ref.as_deref_mut(), &mut ctx, pattern.get_y());
-            }
+            dispatch_main_and_extended(
+                pattern, channel, voice_ref.as_deref_mut(),
+                &mut ctx, &S3M_EFFECT_TABLE, &S3M_S_TABLE,
+            );
 
             if let Some(v) = voice_ref.as_deref_mut() {
                 channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);

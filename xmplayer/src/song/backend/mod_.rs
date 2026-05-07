@@ -1,9 +1,9 @@
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_effect, apply_extended, apply_flow_control_effect,
-    cut_or_nna_existing_voice, init_voice_basics, mute_silent_voices,
-    set_channel_note, EffectCtx, ModuleBackend, SongPlaybackResources,
-    MOD_EFFECT_TABLE, MOD_E_TABLE,
+    alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
+    bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
+    init_channel_iter, init_voice_basics, mute_silent_voices, set_channel_note,
+    EffectCtx, ModuleBackend, SongPlaybackResources, MOD_EFFECT_TABLE, MOD_E_TABLE,
 };
 
 pub struct ModBackend {}
@@ -18,15 +18,17 @@ impl ModuleBackend for ModBackend {
 
         // 1. Process all channels
         for (i, channel) in r.channels.iter_mut().enumerate() {
-            channel.tremor_silenced = false;
-
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
             let row = &patterns.rows[*r.row];
             let pattern = &row.channels[i];
 
-            if pattern.instrument != 0 {
-                channel.last_instrument = if (pattern.instrument as usize) < instruments.len() { pattern.instrument as usize } else { 0 };
-            }
+            // MOD has no note-delay encoding so the returned value is just
+            // `first_tick`; we don't need it locally — `init_channel_iter`
+            // is here for the side effects (tremor reset + last_instrument
+            // update).
+            init_channel_iter(
+                channel, pattern, instruments, r.song_data.song_type, *r.tick, first_tick,
+            );
 
             // Note trigger logic. MOD doesn't encode Off/Cut/Fade, so the
             // only branches we need are Trigger and None - and None still
@@ -107,24 +109,11 @@ impl ModuleBackend for ModBackend {
             _ => {}
             }
 
-            // Sample number on a porta-to-note row (effects 0x03 / 0x05)
-            // re-reads sample volume — fires unconditionally w.r.t.
-            // note_action so instrument-only porta rows still apply.
-            if first_tick && (pattern.effect == 0x03 || pattern.effect == 0x05) && pattern.instrument != 0 {
-                if let Some(v_idx) = channel.voice_idx {
-                    if r.voices[v_idx].channel_idx == i {
-                        r.voices[v_idx].porta_retrig_for_instrument(instruments);
-                    }
-                }
-            }
+            apply_porta_retrig_if_needed(
+                r.voices, channel, pattern, i, first_tick, instruments, r.song_data.song_type,
+            );
 
-            let mut voice_ref = channel.voice_idx.and_then(|idx| {
-                if r.voices[idx].channel_idx == i {
-                    Some(&mut r.voices[idx])
-                } else {
-                    None
-                }
-            });
+            let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
             // Effect Column. Flow-control (B/D/F) is the shared helper;
             // everything else dispatches through MOD_EFFECT_TABLE -> EffectKind.
@@ -153,16 +142,10 @@ impl ModuleBackend for ModBackend {
                 old_effects: r.old_effects,
                 compatible_g: r.compatible_g,
             };
-            let kind = if pattern.effect < 32 {
-                MOD_EFFECT_TABLE[pattern.effect as usize]
-            } else {
-                crate::song::backend::EffectKind::None
-            };
-            let is_extended = apply_effect(kind, channel, voice_ref.as_deref_mut(), &mut ctx, pattern);
-            if is_extended {
-                let ext = MOD_E_TABLE[pattern.get_x() as usize];
-                apply_extended(ext, channel, voice_ref.as_deref_mut(), &mut ctx, pattern.get_y());
-            }
+            dispatch_main_and_extended(
+                pattern, channel, voice_ref.as_deref_mut(),
+                &mut ctx, &MOD_EFFECT_TABLE, &MOD_E_TABLE,
+            );
 
             if let Some(v) = voice_ref.as_deref_mut() {
                 channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);

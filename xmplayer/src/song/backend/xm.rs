@@ -1,9 +1,9 @@
 use crate::pattern::NoteAction;
 use crate::song::backend::{
-    alloc_voice, apply_effect, apply_extended, apply_flow_control_effect,
-    cut_or_nna_existing_voice, init_voice_basics, mute_silent_voices,
-    set_channel_note, EffectCtx, ModuleBackend, SongPlaybackResources,
-    XM_EFFECT_TABLE, XM_E_TABLE,
+    alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
+    bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
+    init_channel_iter, init_voice_basics, mute_silent_voices, set_channel_note,
+    EffectCtx, ModuleBackend, SongPlaybackResources, XM_EFFECT_TABLE, XM_E_TABLE,
 };
 
 pub struct XmBackend {}
@@ -23,18 +23,13 @@ impl ModuleBackend for XmBackend {
 
         // 1. Process channels
         for (i, channel) in r.channels.iter_mut().enumerate() {
-            channel.tremor_silenced = false;
-
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
             let row = &patterns.rows[*r.row];
             let pattern = &row.channels[i];
 
-            let is_note_delay = pattern.is_note_delay(r.song_data.song_type);
-            let note_delay_first_tick = if is_note_delay { *r.tick == pattern.get_y() as u32 } else { first_tick };
-
-            if pattern.instrument != 0 {
-                channel.last_instrument = if (pattern.instrument as usize) < instruments.len() { pattern.instrument as usize } else { 0 };
-            }
+            let note_delay_first_tick = init_channel_iter(
+                channel, pattern, instruments, r.song_data.song_type, *r.tick, first_tick,
+            );
 
             // Note trigger logic
             match pattern.note_action(r.song_data.song_type) {
@@ -106,25 +101,11 @@ impl ModuleBackend for XmBackend {
             NoteAction::Fade | NoteAction::None => {}
             }
 
-            // Instrument number on a porta-to-note row re-reads sample volume
-            // and rewinds envelopes (no audio retrigger). Fires unconditionally
-            // — instrument-only porta rows (no note byte) still apply, matching
-            // master/FT2.
-            if first_tick && pattern.is_porta_to_note(r.song_data.song_type) && pattern.instrument != 0 {
-                if let Some(v_idx) = channel.voice_idx {
-                    if r.voices[v_idx].channel_idx == i {
-                        r.voices[v_idx].porta_retrig_for_instrument(instruments);
-                    }
-                }
-            }
+            apply_porta_retrig_if_needed(
+                r.voices, channel, pattern, i, first_tick, instruments, r.song_data.song_type,
+            );
 
-            let mut voice_ref = channel.voice_idx.and_then(|idx| {
-                if r.voices[idx].channel_idx == i {
-                    Some(&mut r.voices[idx])
-                } else {
-                    None
-                }
-            });
+            let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
             // Volume Column
             match pattern.volume {
@@ -156,9 +137,9 @@ impl ModuleBackend for XmBackend {
                 continue;
             }
 
-            // Main effect dispatch via XM_EFFECT_TABLE -> EffectKind ->
-            // apply_effect. Extended (Exy) returns true so we follow up
-            // with apply_extended and the per-format E table.
+            // Main effect dispatch via XM_EFFECT_TABLE -> EffectKind. The
+            // shared dispatch_main_and_extended also handles the Exy
+            // follow-up through XM_E_TABLE when EffectKind is Extended.
             let mut ctx = EffectCtx {
                 pattern_change: r.pattern_change,
                 global_volume: r.global_volume,
@@ -174,16 +155,10 @@ impl ModuleBackend for XmBackend {
                 old_effects: r.old_effects,
                 compatible_g: r.compatible_g,
             };
-            let kind = if pattern.effect < 32 {
-                XM_EFFECT_TABLE[pattern.effect as usize]
-            } else {
-                crate::song::backend::EffectKind::None
-            };
-            let is_extended = apply_effect(kind, channel, voice_ref.as_deref_mut(), &mut ctx, pattern);
-            if is_extended {
-                let ext = XM_E_TABLE[pattern.get_x() as usize];
-                apply_extended(ext, channel, voice_ref.as_deref_mut(), &mut ctx, pattern.get_y());
-            }
+            dispatch_main_and_extended(
+                pattern, channel, voice_ref.as_deref_mut(),
+                &mut ctx, &XM_EFFECT_TABLE, &XM_E_TABLE,
+            );
 
             if let Some(v) = voice_ref.as_deref_mut() {
                 // If effect is not Arpeggio, reset period_shift

@@ -172,6 +172,109 @@ pub(super) fn apply_flow_control_effect(
     }
 }
 
+/// Pre-iteration boilerplate every backend repeats at the top of its
+/// per-channel loop: reset transient flags, latch `last_instrument` from
+/// the row's instrument byte, and compute the gating used by every
+/// downstream block.
+///
+/// Returns `note_delay_first_tick`: the tick at which a note-delayed row
+/// (XM `EDx` / S3M/IT `SDx`) should fire its trigger; falls back to
+/// `first_tick` when the row carries no note delay.
+pub(super) fn init_channel_iter(
+    channel: &mut ChannelState,
+    pattern: &Pattern,
+    instruments: &[Instrument],
+    song_type: SongType,
+    tick: u32,
+    first_tick: bool,
+) -> bool {
+    channel.tremor_silenced = false;
+    if pattern.instrument != 0 {
+        channel.last_instrument = if (pattern.instrument as usize) < instruments.len() {
+            pattern.instrument as usize
+        } else {
+            0
+        };
+    }
+    if pattern.is_note_delay(song_type) {
+        tick == pattern.get_y() as u32
+    } else {
+        first_tick
+    }
+}
+
+/// On a porta-to-note row that also carries an instrument number, the
+/// instrument re-reads sample volume and rewinds envelopes (no audio
+/// retrigger). Must run *after* the per-format note-action block (so that
+/// a Trigger arm has set the porta target first) and *before* any volume
+/// column work (so vol-col can override the retrig'd volume).
+///
+/// `is_porta_to_note` already covers all four formats (XM `0x03/0x05` +
+/// vol-col `0xF0..=0xFE`, S3M `G/L`, IT `G/L` + vol-col `193..=202`,
+/// MOD `0x03/0x05`).
+pub(super) fn apply_porta_retrig_if_needed(
+    voices: &mut [Voice],
+    channel: &ChannelState,
+    pattern: &Pattern,
+    i: usize,
+    first_tick: bool,
+    instruments: &Vec<Instrument>,
+    song_type: SongType,
+) {
+    if !(first_tick && pattern.is_porta_to_note(song_type) && pattern.instrument != 0) {
+        return;
+    }
+    if let Some(v_idx) = channel.voice_idx {
+        if voices[v_idx].channel_idx == i {
+            voices[v_idx].porta_retrig_for_instrument(instruments);
+        }
+    }
+}
+
+/// Bind the channel's host voice if the back-pointer agrees (the slot
+/// could have been stolen by an NNA / DCT cut, in which case we treat
+/// the channel as voiceless for vol-col / effect dispatch). Used by all
+/// four backends after the note-action block.
+pub(super) fn bind_voice_for_channel<'a>(
+    voices: &'a mut [Voice],
+    channel: &ChannelState,
+    i: usize,
+) -> Option<&'a mut Voice> {
+    let idx = channel.voice_idx?;
+    if voices[idx].channel_idx != i {
+        return None;
+    }
+    Some(&mut voices[idx])
+}
+
+/// Look up the row's main effect in the per-format `EFFECT_TABLE`,
+/// dispatch it through `apply_effect`, then — if it was an `Extended`
+/// command — look up the high nibble in the per-format `E/S` table and
+/// dispatch through `apply_extended`. The flow-control effects
+/// (Pattern Jump / Break / Set Speed / Set BPM) are *not* handled here:
+/// callers must `apply_flow_control_effect` first and short-circuit on
+/// its return value, since flow control short-circuits the rest of the
+/// channel's effect work.
+pub(super) fn dispatch_main_and_extended(
+    pattern: &Pattern,
+    channel: &mut ChannelState,
+    mut voice_ref: Option<&mut Voice>,
+    ctx: &mut EffectCtx<'_>,
+    effect_table: &[EffectKind; 32],
+    extended_table: &[ExtendedCmdKind; 16],
+) {
+    let kind = if pattern.effect < 32 {
+        effect_table[pattern.effect as usize]
+    } else {
+        EffectKind::None
+    };
+    let is_extended = apply_effect(kind, channel, voice_ref.as_deref_mut(), ctx, pattern);
+    if is_extended {
+        let ext = extended_table[pattern.get_x() as usize];
+        apply_extended(ext, channel, voice_ref.as_deref_mut(), ctx, pattern.get_y());
+    }
+}
+
 /// Pick a voice slot for a new note: prefer the first idle voice, otherwise
 /// steal the quietest one. Used by every backend's note-trigger block.
 pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
