@@ -224,7 +224,6 @@ impl ModuleBackend for S3MBackend {
 
         // 2. Process all active voices (S3M volume formula).
         let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
-        let master_vol_f32 = (r.song_data.master_volume & 127) as f32 / 64.0;
         for voice in r.voices.iter_mut() {
             if !voice.on { continue; }
             let channel = &r.channels[voice.channel_idx];
@@ -233,10 +232,12 @@ impl ModuleBackend for S3MBackend {
             voice.update_envelopes(instruments, r.rate);
             voice.update_fadeout();
 
-            // S3M formula: compute_base_volume() * channel_vol/64 * global_vol/64 * master_vol/64
-            // (compute_base_volume() already folds in fadeout, envelope, sample volume.)
+            // S3M formula: compute_base_volume() * channel_vol/64 * global_vol/64
+            // (master_volume is applied centrally in output.rs to match OpenMPT's
+            // single-application model; the previous duplicate per-voice
+            // multiply made our render ~2× louder than OpenMPT's reference.)
             let channel_vol = channel.channel_volume as f32 / 64.0;
-            let output_vol = voice.compute_base_volume() * channel_vol * global_vol_f32 * master_vol_f32;
+            let output_vol = voice.compute_base_volume() * channel_vol * global_vol_f32;
             voice.set_output_volume(output_vol);
 
             if silenced {
