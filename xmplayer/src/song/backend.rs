@@ -479,6 +479,7 @@ pub(super) enum ExtendedCmdKind {
     PatternDelay,       // XM EE, MOD EE, S3M SE, IT SE
     SetExtraPanning,    // S3M S8, IT S8 (param << 4)
     SetItPanning,       // IT only - 0..255 panning at first tick (currently goes through 0x18)
+    SetFinetuneS3m,     // S3M / IT S2 — channel c5_speed override via S3M_FINETUNE_TABLE
 }
 
 /// XM's Exy table.
@@ -534,7 +535,7 @@ pub(super) const S3M_S_TABLE: [ExtendedCmdKind; 16] = {
     [
         None,             // S0  Amiga LED filter (n/a for digital pipeline)
         Glissando,        // S1  set glissando (param != 0 enables semitone-snap porta)
-        None,             // S2  set finetune  (TODO: needs channel c5_speed override)
+        SetFinetuneS3m,   // S2  set finetune (channel c5_speed via S3M_FINETUNE_TABLE)
         VibratoWaveform,  // S3  vibrato waveform (low 2 bits = sine/sawtooth/square)
         TremoloWaveform,  // S4  tremolo waveform
         None,             // S5  panbrello waveform (IT-only)
@@ -556,21 +557,21 @@ pub(super) const IT_S_TABLE: [ExtendedCmdKind; 16] = {
     use ExtendedCmdKind::*;
     [
         None,             // S0
-        None,             // S1
-        None,             // S2
-        None,             // S3
-        None,             // S4
-        None,             // S5
-        None,             // S6
-        None,             // S7
+        Glissando,        // S1
+        SetFinetuneS3m,   // S2  (same handler as S3M's; offset chosen from song_type)
+        VibratoWaveform,  // S3
+        TremoloWaveform,  // S4
+        None,             // S5  panbrello waveform (TODO if any IT corpus needs it)
+        None,             // S6  frame delay (uncommon)
+        None,             // S7  NNA / instr controls (handled at note-trigger logic)
         SetItPanning,     // S8 (param << 4 - 16-step coarse panning)
-        None,             // S9
-        None,             // SA
-        None,             // SB
+        None,             // S9  surround
+        None,             // SA  high sample offset (TODO)
+        None,             // SB  pattern loop (handled separately for IT?)
         NoteCutAtTick,    // SC
         None,             // SD  note delay
         PatternDelay,     // SE
-        None,             // SF
+        None,             // SF  MIDI macro
     ]
 };
 
@@ -640,7 +641,13 @@ pub(super) fn apply_extended(
         ExtendedCmdKind::VibratoWaveform => {
             if first_tick {
                 channel.vibrato_waveform = y & 3;
-                channel.vibrato_retrig = (y & 4) == 0;
+                // XM/MOD use bit 2 of E4y as a "no-retrig on next note" flag.
+                // S3M/IT don't define bit 2 — leave retrig at the default
+                // `true`. (OpenMPT Snd_fx.cpp:5208/5213 — for S3M the param
+                // is masked to & 0x03; bit 2 has no meaning.)
+                if matches!(song_type, SongType::XM | SongType::MOD) {
+                    channel.vibrato_retrig = (y & 4) == 0;
+                }
             }
         }
         ExtendedCmdKind::SetFinetune => {
@@ -668,7 +675,9 @@ pub(super) fn apply_extended(
         ExtendedCmdKind::TremoloWaveform => {
             if first_tick {
                 channel.tremolo_waveform = y & 3;
-                channel.tremolo_retrig = (y & 4) == 0;
+                if matches!(song_type, SongType::XM | SongType::MOD) {
+                    channel.tremolo_retrig = (y & 4) == 0;
+                }
             }
         }
         ExtendedCmdKind::NoteRetrig => {
@@ -700,6 +709,24 @@ pub(super) fn apply_extended(
             if first_tick {
                 if let Some(v) = voice.as_deref_mut() {
                     v.panning.set_panning(((y as i32) * 17).min(255));
+                }
+            }
+        }
+        ExtendedCmdKind::SetFinetuneS3m => {
+            // S3M / IT S2x: set channel c5_speed from S3M_FINETUNE_TABLE and
+            // recompute the live period via the formula. OpenMPT also keeps
+            // a derived nFineTune for the LUT path; we don't (formula is
+            // authoritative once c5_speed is non-zero). Per OpenMPT
+            // Snd_fx.cpp:5189-5206 (S3M_TYPE branch).
+            if first_tick {
+                channel.note.c5_speed = S3M_FINETUNE_TABLE[(y as usize) & 0xF] as u32;
+                if channel.note.original_note != 0 {
+                    let offset = if song_type == SongType::S3M { 11i8 } else { -1i8 };
+                    let p = crate::channel_state::channel_state::Note::note_to_period_s3m(
+                        channel.note.original_note, offset, channel.note.c5_speed,
+                    );
+                    channel.note.period = p;
+                    channel.note.base_period = p;
                 }
             }
         }
@@ -793,6 +820,16 @@ pub(super) enum EffectKind {
 }
 
 const EK: EffectKind = EffectKind::None; // shorthand for table padding
+
+/// S3M S2x finetune lookup. Each entry is the c5_speed to assign to the
+/// channel; index 8 = 8363 (default unity). Lifted bit-exact from OpenMPT
+/// Tables.cpp:340 (S3MFineTuneTable). The geometric formula behind the
+/// table is `8363 * 2^((i-8) / (12*8))` — eight 1/8-semitone steps either
+/// side of unity.
+pub(super) const S3M_FINETUNE_TABLE: [u16; 16] = [
+    7895, 7941, 7985, 8046, 8107, 8169, 8232, 8280,
+    8363, 8413, 8463, 8529, 8581, 8651, 8723, 8757,
+];
 
 /// XM main effect table. Index = pattern.effect (0..=0x1F).
 pub(super) const XM_EFFECT_TABLE: [EffectKind; 32] = {
@@ -930,29 +967,24 @@ pub(super) fn apply_effect(
                 // formula so arp steps land on correct semitones.
                 let arpeggio_via_formula = matches!(ctx.song_type, SongType::S3M | SongType::IT)
                     && ctx.use_amiga;
-                if arpeggio_via_formula {
-                    if let Some(v) = voice.as_deref() {
-                        let inst = &ctx.instruments[v.instrument];
-                        if v.sample < inst.samples.len() {
-                            let sample = &inst.samples[v.sample];
-                            if sample.c5_speed != 0 && channel.note.original_note != 0 {
-                                let offset = if ctx.song_type == SongType::S3M { 11i8 } else { -1i8 };
-                                let arp_step = match ctx.tick % 3 {
-                                    1 => pattern.get_x() as i8,
-                                    2 => pattern.get_y() as i8,
-                                    _ => 0,
-                                };
-                                if arp_step != 0 {
-                                    let base = crate::channel_state::channel_state::Note::note_to_period_s3m(
-                                        channel.note.original_note, offset, sample.c5_speed,
-                                    ) as i32;
-                                    let stepped = crate::channel_state::channel_state::Note::note_to_period_s3m(
-                                        channel.note.original_note, offset + arp_step, sample.c5_speed,
-                                    ) as i32;
-                                    channel.period_shift = (stepped - base) as i16;
-                                }
-                            }
-                        }
+                if arpeggio_via_formula
+                    && channel.note.c5_speed != 0
+                    && channel.note.original_note != 0
+                {
+                    let offset = if ctx.song_type == SongType::S3M { 11i8 } else { -1i8 };
+                    let arp_step = match ctx.tick % 3 {
+                        1 => pattern.get_x() as i8,
+                        2 => pattern.get_y() as i8,
+                        _ => 0,
+                    };
+                    if arp_step != 0 {
+                        let base = crate::channel_state::channel_state::Note::note_to_period_s3m(
+                            channel.note.original_note, offset, channel.note.c5_speed,
+                        ) as i32;
+                        let stepped = crate::channel_state::channel_state::Note::note_to_period_s3m(
+                            channel.note.original_note, offset + arp_step, channel.note.c5_speed,
+                        ) as i32;
+                        channel.period_shift = (stepped - base) as i16;
                     }
                 }
             } else {

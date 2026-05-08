@@ -475,6 +475,42 @@ fn test_s3m_instrument_only_row_reloads_sample_volume() {
 }
 
 #[test]
+fn test_s3m_s2_finetune_changes_period_via_table() {
+    // S3M S2x sets channel c5_speed from S3M_FINETUNE_TABLE and recomputes
+    // the live period. Reference: OpenMPT Snd_fx.cpp:5189-5206 +
+    // Tables.cpp:340 (S3MFineTuneTable).
+    //
+    // Trigger note 49 with sample c5_speed = 8363 → period = 1712.
+    // Row 1: S20 → c5_speed becomes table[0] = 7895 (lower → period higher)
+    //   formula(60, 7895) = 8363 * 32 * 1712 / (7895 * 32) = 8363*1712/7895 ≈ 1813
+    // Row 2: S2F → c5_speed becomes table[15] = 8757
+    //   formula(60, 8757) = 8363*1712/8757 ≈ 1635
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.use_amiga_freq(true);
+    builder.instruments[1].samples[0].data = vec![0.0; 4096];
+    builder.instruments[1].samples[0].length = 4096;
+    builder.instruments[1].samples[0].c5_speed = 8363;
+    builder.add_empty_pattern(3);
+    builder.add_pattern_row(0, 0, 49, 1, 64, 0, 0);
+    // S3M effect 'S' = 0x13 in normalized numbering, S2x param 0x20 (param=0).
+    builder.add_pattern_row(0, 1, 0, 0, 255, 0x13, 0x20);
+    builder.add_pattern_row(0, 2, 0, 0, 255, 0x13, 0x2F);
+    let mut tester = builder.get_tester();
+
+    tester.run_row();
+    assert_eq!(tester.get_channel_period(0), 1712, "row0 trigger period");
+    tester.tick(); // first tick of row 1
+    let p1 = tester.get_channel_period(0);
+    // 8363*1712/7895 = 14318056/7895 = 1813.55... → 1813 (truncated by integer div)
+    assert_eq!(p1, 1813, "S20 should set period via table[0]=7895; got {}", p1);
+    tester.run_row(); // finish row 1
+    tester.tick(); // first tick of row 2
+    let p2 = tester.get_channel_period(0);
+    // 8363*1712/8757 = 14317456/8757 = 1634.97... → 1634
+    assert_eq!(p2, 1634, "S2F should set period via table[15]=8757; got {}", p2);
+}
+
+#[test]
 fn test_s3m_arpeggio_uses_formula_in_amiga_mode() {
     // S3M arpeggio J37 at engine note 49 (S3M file 0x40 → formula note 60).
     // tick%3==0 → period at +0 semitones = formula(60) = 1712

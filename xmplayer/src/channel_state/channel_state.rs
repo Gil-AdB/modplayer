@@ -431,6 +431,13 @@ pub struct Note {
     pub period:          u16,
     pub base_period:     u16,
     pub original_note:   u8,
+    /// Active c5_speed for the formula-based pitch path (S3M / IT amiga).
+    /// Copied from `Sample::c5_speed` at trigger; mutable mid-note via the
+    /// S3M S2 finetune subcommand. Zero means "use the LUT path" (samples
+    /// without c5_speed metadata, or formats that don't use it). The
+    /// arpeggio formula override and any future formula-based effect must
+    /// read this, not `sample.c5_speed`, so S2 changes propagate.
+    pub c5_speed:        u32,
 }
 
 impl Note {
@@ -442,6 +449,7 @@ impl Note {
             period: 0,
             base_period: 0,
             original_note: 0,
+            c5_speed: 0,
         }
     }
 

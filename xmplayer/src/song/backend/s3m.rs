@@ -104,7 +104,10 @@ impl ModuleBackend for S3MBackend {
                                 // S3M c5_speed override: replace the LUT-derived
                                 // period with the closed-form formula so we don't
                                 // lose precision through (c5_speed → finetune+
-                                // relative_note → 1/16-semitone LUT).
+                                // relative_note → 1/16-semitone LUT). Also seed
+                                // channel.note.c5_speed so subsequent effects
+                                // (S2 finetune, arpeggio) can read/mutate it.
+                                channel.note.c5_speed = sample.c5_speed;
                                 if sample.c5_speed != 0 {
                                     let p = crate::channel_state::channel_state::Note::note_to_period_s3m(pattern.note, 11, sample.c5_speed);
                                     channel.note.period = p;
