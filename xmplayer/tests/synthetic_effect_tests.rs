@@ -334,47 +334,51 @@ fn test_seek_forward_pattern_terminates_when_looping() {
 }
 
 #[test]
-fn test_s3m_note_delay_defers_volume_column() {
-    // Regression: S3M Sxx subcommand SDx (note delay by x ticks) must
-    // defer the row's volume column to the trigger tick. Pre-fix, the
-    // S3M backend gated volume on `first_tick` rather than
-    // `note_delay_first_tick`, so the new volume was applied at tick 0
-    // of the row to the *previous* (still-ringing) note's period —
-    // audible as a chirp / click before the actual trigger fired
-    // later. (Repro: 2ND_PM.S3M order 0x23 row 02 ch4.)
+fn test_s3m_note_delay_volume_column_matches_master() {
+    // Regression: on a SDx note-delay row, S3M (per ST3 / master) applies
+    // the volume column to the *previous* (still-ringing) voice at row
+    // start (first_tick), then at the trigger tick a new voice is
+    // allocated whose `retrig` reloads the instrument's default volume.
+    // The vol col does NOT re-fire at the trigger.
+    //
+    // An earlier attempt to gate vol col on `note_delay_first_tick`
+    // (the trigger tick) made the new note play at the vol col value
+    // instead of the instrument default — audible as an anti-climactic
+    // / "chirp" entrance (verified with master state-dump diff against
+    // 2ND_PM.S3M order 0x23 row 0x32: master post-trigger Vol=1.000;
+    // pre-revert refactor Vol≈0.14).
     let mut builder = MockSongBuilder::new(SongType::S3M, 1);
     builder.instruments[1].samples[0].data = vec![0.0; 100000];
     builder.instruments[1].samples[0].length = 100000;
     builder.add_empty_pattern(2);
     // Row 0: trigger C-4 at full vol so we have something ringing.
     builder.add_pattern_row(0, 0, 49, 1, 64, 0, 0);
-    // Row 1: trigger D-4 with vol=1 + SD3 (note delay 3 ticks).
+    // Row 1: D-4 with vol=12 + SD3 (note delay 3 ticks).
     // S3M effect 0x13 = S, param 0xD3 = SD3.
-    builder.add_pattern_row(0, 1, 51, 1, 1, 0x13, 0xD3);
+    builder.add_pattern_row(0, 1, 51, 1, 12, 0x13, 0xD3);
     let mut tester = builder.get_tester();
 
     tester.run_row();
-    let row0_vol = tester.song.voices[0].volume.volume;
-    assert_eq!(row0_vol, 64);
+    assert_eq!(tester.song.voices[0].volume.volume, 64);
 
-    // Tick 0 of row 1: the volume column (vol=1) must NOT have been
-    // applied yet — the previous note is still ringing.
+    // Tick 0 of row 1: vol col fires immediately on the OLD (still-
+    // ringing) voice. Master/ST3 behavior.
     tester.tick();
-    assert_eq!(tester.song.voices[0].volume.volume, 64,
-               "vol column must not fire before note-delay trigger; got {}",
+    assert_eq!(tester.song.voices[0].volume.volume, 12,
+               "vol col should fire at first_tick of the delay row; got {}",
                tester.song.voices[0].volume.volume);
 
-    // Ticks 1, 2: still pre-trigger, still old vol.
+    // Ticks 1, 2: pre-trigger; vol col still in effect on old voice.
     tester.tick();
-    assert_eq!(tester.song.voices[0].volume.volume, 64);
+    assert_eq!(tester.song.voices[0].volume.volume, 12);
     tester.tick();
-    assert_eq!(tester.song.voices[0].volume.volume, 64);
+    assert_eq!(tester.song.voices[0].volume.volume, 12);
 
-    // Tick 3: note-delay fires; new note triggers AND volume column
-    // now lands as 1 (overriding the instrument default).
+    // Tick 3: note-delay fires. New voice allocated, retrig sets vol
+    // to instrument default (64). Vol col does NOT re-fire.
     tester.tick();
-    assert_eq!(tester.song.voices[0].volume.volume, 1,
-               "vol column should land at the note-delay trigger tick; got {}",
+    assert_eq!(tester.song.voices[0].volume.volume, 64,
+               "trigger tick should restore instrument default vol; got {}",
                tester.song.voices[0].volume.volume);
 }
 

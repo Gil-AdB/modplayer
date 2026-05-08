@@ -326,6 +326,14 @@ fn dump_inst_25_params() {
     let song = h.get_song().lock().unwrap();
     let inst = &song.song_data.instruments[25];
     println!("inst 25 name={}", inst.name);
+    println!("  vol_env on={} sustain={} loop_start={} loop_end={} points={}",
+             inst.volume_envelope.on, inst.volume_envelope.sustain, inst.volume_envelope.loop_start_point, inst.volume_envelope.loop_end_point, inst.volume_envelope.points.len());
+    println!("  pan_env on={} sustain={} loop_start={} loop_end={} points={}",
+             inst.panning_envelope.on, inst.panning_envelope.sustain, inst.panning_envelope.loop_start_point, inst.panning_envelope.loop_end_point, inst.panning_envelope.points.len());
+    println!("  pitch_env on={} sustain={} loop_start={} loop_end={} points={}",
+             inst.pitch_envelope.on, inst.pitch_envelope.sustain, inst.pitch_envelope.loop_start_point, inst.pitch_envelope.loop_end_point, inst.pitch_envelope.points.len());
+    println!("  vib_env type={} sweep={} depth={} rate={}",
+             inst.vibrato_envelope.vibrato_type, inst.vibrato_envelope.vibrato_sweep, inst.vibrato_envelope.vibrato_depth, inst.vibrato_envelope.vibrato_rate);
     for (i, s) in inst.samples.iter().enumerate() {
         println!("  sample {} name='{}' len={} loop_start={} loop_end={} loop_type={:?} relnote={} finetune={} vol={}",
                  i, s.name, s.length, s.loop_start, s.loop_end, s.loop_type, s.relative_note, s.finetune, s.volume);
