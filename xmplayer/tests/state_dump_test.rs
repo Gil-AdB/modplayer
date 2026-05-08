@@ -67,36 +67,3 @@ fn test_dump_2nd_pm_xm() {
 fn test_dump_2nd_pm_s3m() {
     generate_state_dump("/Users/gil-ad/work/modplayer/2ND_PM.S3M", "/Users/gil-ad/work/modplayer/2ND_PM_s3m_refactor.txt", 2000);
 }
-
-/// Per-tick dump of 2ND_PM.S3M up to order 0x24, all-tick within the chirp
-/// window (rows 40-54 of order 0x23) and just first-tick elsewhere.
-/// Outputs to /tmp/2ND_PM_chirp_refactor.txt for diffing against master.
-#[test]
-#[ignore = "Manual chirp-window dump for master/refactor diff"]
-fn test_dump_2nd_pm_s3m_chirp_window() {
-    let path = "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M";
-    let output_filename = "/tmp/2ND_PM_chirp_refactor.txt";
-
-    let (song_handle, _consumer) = match SongState::new(path) {
-        Ok(s) => s,
-        Err(e) => { eprintln!("Failed to load: {}", e); return; }
-    };
-
-    let mut output_file = File::create(output_filename).expect("Failed to create dump file");
-    let mut song = song_handle.get_song().lock().unwrap();
-
-    loop {
-        if song.song_position > 0x24 { break; }
-        let in_window = song.song_position == 0x23 && (40..=54).contains(&song.row);
-        let at_first_tick = song.tick == 0;
-
-        song.process_tick();
-
-        if in_window || at_first_tick {
-            writeln!(output_file, "{}", dump_tick(&song).to_string()).unwrap();
-        }
-
-        if !song.next_tick() { break; }
-    }
-    eprintln!("dump written to {}", output_filename);
-}

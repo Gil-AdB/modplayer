@@ -109,19 +109,13 @@ impl ModuleBackend for S3MBackend {
             let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
             // Volume Column (S3M volume range: 0-63, 255 = no volume present).
-            // Gate on `first_tick`, not `note_delay_first_tick`. On an SDx
-            // note-delay row, ST3/master apply the vol col to the *previous*
-            // (still-ringing) voice at row start, then the trigger tick
-            // allocates a new voice whose `retrig` reloads the instrument
-            // default — vol col does NOT re-fire at the trigger. Result: the
-            // new note plays at instrument-default volume (loud).
-            //
-            // Side-by-side verified against master at 2ND_PM.S3M order 0x23
-            // row 0x32 (F-4 inst25 vol=12 SD2): master post-trigger Vol=1.000
-            // (=64/64); previous attempt to gate on note_delay_first_tick
-            // produced Vol≈0.14 (=12/64), audibly an anti-climactic / "chirp"
-            // entrance.
-            if first_tick {
+            // Gate on `note_delay_first_tick` rather than `first_tick` so a
+            // SDx note-delay defers the volume change to the trigger tick;
+            // otherwise the row's new volume gets applied at tick 0 to the
+            // *previous* note that's still ringing, then the actual trigger
+            // happens later at a different period — audible as a chirp /
+            // click. (See 2ND_PM.S3M order 0x23 row 02 ch4 for the repro.)
+            if note_delay_first_tick {
                 match pattern.volume {
                     0..=64 => {
                         channel.set_volume(voice_ref.as_deref_mut(), true, pattern.volume);
