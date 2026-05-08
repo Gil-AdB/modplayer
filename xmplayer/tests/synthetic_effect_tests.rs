@@ -414,6 +414,29 @@ fn test_s3m_c5_speed_formula_period() {
 }
 
 #[test]
+fn test_it_c5_speed_formula_period() {
+    // IT c5_speed formula path. IT pattern byte 60 → engine note 61, mapped
+    // through the instrument's keyboard map to it_mapping.0 = 60, then
+    // mapped_note = 61 reaches the formula with offset -1 → formula note 60.
+    // OpenMPT expectation matches the S3M case at the same c5_speed.
+    let cases: &[(u32, u16)] = &[(8363, 1712), (10000, 1431), (16000, 894)];
+    for (c5, expected) in cases {
+        let mut builder = MockSongBuilder::new(SongType::IT, 1);
+        builder.instruments[1].samples[0].data = vec![0.0; 4096];
+        builder.instruments[1].samples[0].length = 4096;
+        builder.instruments[1].samples[0].c5_speed = *c5;
+        builder.add_empty_pattern(2);
+        // IT engine note 61 = pattern byte 60 = "C-5".
+        builder.add_pattern_row(0, 0, 61, 1, 64, 0, 0);
+        let mut tester = builder.get_tester();
+        tester.tick();
+        let p = tester.get_channel_period(0);
+        assert_eq!(p, *expected,
+            "IT c5_speed={} expected period {} got {}", c5, expected, p);
+    }
+}
+
+#[test]
 fn test_porta_to_note_does_not_underflow_on_large_speed() {
     // Regression: PortaToNoteState::next_tick used u16 wrapping arithmetic
     // and a post-subtract `< target` check. When the slide speed exceeded

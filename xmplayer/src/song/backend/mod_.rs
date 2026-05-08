@@ -46,8 +46,13 @@ impl ModuleBackend for ModBackend {
                             // clamp matches what the historical (0..=119)
                             // produced for any reachable input - and this
                             // way MOD shares the engine's note convention.
-                            let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
-                            channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
+                            channel.porta_to_note.target_note.period = if sample.c5_speed != 0 {
+                                // STM porta target — see trigger branch below.
+                                crate::channel_state::channel_state::Note::note_to_period_s3m(pattern.note, 11, sample.c5_speed)
+                            } else {
+                                let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
+                                channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables)
+                            };
                         }
                     }
                 } else if first_tick {
@@ -73,6 +78,18 @@ impl ModuleBackend for ModBackend {
 
                         let sample = &instruments[inst_idx].samples[sample_idx];
                         set_channel_note(channel, voice, sample.relative_note, sample.finetune, pattern.note, r.rate, r.frequency_tables);
+                        // STM lands here (dispatch is ModBackend) — its loader
+                        // populates c5_speed, real MOD samples leave it at 0.
+                        // Same +11 note-offset as S3M because the STM parser
+                        // already adds the equivalent octave shift (+25 vs the
+                        // S3M parser's +1, absorbing OpenMPT's +36-vs-+12
+                        // STM-vs-S3M loader difference).
+                        if sample.c5_speed != 0 {
+                            let p = crate::channel_state::channel_state::Note::note_to_period_s3m(pattern.note, 11, sample.c5_speed);
+                            channel.note.period = p;
+                            channel.note.base_period = p;
+                            channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+                        }
                         voice.last_played_note = pattern.note;
                         channel.voice_idx = Some(voice_idx);
                     }

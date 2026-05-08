@@ -68,8 +68,19 @@ impl ModuleBackend for ItBackend {
                             let sample_idx = it_mapping.1 as usize;
                             if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
                                 let sample = &instruments[inst_idx].samples[sample_idx - 1];
-                                let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
-                                channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
+                                channel.porta_to_note.target_note.period = if sample.c5_speed != 0 {
+                                    // IT: mapped_note = it_mapping.0 + 1 (1-indexed engine
+                                    // = OpenMPT NOTE_MIN-relative + 1). Formula wants
+                                    // `note - NOTE_MIN`, hence offset -1. Don't apply
+                                    // sample.relative_note — IT's loader bakes the
+                                    // c5_speed offset into it via -12 + LUT-rounding,
+                                    // and the formula already accounts for c5_speed.
+                                    let mapped = (it_mapping.0 + 1) as u8;
+                                    crate::channel_state::channel_state::Note::note_to_period_s3m(mapped, -1, sample.c5_speed)
+                                } else {
+                                    let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
+                                    channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables)
+                                };
                             }
                         }
                     }
@@ -120,6 +131,15 @@ impl ModuleBackend for ItBackend {
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
                                 set_channel_note(channel, voice, sample.relative_note, sample.finetune, mapped_note, r.rate, r.frequency_tables);
+                                // IT c5_speed override: same as S3M but with note offset
+                                // -1 (engine note 61 = OpenMPT formula note 60). See the
+                                // porta-target branch above for the relative_note caveat.
+                                if sample.c5_speed != 0 {
+                                    let p = crate::channel_state::channel_state::Note::note_to_period_s3m(mapped_note as u8, -1, sample.c5_speed);
+                                    channel.note.period = p;
+                                    channel.note.base_period = p;
+                                    channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+                                }
                                 voice.last_played_note = pattern.note;
                                 channel.last_played_note = pattern.note;
                                 channel.voice_idx = Some(voice_idx);
