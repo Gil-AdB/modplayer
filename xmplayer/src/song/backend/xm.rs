@@ -116,7 +116,18 @@ impl ModuleBackend for XmBackend {
                 0x90..=0x9f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() as i8); }
                 0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
                 0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
-                0xc0..=0xcf => { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(((pattern.get_volume_param() as i32) * 17).min(255)); } }
+                0xc0..=0xcf => {
+                    // Set panning: gate on note_delay_first_tick so it
+                    // defers to the trigger tick on EDx rows. Matches
+                    // ft2-clone src/ft2_replayer.c:2202 which fires the
+                    // C0..CF pan-set inside `noteDelay` at the trigger
+                    // tick, not the row's first_tick.
+                    if note_delay_first_tick {
+                        if let Some(v) = voice_ref.as_deref_mut() {
+                            v.panning.set_panning(((pattern.get_volume_param() as i32) * 17).min(255));
+                        }
+                    }
+                }
                 0xd0..=0xdf => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param() << 4, r.song_data.song_type); }
                 0xe0..=0xef => { channel.panning_slide(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param(), r.song_data.song_type); }
                 0xf0..=0xfe => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param(), r.compatible_g, r.rate, r.frequency_tables); }
