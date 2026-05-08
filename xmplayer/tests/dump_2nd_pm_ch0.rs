@@ -276,6 +276,15 @@ fn trace_2nd_pm_order_0x23_row_0x32_f4() {
 }
 
 #[test]
+#[ignore = "Manual: order 0x23 ch3 wider — rows 0x28-0x38 around the SD note-delays"]
+fn trace_2nd_pm_order_0x23_ch3_wide() {
+    trace_full_state(
+        "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M",
+        0x23, &[3], 0x28..0x39,
+    );
+}
+
+#[test]
 #[ignore = "Manual: find ALL rows where eff=0x13 (S extended) on any channel"]
 fn find_all_extended_s() {
     let path = "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M";
