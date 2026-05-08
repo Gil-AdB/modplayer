@@ -285,6 +285,28 @@ fn trace_2nd_pm_order_0x23_ch3_wide() {
 }
 
 #[test]
+#[ignore = "Manual: dump pattern data for ch3 at order 0x23 in BOTH .S3M and .xm"]
+fn dump_pattern_2nd_pm_order_0x23_ch3_both() {
+    for path in [
+        "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M",
+        "/Users/gil-ad/work/modplayer/scratch/2ND_PM.xm",
+    ] {
+        let (h, _) = match SongState::new(path) { Ok(s) => s, Err(_) => continue };
+        let song = h.get_song().lock().unwrap();
+        let pat_idx = song.song_data.pattern_order[0x23] as usize;
+        let pat = &song.song_data.patterns[pat_idx];
+        println!("=== {} order 0x23 pattern={} ch3 (= display CH04) ===", path, pat_idx);
+        for (r, row) in pat.rows.iter().enumerate() {
+            let c = &row.channels[3];
+            if c.note != 0 || c.instrument != 0 || c.volume != 255 || c.effect != 0 || c.effect_param != 0 {
+                println!("  row 0x{:02x}  note={:>3}  inst={:>3}  vol={:>3} (0x{:02X})  eff=0x{:02x} param=0x{:02x}",
+                         r, c.note, c.instrument, c.volume, c.volume, c.effect, c.effect_param);
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "Manual: find ALL rows where eff=0x13 (S extended) on any channel"]
 fn find_all_extended_s() {
     let path = "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M";

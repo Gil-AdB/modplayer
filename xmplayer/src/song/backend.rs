@@ -214,15 +214,26 @@ pub(super) struct DelaySchedule {
     pub vol_col_at_trigger: bool,
 }
 
-// S3M (and IT in IT-compat S3M mode): ST3-style. Vol col fires at row
-// tick 0 on the still-ringing voice; the new note triggers later at the
-// instrument default volume. Verified loud-F-4 entry against master at
-// 2ND_PM.S3M order 0x23 row 0x32 (ch4): master shows post-trigger
-// Vol=1.000 (=64/64), matching this `false` setting.
-const S3M_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: false };
-const IT_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: false };
-// XM/MOD: FT2 EDx — vol col fires AT the trigger tick, overriding the
-// retrig-loaded instrument default. Per ft2-clone src/ft2_replayer.c:2197.
+// All formats currently use FT2/EDx-style timing: vol col fires at the
+// trigger tick of an SDx/EDx row, overriding the retrig-loaded
+// instrument default. The new note plays at the vol col value.
+//
+// Why this and not ST3-style ("vol col at row start, F-4 plays at
+// instrument default"):
+//   In 2ND_PM.S3M order 0x23 the SDx rows are followed by porta rows
+//   that all carry the same vol col value (e.g. row 0x32 vol=12 SD2,
+//   row 0x33 vol=12 porta). With ST3 timing the new note triggers at
+//   instrument-default 64, then row 0x33's vol col immediately drops
+//   it back to 12 at the next first_tick — audible as a one-tick
+//   volume spike right at the SDx row boundary. The .xm version of the
+//   same song doesn't have this because XM uses EDx (vol col at
+//   trigger), so the new note plays at the same vol col value as the
+//   surrounding rows. We match XM here on the assumption that the
+//   author hand-tuned the song around that timing.
+//
+// Per ft2-clone src/ft2_replayer.c:2197 (XM EDx).
+const S3M_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
+const IT_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
 const XM_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
 const MOD_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
 

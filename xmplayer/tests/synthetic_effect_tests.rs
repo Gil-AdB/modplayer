@@ -334,20 +334,20 @@ fn test_seek_forward_pattern_terminates_when_looping() {
 }
 
 #[test]
-fn test_s3m_note_delay_vol_col_st3_style() {
-    // S3M (per ST3 / master): on a SDx note-delay row, the vol col fires
-    // at the row's first tick to the *previous* (still-ringing) voice.
-    // At the trigger tick, a new voice is allocated whose `retrig`
-    // reloads the instrument's default volume — the vol col does NOT
-    // re-fire. Net: the new note plays at instrument-default volume.
+fn test_s3m_note_delay_vol_col_at_trigger() {
+    // S3M SDx note-delay: vol col fires at the trigger tick (matches XM
+    // EDx and ft2-clone). The previous voice keeps its old volume during
+    // the delay window; at the trigger tick the new voice is allocated,
+    // retrig loads the instrument default, then the vol col overrides.
     //
-    // Verified vs master state-dump on 2ND_PM.S3M order 0x23 row 0x32
-    // (F-4 inst25 vol=12 SD2): post-trigger Vol jumps to instrument
-    // default, matching master. Controlled by the
-    // `S3M_DELAY.vol_col_at_trigger = false` flag in
-    // backend.rs::DelaySchedule. Flipping that flag to `true` would
-    // give FT2/EDx-style (vol col deferred to trigger) and break this
-    // assertion.
+    // The alternative (ST3-style: vol col at first_tick on the previous
+    // voice, retrig dominates at trigger) was tested against master and
+    // produced an audible one-tick volume spike at the SDx row → next
+    // row boundary in 2ND_PM.S3M order 0x23 (the next row's vol col
+    // dropped voice volume back from instrument-default 64 to 12). The
+    // .xm version of the same song doesn't have this because XM EDx
+    // applies vol col at the trigger. We match XM. Controlled by
+    // `S3M_DELAY.vol_col_at_trigger = true` in backend.rs.
     let mut builder = MockSongBuilder::new(SongType::S3M, 1);
     builder.instruments[1].samples[0].data = vec![0.0; 100000];
     builder.instruments[1].samples[0].length = 100000;
@@ -362,24 +362,21 @@ fn test_s3m_note_delay_vol_col_st3_style() {
     tester.run_row();
     assert_eq!(tester.song.voices[0].volume.volume, 64);
 
-    // Tick 0 of row 1: vol col fires immediately on the OLD (still-
-    // ringing) voice; voice volume drops from 64 to 12.
-    tester.tick();
-    assert_eq!(tester.song.voices[0].volume.volume, 12,
-               "vol col should fire at first_tick of the delay row; got {}",
-               tester.song.voices[0].volume.volume);
-
-    // Ticks 1, 2: pre-trigger; vol col still in effect on old voice.
-    tester.tick();
-    assert_eq!(tester.song.voices[0].volume.volume, 12);
-    tester.tick();
-    assert_eq!(tester.song.voices[0].volume.volume, 12);
-
-    // Tick 3: note-delay trigger. New voice allocated; retrig reloads
-    // the instrument default (64). Vol col does NOT re-fire here.
+    // Ticks 0..2 of row 1: vol col deferred; old voice keeps old vol=64.
     tester.tick();
     assert_eq!(tester.song.voices[0].volume.volume, 64,
-               "trigger tick should restore instrument-default vol; got {}",
+               "vol col must NOT fire before the note-delay trigger; got {}",
+               tester.song.voices[0].volume.volume);
+    tester.tick();
+    assert_eq!(tester.song.voices[0].volume.volume, 64);
+    tester.tick();
+    assert_eq!(tester.song.voices[0].volume.volume, 64);
+
+    // Tick 3: trigger fires. Retrig sets vol=64 (inst default); vol col
+    // then overrides to 12. Voice plays the new note at vol col value.
+    tester.tick();
+    assert_eq!(tester.song.voices[0].volume.volume, 12,
+               "vol col should land at the trigger tick (over retrig); got {}",
                tester.song.voices[0].volume.volume);
 }
 
