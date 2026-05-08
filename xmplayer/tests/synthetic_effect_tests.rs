@@ -437,6 +437,44 @@ fn test_it_c5_speed_formula_period() {
 }
 
 #[test]
+fn test_s3m_instrument_only_row_reloads_sample_volume() {
+    // S3M quirk: a row with `instrument != 0` and `note = 0` reloads the
+    // sample's default volume on the live voice. Without this, a perpetual
+    // D0A volume slide (note slid down silently every other row) drains
+    // voice volume to 0 and never recovers — repro is 2ND_PM.S3M ch1
+    // around order 64. OpenMPT does this in Snd_fx.cpp:2873-2964
+    // (`retrigEnv = note == NOTE_NONE && instr != 0` →
+    //  chn.nVolume = oldSample->nVolume).
+    //
+    // Setup: trigger note + instr at row 0. At row 1 we slide volume down
+    // hard (D0F → -15/tick × 6 ticks would overflow). At row 2 we put just
+    // the instrument byte. After row 2's first tick the voice volume must
+    // be back at the sample default (64), not the depleted slide remnant.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.instruments[1].samples[0].data = vec![0.0; 4096];
+    builder.instruments[1].samples[0].length = 4096;
+    builder.instruments[1].samples[0].volume = 64;
+    builder.add_empty_pattern(3);
+    // Row 0: trigger.
+    builder.add_pattern_row(0, 0, 49, 1, 64, 0, 0);
+    // Row 1: D0F = volume slide down by 15/tick (very fast).
+    // vol=255 means "no vol col present" (S3M sentinel).
+    builder.add_pattern_row(0, 1, 0, 0, 255, 0x04, 0x0F);
+    // Row 2: instrument byte only, no vol col — should reload default vol=64.
+    builder.add_pattern_row(0, 2, 0, 1, 255, 0, 0);
+    let mut tester = builder.get_tester();
+
+    tester.run_row();
+    assert_eq!(tester.song.voices[0].volume.volume, 64, "row0 trigger");
+    tester.run_row();
+    assert!(tester.song.voices[0].volume.volume < 64, "row1 slide drops vol; got {}", tester.song.voices[0].volume.volume);
+    tester.tick(); // first tick of row 2: instr-only reload
+    assert_eq!(tester.song.voices[0].volume.volume, 64,
+        "row2 instr-only must reload sample default volume; got {}",
+        tester.song.voices[0].volume.volume);
+}
+
+#[test]
 fn test_s3m_arpeggio_uses_formula_in_amiga_mode() {
     // S3M arpeggio J37 at engine note 49 (S3M file 0x40 → formula note 60).
     // tick%3==0 → period at +0 semitones = formula(60) = 1712
