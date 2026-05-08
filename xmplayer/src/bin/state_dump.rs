@@ -36,6 +36,7 @@ struct Args {
     channels: Vec<usize>,       // empty = all
     all_ticks: bool,
     output: Option<String>,
+    header: bool,
 }
 
 fn parse_int(s: &str) -> Option<usize> {
@@ -57,6 +58,7 @@ fn parse_args() -> Result<Args, String> {
     let mut channels: Vec<usize> = Vec::new();
     let mut all_ticks = false;
     let mut output: Option<String> = None;
+    let mut header = false;
 
     let mut i = 0;
     while i < raw.len() {
@@ -85,6 +87,7 @@ fn parse_args() -> Result<Args, String> {
                 }
             }
             "--all-ticks" => all_ticks = true,
+            "--header" => header = true,
             "--output" => {
                 i += 1;
                 output = Some(raw.get(i).ok_or("--output needs a path")?.clone());
@@ -101,16 +104,36 @@ fn parse_args() -> Result<Args, String> {
         i += 1;
     }
     let path = path.ok_or("missing module path")?;
-    Ok(Args { path, orders, row_range, channels, all_ticks, output })
+    Ok(Args { path, orders, row_range, channels, all_ticks, output, header })
 }
 
 fn print_usage() {
     eprintln!("usage: state_dump <path> [--order N]... [--rows S..E] [--channels a,b]");
-    eprintln!("                  [--all-ticks] [--output FILE]");
+    eprintln!("                  [--all-ticks] [--output FILE] [--header]");
     eprintln!();
     eprintln!("  N, S, E and channel indices accept decimal or 0x hex.");
     eprintln!("  Without --order, every order is dumped.");
     eprintln!("  Without --all-ticks, only first-tick of each row is dumped.");
+    eprintln!("  --header prints song-level params (master/mix/global vol etc.)");
+    eprintln!("           and exits without playing.");
+}
+
+fn print_header(path: &str) {
+    let d = match read_module(path) {
+        Ok(d) => d,
+        Err(e) => { eprintln!("failed to read {}: {:?}", path, e); std::process::exit(1); }
+    };
+    println!("=== {} ===", path);
+    println!("  song_type      : {:?}", d.song_type);
+    println!("  channel_count  : {}", d.channel_count);
+    println!("  song_length    : {}", d.song_length);
+    println!("  master_volume  : {}", d.master_volume);
+    println!("  mixing_volume  : {}", d.mixing_volume);
+    println!("  global_volume  : {}", d.global_volume);
+    println!("  use_amiga      : {}", d.use_amiga);
+    println!("  initial_chvol  : {:?}", &d.initial_channel_volume[..d.channel_count.min(16) as usize]);
+    println!("  initial_chpan  : {:?}", &d.initial_channel_panning[..d.channel_count.min(16) as usize]);
+    println!("  instruments    : {}", d.instruments.len());
 }
 
 fn main() {
@@ -119,6 +142,11 @@ fn main() {
         Err(e) if e == "usage" => { print_usage(); return; }
         Err(e) => { eprintln!("error: {}", e); print_usage(); std::process::exit(2); }
     };
+
+    if args.header {
+        print_header(&args.path);
+        return;
+    }
 
     let song_data = match read_module(&args.path) {
         Ok(d) => d,
