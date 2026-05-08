@@ -461,6 +461,22 @@ impl Note {
         frequency_tables.periods[idx as usize]
     }
 
+    /// Closed-form S3M / IT period from full-precision c5_speed (OpenMPT
+    /// Snd_fx.cpp:6456). Bypasses the 1/16-semitone LUT so c5_speed values
+    /// far from 8363 don't accumulate quantization error. `note_offset` is
+    /// the per-format shift that maps our engine note convention onto
+    /// OpenMPT's `note - NOTE_MIN` 0-indexed convention:
+    ///   * S3M: +11   (engine note 49 = C-5 → formula note 60)
+    ///   * IT:   -1   (engine note 61 = C-5 → formula note 60)
+    pub(crate) fn note_to_period_s3m(note: u8, note_offset: i8, c5_speed: u32) -> u16 {
+        const FREQ_S3M_TABLE: [u16; 12] = [1712, 1616, 1524, 1440, 1356, 1280, 1208, 1140, 1076, 1016, 960, 907];
+        let n = (note as i32 + note_offset as i32).clamp(0, 11 * 12 + 11) as u32;
+        let f = FREQ_S3M_TABLE[(n % 12) as usize] as u64;
+        let num = 8363u64 * (f << 5);
+        let den = (c5_speed.max(1) as u64) << (n / 12);
+        (num / den).min(u16::MAX as u64) as u16
+    }
+
     pub(crate) fn snap_to_semitone(&mut self, frequency_tables: &AudioTables) {
         let mut best_idx = 0;
         let mut best_diff = 65535;

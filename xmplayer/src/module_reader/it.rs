@@ -159,6 +159,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 } else { 255 },
                 surround: (default_panning & 128) == 128 && (default_panning & 0x7F) == 100,
                 relative_note,
+                c5_speed: c5speed,
                 name: name.trim().to_string(),
                 global_volume: sample_global_volume,
                 is_ping_pong: false,

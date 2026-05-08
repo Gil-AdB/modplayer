@@ -275,6 +275,7 @@
             bitness: 8,
             panning: 128,
             relative_note,
+            c5_speed: c3freq,
             name,
             global_volume: 64,
             surround: false,

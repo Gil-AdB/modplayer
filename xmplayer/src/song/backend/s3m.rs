@@ -56,8 +56,18 @@ impl ModuleBackend for S3MBackend {
                             let sample_idx = it_mapping.1 as usize;
                             if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
                                 let sample = &instruments[inst_idx].samples[sample_idx - 1];
-                                let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
-                                channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
+                                // Formula path bypasses LUT quantization when
+                                // c5_speed is recorded (S3M loader sets it).
+                                // Use raw pattern.note (NOT pattern.note +
+                                // relative_note) — the formula already folds
+                                // the c5_speed offset that relative_note was a
+                                // LUT-rounded representation of.
+                                channel.porta_to_note.target_note.period = if sample.c5_speed != 0 {
+                                    crate::channel_state::channel_state::Note::note_to_period_s3m(pattern.note, 11, sample.c5_speed)
+                                } else {
+                                    let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
+                                    channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables)
+                                };
                             }
                         }
                     }
@@ -91,6 +101,16 @@ impl ModuleBackend for S3MBackend {
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
                                 set_channel_note(channel, voice, sample.relative_note, sample.finetune, mapped_note, r.rate, r.frequency_tables);
+                                // S3M c5_speed override: replace the LUT-derived
+                                // period with the closed-form formula so we don't
+                                // lose precision through (c5_speed → finetune+
+                                // relative_note → 1/16-semitone LUT).
+                                if sample.c5_speed != 0 {
+                                    let p = crate::channel_state::channel_state::Note::note_to_period_s3m(pattern.note, 11, sample.c5_speed);
+                                    channel.note.period = p;
+                                    channel.note.base_period = p;
+                                    channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+                                }
                                 voice.last_played_note = pattern.note;
                                 channel.last_played_note = pattern.note;
                                 channel.voice_idx = Some(voice_idx);

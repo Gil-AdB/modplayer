@@ -221,6 +221,7 @@
             bitness: 8,
             panning: 128,
             relative_note: 0,
+            c5_speed: 0, // MOD uses fixed Amiga periods only.
             name,
             global_volume: 64,
             surround: false,

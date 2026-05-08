@@ -345,6 +345,7 @@
                 bitness: 8,
                 panning: 255,
                 relative_note,
+                c5_speed: c2spd,
                 name: sample_name.clone().to_string(),
                 global_volume: 64,
                 surround: false,

@@ -151,6 +151,7 @@ fn read_samples<R: Read>(file: &mut R, sample_count: usize) -> SimpleResult<Vec<
             bitness,
             panning,
             relative_note,
+            c5_speed: 0, // XM uses (relative_note, finetune); not the formula path.
             name,
             global_volume: 64,
             surround: false,

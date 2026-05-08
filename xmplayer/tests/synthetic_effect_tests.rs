@@ -381,6 +381,39 @@ fn test_s3m_note_delay_vol_col_at_trigger() {
 }
 
 #[test]
+fn test_s3m_c5_speed_formula_period() {
+    // S3M loader records full-precision c5_speed; the s3m backend uses the
+    // closed-form OpenMPT formula instead of the LUT so c5_speed != 8363
+    // doesn't accumulate 1/16-semitone quantization error.
+    //
+    // Reference: OpenMPT Snd_fx.cpp:6456:
+    //   period = 8363 * 32 * FreqS3MTable[note0 % 12] / (c5_speed << (note0 / 12))
+    // FreqS3MTable[0] = 1712. For our engine note 49 (S3M file 0x40, "C-5"),
+    // formula note0 = 49 + 11 = 60. note0 % 12 = 0; note0 / 12 = 5.
+    //   period = 8363 * 32 * 1712 / (c5_speed * 32)
+    //          = 8363 * 1712 / c5_speed
+    //
+    // c5=8363 → 1712 (unity, also matches LUT exactly)
+    // c5=10000 → 1431
+    // c5=16000 → 894
+    let cases: &[(u32, u16)] = &[(8363, 1712), (10000, 1431), (16000, 894)];
+    for (c5, expected) in cases {
+        let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+        builder.instruments[1].samples[0].data = vec![0.0; 4096];
+        builder.instruments[1].samples[0].length = 4096;
+        builder.instruments[1].samples[0].c5_speed = *c5;
+        builder.add_empty_pattern(2);
+        // Engine note 49 = S3M file byte 0x40 = "C-5".
+        builder.add_pattern_row(0, 0, 49, 1, 64, 0, 0);
+        let mut tester = builder.get_tester();
+        tester.tick();
+        let p = tester.get_channel_period(0);
+        assert_eq!(p, *expected,
+            "c5_speed={} expected period {} got {}", c5, expected, p);
+    }
+}
+
+#[test]
 fn test_porta_to_note_does_not_underflow_on_large_speed() {
     // Regression: PortaToNoteState::next_tick used u16 wrapping arithmetic
     // and a post-subtract `< target` check. When the slide speed exceeded

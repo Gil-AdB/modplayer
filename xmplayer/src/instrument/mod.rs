@@ -35,6 +35,10 @@ pub struct Sample {
     pub bitness: u8,
     pub panning: u8,
     pub relative_note: i8,
+    // S3M / IT full-precision middle-C frequency (c5_speed). 0 means "use the
+    // LUT path"; non-zero engages the formula-based period in s3m/it backends.
+    // XM/MOD don't carry this and must leave it at 0.
+    pub c5_speed: u32,
     pub name: String,
     pub global_volume: u8,
     pub surround: bool,
@@ -56,6 +60,7 @@ impl Sample {
             bitness: 0,
             panning: 255,
             relative_note: 0,
+            c5_speed: 0,
             name: "".to_string(),
             global_volume: 64,
             surround: false,
