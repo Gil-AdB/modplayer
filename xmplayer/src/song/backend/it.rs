@@ -170,16 +170,7 @@ impl ModuleBackend for ItBackend {
                 95..=104 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -((pattern.volume - 95) as i8)); }
                 105..=114 => { channel.porta_up(r.song_data.song_type, first_tick, (pattern.volume - 105) << 2); }
                 115..=124 => { channel.porta_down(r.song_data.song_type, first_tick, (pattern.volume - 115) << 2); }
-                128..=192 => {
-                    // Vol-col panning: gate on note_delay_first_tick so
-                    // SDx defers the pan-set to the trigger tick (matches
-                    // FT2/EDx — ft2-clone src/ft2_replayer.c:2202).
-                    if note_delay_first_tick {
-                        if let Some(v) = voice_ref.as_deref_mut() {
-                            v.panning.set_panning(((pattern.volume - 128) << 2) as i32);
-                        }
-                    }
-                }
+                128..=192 => { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(((pattern.volume - 128) << 2) as i32); } }
                 193..=202 => { channel.it_vol_col_porta_to_note(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume - 193, r.compatible_g, r.rate, r.frequency_tables); }
                 203..=212 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.volume - 203, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
                 _ => {}

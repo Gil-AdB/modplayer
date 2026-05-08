@@ -617,7 +617,6 @@ pub(super) fn apply_extended(
     let row              = ctx.row;
     let first_tick       = ctx.first_tick;
     let first_row_tick   = ctx.first_row_tick;
-    let note_delay_first_tick = ctx.note_delay_first_tick;
     let song_type        = ctx.song_type;
     // ctx.rate / ctx.frequency_tables aren't read directly here; the
     // channel.fine_porta_* paths reach period tables through SongType.
@@ -692,11 +691,7 @@ pub(super) fn apply_extended(
         }
         ExtendedCmdKind::SetExtraPanning => {
             // S3M S8x: y nibble * 17 maps 0..15 to 0..255.
-            // Gate on note_delay_first_tick so an SDx-delayed row defers
-            // the pan-set to the trigger tick, matching FT2 EDx behavior
-            // (ft2-clone src/ft2_replayer.c:2202 fires C0..CF panning at
-            // the trigger tick of an EDx row).
-            if note_delay_first_tick {
+            if first_tick {
                 if let Some(v) = voice.as_deref_mut() {
                     v.panning.set_panning(((y as i32) * 17).min(255));
                 }
@@ -704,7 +699,7 @@ pub(super) fn apply_extended(
         }
         ExtendedCmdKind::SetItPanning => {
             // IT S8x: y << 4 — 16-step coarse panning.
-            if note_delay_first_tick {
+            if first_tick {
                 if let Some(v) = voice.as_deref_mut() {
                     v.panning.set_panning((y << 4) as i32);
                 }
@@ -977,30 +972,22 @@ pub(super) fn apply_effect(
             apply_vol_slide(channel, voice, ctx, pattern.effect_param);
         }
 
-        // Set-pan effects: gated on note_delay_first_tick so an SDx/EDx
-        // note-delay row defers the pan-set to the trigger tick (matches
-        // FT2 EDx — ft2-clone src/ft2_replayer.c:1391 returns early on
-        // note-delay rows at tick 0; the trigger tick fires set-X work).
-        // Pre-fix: gated on `first_tick`, which fired the pan-set on the
-        // *previous* (still-ringing) voice, then if the next row carried
-        // a pan setting too, it would overwrite at row boundary — same
-        // one-tick spike shape as the SDx vol-col bug.
         EffectKind::SetPanningXm => {
-            if ctx.note_delay_first_tick {
+            if ctx.first_tick {
                 if let Some(v) = voice.as_deref_mut() {
                     v.panning.set_panning(pattern.effect_param as i32);
                 }
             }
         }
         EffectKind::SetPanningIt => {
-            if ctx.note_delay_first_tick {
+            if ctx.first_tick {
                 if let Some(v) = voice.as_deref_mut() {
                     v.panning.set_panning((pattern.effect_param as i32 * 4).min(255));
                 }
             }
         }
         EffectKind::SetPanningS3m => {
-            if ctx.note_delay_first_tick {
+            if ctx.first_tick {
                 if let Some(v) = voice.as_deref_mut() {
                     v.panning.set_panning(pattern.effect_param as i32);
                 }
@@ -1027,17 +1014,13 @@ pub(super) fn apply_effect(
         EffectKind::VolSlideItStyle => {
             channel.it_volume_slide(voice.as_deref_mut(), ctx.note_delay_first_tick, pattern.effect_param);
         }
-        // Cxx (XM set volume) and Mxx (S3M set channel volume): both are
-        // single-fire row-start commands. Gate on note_delay_first_tick
-        // so an SDx-delayed row defers the set to the trigger tick. See
-        // the matching SDx vol-col rationale and ft2-clone:1391.
         EffectKind::SetVolume => {
-            if ctx.note_delay_first_tick {
+            if ctx.first_tick {
                 channel.set_volume(voice.as_deref_mut(), true, pattern.effect_param);
             }
         }
         EffectKind::SetChannelVolume => {
-            if ctx.note_delay_first_tick {
+            if ctx.first_tick {
                 channel.channel_volume = pattern.effect_param.min(64);
             }
         }
