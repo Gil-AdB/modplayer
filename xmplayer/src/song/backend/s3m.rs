@@ -108,11 +108,17 @@ impl ModuleBackend for S3MBackend {
 
             let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
-            // Volume Column (S3M volume range: 0-63, 255 = no volume present)
-            if first_tick {
+            // Volume Column (S3M volume range: 0-63, 255 = no volume present).
+            // Gate on `note_delay_first_tick` rather than `first_tick` so a
+            // SDx note-delay defers the volume change to the trigger tick;
+            // otherwise the row's new volume gets applied at tick 0 to the
+            // *previous* note that's still ringing, then the actual trigger
+            // happens later at a different period — audible as a chirp /
+            // click. (See 2ND_PM.S3M order 0x23 row 02 ch4 for the repro.)
+            if note_delay_first_tick {
                 match pattern.volume {
-                    0..=64 => { 
-                        channel.set_volume(voice_ref.as_deref_mut(), true, pattern.volume); 
+                    0..=64 => {
+                        channel.set_volume(voice_ref.as_deref_mut(), true, pattern.volume);
                     }
                     _ => {}
                 }

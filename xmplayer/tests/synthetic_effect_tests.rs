@@ -334,6 +334,51 @@ fn test_seek_forward_pattern_terminates_when_looping() {
 }
 
 #[test]
+fn test_s3m_note_delay_defers_volume_column() {
+    // Regression: S3M Sxx subcommand SDx (note delay by x ticks) must
+    // defer the row's volume column to the trigger tick. Pre-fix, the
+    // S3M backend gated volume on `first_tick` rather than
+    // `note_delay_first_tick`, so the new volume was applied at tick 0
+    // of the row to the *previous* (still-ringing) note's period —
+    // audible as a chirp / click before the actual trigger fired
+    // later. (Repro: 2ND_PM.S3M order 0x23 row 02 ch4.)
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.instruments[1].samples[0].data = vec![0.0; 100000];
+    builder.instruments[1].samples[0].length = 100000;
+    builder.add_empty_pattern(2);
+    // Row 0: trigger C-4 at full vol so we have something ringing.
+    builder.add_pattern_row(0, 0, 49, 1, 64, 0, 0);
+    // Row 1: trigger D-4 with vol=1 + SD3 (note delay 3 ticks).
+    // S3M effect 0x13 = S, param 0xD3 = SD3.
+    builder.add_pattern_row(0, 1, 51, 1, 1, 0x13, 0xD3);
+    let mut tester = builder.get_tester();
+
+    tester.run_row();
+    let row0_vol = tester.song.voices[0].volume.volume;
+    assert_eq!(row0_vol, 64);
+
+    // Tick 0 of row 1: the volume column (vol=1) must NOT have been
+    // applied yet — the previous note is still ringing.
+    tester.tick();
+    assert_eq!(tester.song.voices[0].volume.volume, 64,
+               "vol column must not fire before note-delay trigger; got {}",
+               tester.song.voices[0].volume.volume);
+
+    // Ticks 1, 2: still pre-trigger, still old vol.
+    tester.tick();
+    assert_eq!(tester.song.voices[0].volume.volume, 64);
+    tester.tick();
+    assert_eq!(tester.song.voices[0].volume.volume, 64);
+
+    // Tick 3: note-delay fires; new note triggers AND volume column
+    // now lands as 1 (overriding the instrument default).
+    tester.tick();
+    assert_eq!(tester.song.voices[0].volume.volume, 1,
+               "vol column should land at the note-delay trigger tick; got {}",
+               tester.song.voices[0].volume.volume);
+}
+
+#[test]
 fn test_porta_to_note_does_not_underflow_on_large_speed() {
     // Regression: PortaToNoteState::next_tick used u16 wrapping arithmetic
     // and a post-subtract `< target` check. When the slide speed exceeded

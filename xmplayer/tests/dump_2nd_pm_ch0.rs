@@ -228,8 +228,9 @@ fn trace_full_state(path: &str, target_order: usize, channels: &[usize], rows: s
                 let v = ch.voice_idx.map(|i| (i, &song.voices[i]));
                 if pre_tick == 0 {
                     println!(
-                        "row {:02x} ch{} pat: note={:>3} inst={:>3} vol={:>3} eff={:02x}{:02x}",
+                        "row {:02x} ch{} pat: note={:>3} inst={:>3} vol={:>3} eff={:02x}{:02x}  | song.speed={} bpm={}",
                         pre_row, c, p.note, p.instrument, p.volume, p.effect, p.effect_param,
+                        song.speed, song.bpm.bpm,
                     );
                 }
                 match v {
@@ -253,6 +254,15 @@ fn trace_2nd_pm_order_0x14_ch7_full() {
     trace_full_state(
         "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M",
         0x14, &[7], 0x30..0x40,
+    );
+}
+
+#[test]
+#[ignore = "Manual: order 0x23 ch3 (display CH04) effect 13D (SetSpeed 0x3D)"]
+fn trace_2nd_pm_order_0x23_ch3_speed() {
+    trace_full_state(
+        "/Users/gil-ad/work/modplayer/scratch/2ND_PM.S3M",
+        0x23, &[3], 0x00..0x14,
     );
 }
 
