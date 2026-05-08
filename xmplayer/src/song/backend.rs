@@ -196,6 +196,65 @@ pub(super) fn apply_flow_control_effect(
     }
 }
 
+/// Per-format rules for what shifts when a row carries an SDx / EDx
+/// note-delay effect. Each flag answers "does this event move from row
+/// tick 0 to the trigger tick (= delay value)?". Trackers disagree about
+/// the volume column; the rest is consistent.
+///
+/// **Why a table.** Any per-format quirk we discover (an OpenMPT compat
+/// flag, a Schism Tracker behavior, etc.) becomes one new const + one
+/// new field, with the call-site already reading `delay_schedule(...)`.
+/// Avoids the scattered `if note_delay_first_tick` gating where each
+/// site has to remember the format-specific quirk independently.
+#[derive(Clone, Copy)]
+pub(super) struct DelaySchedule {
+    /// True: vol col fires at the trigger tick (overrides retrig vol).
+    /// False: vol col fires at row tick 0 on the still-ringing previous
+    /// voice; the new voice triggers later at instrument-default vol.
+    pub vol_col_at_trigger: bool,
+}
+
+const S3M_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
+const IT_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
+const XM_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
+const MOD_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
+
+pub(super) fn delay_schedule(song_type: SongType) -> DelaySchedule {
+    match song_type {
+        SongType::S3M => S3M_DELAY,
+        SongType::IT  => IT_DELAY,
+        SongType::XM  => XM_DELAY,
+        SongType::MOD => MOD_DELAY,
+        _             => MOD_DELAY,
+    }
+}
+
+/// Per-channel timing for the row currently being processed: the tick
+/// (within the row) at which each per-row event fires. For most rows
+/// everything lives on tick 0; SDx/EDx note-delay shifts the trigger
+/// (and per the format, possibly the vol col) to `delay = pattern.get_y()`.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RowTiming {
+    pub trigger_tick: u32,
+    pub vol_col_tick: u32,
+}
+
+impl RowTiming {
+    pub(super) fn for_row(pattern: &Pattern, song_type: SongType) -> Self {
+        let trigger_tick = if pattern.is_note_delay(song_type) {
+            pattern.get_y() as u32
+        } else {
+            0
+        };
+        let vol_col_tick = if delay_schedule(song_type).vol_col_at_trigger {
+            trigger_tick
+        } else {
+            0
+        };
+        Self { trigger_tick, vol_col_tick }
+    }
+}
+
 /// Pre-iteration boilerplate every backend repeats at the top of its
 /// per-channel loop: reset transient flags, latch `last_instrument` from
 /// the row's instrument byte, and compute the gating used by every
@@ -203,7 +262,9 @@ pub(super) fn apply_flow_control_effect(
 ///
 /// Returns `note_delay_first_tick`: the tick at which a note-delayed row
 /// (XM `EDx` / S3M/IT `SDx`) should fire its trigger; falls back to
-/// `first_tick` when the row carries no note delay.
+/// `first_tick` when the row carries no note delay. New code should
+/// prefer `RowTiming::for_row` for per-event timing — this bool is kept
+/// for the existing call sites that haven't migrated yet.
 pub(super) fn init_channel_iter(
     channel: &mut ChannelState,
     pattern: &Pattern,

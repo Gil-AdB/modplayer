@@ -3,7 +3,8 @@ use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
     init_channel_iter, init_voice_basics, mute_silent_voices, set_channel_note,
-    EffectCtx, ModuleBackend, SongPlaybackResources, S3M_EFFECT_TABLE, S3M_S_TABLE,
+    EffectCtx, ModuleBackend, RowTiming, SongPlaybackResources,
+    S3M_EFFECT_TABLE, S3M_S_TABLE,
 };
 
 pub struct S3MBackend {}
@@ -24,6 +25,7 @@ impl ModuleBackend for S3MBackend {
             let note_delay_first_tick = init_channel_iter(
                 channel, pattern, instruments, r.song_data.song_type, *r.tick, first_tick,
             );
+            let timing = RowTiming::for_row(pattern, r.song_data.song_type);
 
             // Note trigger logic
             // (S3M parser converts file-byte 254 -> engine 97 (Note Off);
@@ -31,14 +33,14 @@ impl ModuleBackend for S3MBackend {
             // old code have been dropped along with this rewrite.)
             match pattern.note_action(r.song_data.song_type) {
             NoteAction::Off => {
-                if note_delay_first_tick {
+                if *r.tick == timing.trigger_tick {
                     if let Some(v_idx) = channel.voice_idx {
                         r.voices[v_idx].key_off(instruments, false);
                     }
                 }
             }
             NoteAction::Cut => {
-                if note_delay_first_tick {
+                if *r.tick == timing.trigger_tick {
                     if let Some(v_idx) = channel.voice_idx {
                         r.voices[v_idx].on = false;
                         r.voices[v_idx].volume.output_volume = 0.0;
@@ -59,7 +61,7 @@ impl ModuleBackend for S3MBackend {
                             }
                         }
                     }
-                } else if note_delay_first_tick {
+                } else if *r.tick == timing.trigger_tick {
                     channel.on = true;
                     let inst_idx = channel.last_instrument;
                     if inst_idx != 0 {
@@ -109,13 +111,12 @@ impl ModuleBackend for S3MBackend {
             let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
             // Volume Column (S3M volume range: 0-63, 255 = no volume present).
-            // Gate on `note_delay_first_tick` rather than `first_tick` so a
-            // SDx note-delay defers the volume change to the trigger tick;
-            // otherwise the row's new volume gets applied at tick 0 to the
-            // *previous* note that's still ringing, then the actual trigger
-            // happens later at a different period — audible as a chirp /
-            // click. (See 2ND_PM.S3M order 0x23 row 02 ch4 for the repro.)
-            if note_delay_first_tick {
+            // The tick at which it fires is decided by the per-format
+            // DelaySchedule (see backend.rs::delay_schedule). For S3M the
+            // current rule is "fire at trigger tick" — change one const
+            // there to flip the per-format quirk without touching this
+            // call site or the other backends.
+            if *r.tick == timing.vol_col_tick {
                 match pattern.volume {
                     0..=64 => {
                         channel.set_volume(voice_ref.as_deref_mut(), true, pattern.volume);
