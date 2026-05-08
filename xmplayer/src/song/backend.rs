@@ -214,8 +214,15 @@ pub(super) struct DelaySchedule {
     pub vol_col_at_trigger: bool,
 }
 
-const S3M_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
-const IT_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
+// S3M (and IT in IT-compat S3M mode): ST3-style. Vol col fires at row
+// tick 0 on the still-ringing voice; the new note triggers later at the
+// instrument default volume. Verified loud-F-4 entry against master at
+// 2ND_PM.S3M order 0x23 row 0x32 (ch4): master shows post-trigger
+// Vol=1.000 (=64/64), matching this `false` setting.
+const S3M_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: false };
+const IT_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: false };
+// XM/MOD: FT2 EDx — vol col fires AT the trigger tick, overriding the
+// retrig-loaded instrument default. Per ft2-clone src/ft2_replayer.c:2197.
 const XM_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
 const MOD_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
 
