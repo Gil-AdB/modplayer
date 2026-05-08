@@ -182,7 +182,11 @@ fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Setti
     // Apply persisted UI preferences before the audio thread starts.
     // Direct field mutation (rather than send-cycle-N-times) is safe here
     // because the audio thread isn't running yet — `song_data.start()` is
-    // what spawns it.
+    // what spawns it. Grab `channel_count` while we're holding the lock,
+    // because once the audio thread starts it holds the song mutex for
+    // the entire song lifetime (see SongState::callback) and any later
+    // attempt to `.lock()` would deadlock the keyboard handler.
+    let channel_count;
     {
         let mut song = song_data.get_song().lock().unwrap();
         song.theme_id = settings.theme_id;
@@ -190,6 +194,7 @@ fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Setti
         song.view_mode = settings.view_mode;
         song.visualizer_enabled = settings.visualizer_enabled;
         song.visualizer_mode = settings.visualizer_mode;
+        channel_count = song.get_channel_count();
     }
 
     let handle = song_data.start(|data, instruments, patterns, order| {
@@ -224,7 +229,7 @@ fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Setti
     });
 
     audio.start_audio_output();
-    let exit = mainloop(song_data);
+    let exit = mainloop(song_data, channel_count);
 
     song_data.close();
     if handle.0.is_some() {
@@ -329,7 +334,7 @@ fn execute_command(buf: &str, tx: &std::sync::mpsc::Sender<PlaybackCmd>) -> Opti
     None
 }
 
-fn mainloop(song_data: &SongState) -> LoopExit {
+fn mainloop(song_data: &SongState, channel_count: usize) -> LoopExit {
 
     if let Ok(size) = crossterm::terminal::size() {
         let tx = song_data.get_sender();
@@ -340,13 +345,6 @@ fn mainloop(song_data: &SongState) -> LoopExit {
     }
 
     let mut mode = InputMode::Normal;
-
-    // Channel count is stable per song; cache it so we don't lock the
-    // Song mutex on every keypress while in cursor mode.
-    let channel_count = {
-        let s = song_data.get_song().lock().unwrap();
-        s.get_channel_count()
-    };
 
     if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
     loop {
