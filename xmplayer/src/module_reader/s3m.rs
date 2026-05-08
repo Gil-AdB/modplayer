@@ -120,13 +120,26 @@
         // Channel Volume). Master hardcodes [64; 64] here too.
         let initial_channel_volume = [64u8; 64];
 
+        // ST3 default panning per the S3M spec / OpenMPT Load_s3m.cpp:522-523.
+        // For stereo files (master_volume bit 7 set), each PCM channel defaults
+        // to hard-ish L (0x33 = 51) or R (0xCC = 204) based on the channel
+        // settings byte's bit 3. For mono files, all channels default to
+        // center (128). The optional pan-data block (default_panning_present
+        // == 0xFC = 252) overrides per channel.
+        //
+        // Without this, .S3M files render mono / center-panned, losing the
+        // L/R separation OpenMPT and ST3 produce — audible as a "flat" or
+        // "off" mix even when pitch/volume per-channel are correct.
+        let is_stereo = (master_volume & 0x80) != 0;
         let mut initial_channel_panning = [128u8; 64];
-        /* 
-        for i in 0..32 {
-            initial_channel_panning[i] = if i % 2 == 0 { 51 } else { 204 };
+        if is_stereo {
+            for i in 0..32 {
+                if channel_data[i] != 0xFF {
+                    initial_channel_panning[i] = if channel_data[i] & 8 != 0 { 0xCC } else { 0x33 };
+                }
+            }
         }
-        */
-        
+
         if default_panning_present == 252 {
             let panning_data = file.read_bytes(32)?;
             for i in 0..32 {
