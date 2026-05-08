@@ -532,22 +532,22 @@ pub(super) const MOD_E_TABLE: [ExtendedCmdKind; 16] = {
 pub(super) const S3M_S_TABLE: [ExtendedCmdKind; 16] = {
     use ExtendedCmdKind::*;
     [
-        None,             // S0
-        None,             // S1  set glissando (not implemented)
-        None,             // S2  set finetune (not implemented)
-        None,             // S3  vibrato waveform (not implemented)
-        None,             // S4  tremolo waveform (not implemented)
-        None,             // S5
-        None,             // S6  delay note retrigger
-        None,             // S7  NNA controls
+        None,             // S0  Amiga LED filter (n/a for digital pipeline)
+        Glissando,        // S1  set glissando (param != 0 enables semitone-snap porta)
+        None,             // S2  set finetune  (TODO: needs channel c5_speed override)
+        VibratoWaveform,  // S3  vibrato waveform (low 2 bits = sine/sawtooth/square)
+        TremoloWaveform,  // S4  tremolo waveform
+        None,             // S5  panbrello waveform (IT-only)
+        None,             // S6  frame delay (rarely-used IT-era extension)
+        None,             // S7  NNA controls (IT-only)
         SetExtraPanning,  // S8  panning (param * 17)
-        None,             // S9  surround
-        None,             // SA  high sample offset
+        None,             // S9  surround   (n/a for stereo pipeline)
+        None,             // SA  high sample offset (TODO: combine with O for >65535-byte samples)
         PatternLoop,      // SB
         NoteCutAtTick,    // SC
-        None,             // SD  note delay
+        None,             // SD  note delay (handled at note-trigger time)
         PatternDelay,     // SE
-        None,             // SF
+        None,             // SF  MIDI macro (IT-only)
     ]
 };
 
