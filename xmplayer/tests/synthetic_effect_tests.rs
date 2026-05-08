@@ -437,6 +437,37 @@ fn test_it_c5_speed_formula_period() {
 }
 
 #[test]
+fn test_s3m_arpeggio_uses_formula_in_amiga_mode() {
+    // S3M arpeggio J37 at engine note 49 (S3M file 0x40 → formula note 60).
+    // tick%3==0 → period at +0 semitones = formula(60) = 1712
+    // tick%3==1 → period at +3 semitones = formula(63) = 32*1440/2^5 = 1440
+    // tick%3==2 → period at +7 semitones = formula(67) = 32*1140/2^5 = 1140
+    //
+    // Pre-fix (FT2-style -(x*64) shift in amiga mode):
+    // tick==1 would give period 1712 - 192 = 1520 (≈+200 cents instead of 300),
+    // tick==2 would give 1712 - 448 = 1264 (≈+520 cents instead of 700).
+    // The amiga FT2 quirk is preserved for XM/MOD; S3M/IT amiga use the
+    // formula via the override in backend.rs Arpeggio handler.
+    let mut builder = MockSongBuilder::new(SongType::S3M, 1);
+    builder.use_amiga_freq(true);
+    builder.instruments[1].samples[0].data = vec![0.0; 4096];
+    builder.instruments[1].samples[0].length = 4096;
+    builder.instruments[1].samples[0].c5_speed = 8363;
+    builder.add_empty_pattern(1);
+    // S3M effect 'J' = 0x0A in our normalized effect numbering. Param 0x37
+    // means x=3, y=7.
+    builder.add_pattern_row(0, 0, 49, 1, 64, 0x0A, 0x37);
+    let mut tester = builder.get_tester();
+
+    tester.tick(); // tick 0
+    assert_eq!(tester.get_channel_effective_period(0), 1712, "tick0: base period");
+    tester.tick(); // tick 1
+    assert_eq!(tester.get_channel_effective_period(0), 1440, "tick1: +3 semitones");
+    tester.tick(); // tick 2
+    assert_eq!(tester.get_channel_effective_period(0), 1140, "tick2: +7 semitones");
+}
+
+#[test]
 fn test_porta_to_note_does_not_underflow_on_large_speed() {
     // Regression: PortaToNoteState::next_tick used u16 wrapping arithmetic
     // and a post-subtract `< target` check. When the slide speed exceeded

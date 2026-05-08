@@ -596,6 +596,12 @@ pub(super) struct EffectCtx<'a> {
     pub rate:           f32,
     pub old_effects:    bool,
     pub compatible_g:   bool,
+    /// True when the song uses Amiga-period mode (false = linear). S3M is
+    /// always Amiga; IT/XM read the flag from their headers. Used by the
+    /// S3M/IT arpeggio formula override — in linear mode the existing
+    /// period_shift = -(x*64) is exact (LUT is 64 units per semitone), so
+    /// the override only kicks in for amiga where it's audibly wrong.
+    pub use_amiga:      bool,
 }
 
 /// Apply an extended-subcommand effect. Operates on the channel/voice the
@@ -916,6 +922,39 @@ pub(super) fn apply_effect(
             let has_memory = matches!(ctx.song_type, SongType::S3M | SongType::IT);
             if pattern.effect_param != 0 || has_memory {
                 channel.arpeggio(ctx.tick, pattern.get_x(), pattern.get_y(), has_memory);
+                // S3M/IT amiga override: the FT2-style `period_shift = -(x*64)`
+                // set above is exact in linear mode (LUT is 64 units/semitone)
+                // but ~33 cents flat per step in amiga mode (FT2 quirk that
+                // XM songs depend on; OpenMPT's S3M/IT path uses the formula
+                // for true semitones). Recompute the shift from the c5_speed
+                // formula so arp steps land on correct semitones.
+                let arpeggio_via_formula = matches!(ctx.song_type, SongType::S3M | SongType::IT)
+                    && ctx.use_amiga;
+                if arpeggio_via_formula {
+                    if let Some(v) = voice.as_deref() {
+                        let inst = &ctx.instruments[v.instrument];
+                        if v.sample < inst.samples.len() {
+                            let sample = &inst.samples[v.sample];
+                            if sample.c5_speed != 0 && channel.note.original_note != 0 {
+                                let offset = if ctx.song_type == SongType::S3M { 11i8 } else { -1i8 };
+                                let arp_step = match ctx.tick % 3 {
+                                    1 => pattern.get_x() as i8,
+                                    2 => pattern.get_y() as i8,
+                                    _ => 0,
+                                };
+                                if arp_step != 0 {
+                                    let base = crate::channel_state::channel_state::Note::note_to_period_s3m(
+                                        channel.note.original_note, offset, sample.c5_speed,
+                                    ) as i32;
+                                    let stepped = crate::channel_state::channel_state::Note::note_to_period_s3m(
+                                        channel.note.original_note, offset + arp_step, sample.c5_speed,
+                                    ) as i32;
+                                    channel.period_shift = (stepped - base) as i16;
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 channel.period_shift = 0;
             }

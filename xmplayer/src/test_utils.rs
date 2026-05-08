@@ -12,6 +12,7 @@ pub struct MockSongBuilder {
     pub instruments: Vec<Instrument>,
     pub global_volume: u8,
     pub master_volume: u8,
+    pub use_amiga: bool,
 }
 
 impl MockSongBuilder {
@@ -33,6 +34,7 @@ impl MockSongBuilder {
             },
             global_volume: 64,
             master_volume: 48 | 128, // Default S3M style: Vol 48, Stereo
+            use_amiga: false,
         }
     }
 
@@ -63,6 +65,11 @@ impl MockSongBuilder {
             effect: eff,
             effect_param: eff_param,
         };
+        self
+    }
+
+    pub fn use_amiga_freq(&mut self, on: bool) -> &mut Self {
+        self.use_amiga = on;
         self
     }
 
@@ -100,12 +107,12 @@ impl MockSongBuilder {
             channel_count: self.channels as u16,
             patterns: self.patterns.clone(),
             instrument_count: self.instruments.len() as u16,
-            frequency_type: FrequencyType::LINEAR,
+            frequency_type: if self.use_amiga { FrequencyType::AMIGA } else { FrequencyType::LINEAR },
             tempo: 6,
             bpm: 125,
             pattern_order: self.order.clone(),
             instruments: self.instruments.clone(),
-            use_amiga: false,
+            use_amiga: self.use_amiga,
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
             initial_channel_panning: [128; 64],
@@ -169,6 +176,16 @@ impl SongTester {
 
     pub fn get_channel_period(&self, channel: usize) -> u16 {
         self.song.channels[channel].note.period
+    }
+
+    /// Period after period_shift (arpeggio / vibrato / etc.) is applied. The
+    /// raw `note.period` is the trigger-time pitch; effects that nudge pitch
+    /// per-tick land in `period_shift`, which `update_frequency_voice` adds
+    /// in to drive the voice. Tests that care about the actual playing pitch
+    /// should use this.
+    pub fn get_channel_effective_period(&self, channel: usize) -> i32 {
+        let c = &self.song.channels[channel];
+        c.note.period as i32 + c.period_shift as i32
     }
 
     pub fn get_channel_vibrato(&self, channel: usize) -> (u8, u8) {

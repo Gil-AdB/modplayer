@@ -390,6 +390,7 @@ impl Song {
                             rate,
                             old_effects: self.old_effects,
                             compatible_g: self.compatible_g,
+                            use_amiga: self.song_data.use_amiga,
                         };
                         apply_extended(kind, &mut self.channels[i], None, &mut ctx, pat.get_y());
                     }

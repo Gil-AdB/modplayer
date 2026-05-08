@@ -171,6 +171,7 @@ impl ModuleBackend for S3MBackend {
                 rate: r.rate,
                 old_effects: r.old_effects,
                 compatible_g: r.compatible_g,
+                use_amiga: r.song_data.use_amiga,
             };
             dispatch_main_and_extended(
                 pattern, channel, voice_ref.as_deref_mut(),
