@@ -238,6 +238,80 @@ fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Setti
     exit
 }
 
+/// Command-palette state. While in `Command(buf)` we capture all
+/// printable keys into the buffer instead of dispatching them. `:` enters
+/// the mode; Enter executes; Esc cancels. The buffer is mirrored to the
+/// audio-thread display via `cmdline_buf` user_data so the user sees what
+/// they're typing.
+enum InputMode {
+    Normal,
+    Command(String),
+}
+
+/// Push the current command-line buffer into UserData so the display
+/// thread renders the status line. `show=false` hides it.
+fn sync_cmdline(tx: &std::sync::mpsc::Sender<PlaybackCmd>, show: bool, buf: &str) {
+    let _ = tx.send(PlaybackCmd::SetUserData(
+        "cmdline_show".to_string(),
+        UserData::USize(if show { 1 } else { 0 }),
+    ));
+    let _ = tx.send(PlaybackCmd::SetUserData(
+        "cmdline_buf".to_string(),
+        UserData::String(buf.to_string()),
+    ));
+}
+
+/// Parse and dispatch a `:`-command. Returns Some(LoopExit) if the command
+/// requires the mainloop to return (quit / next song / prev song);
+/// otherwise None. Channel indices in commands are 1-based for human use
+/// and converted to 0-based PlaybackCmd args here.
+fn execute_command(buf: &str, tx: &std::sync::mpsc::Sender<PlaybackCmd>) -> Option<LoopExit> {
+    let toks: Vec<&str> = buf.split_whitespace().collect();
+    if toks.is_empty() { return None; }
+    match toks[0] {
+        "q" | "quit" => {
+            let _ = tx.send(PlaybackCmd::Quit);
+            return Some(LoopExit::Quit);
+        }
+        "next" => return Some(LoopExit::NextSong),
+        "prev" => return Some(LoopExit::PrevSong),
+        "ch" if toks.len() == 3 => {
+            // :ch <N> <m|s|u>   — N is 1-based.
+            let Ok(n) = toks[1].parse::<u32>() else { return None; };
+            if n == 0 { return None; }
+            let idx = (n - 1) as u8;
+            match toks[2] {
+                "m" | "mute"  => { let _ = tx.send(PlaybackCmd::ChannelToggle(idx)); }
+                "s" | "solo"  => { let _ = tx.send(PlaybackCmd::ChannelSolo(idx)); }
+                "u" | "unmute" => {
+                    // No "unmute single channel" command; toggle works if
+                    // currently muted, no-op otherwise. Accept as alias.
+                    let _ = tx.send(PlaybackCmd::ChannelToggle(idx));
+                }
+                _ => {}
+            }
+        }
+        "mute" if toks.get(1) == Some(&"all") => { let _ = tx.send(PlaybackCmd::ChannelMuteAll); }
+        "unmute" if toks.get(1) == Some(&"all") => { let _ = tx.send(PlaybackCmd::ChannelUnmuteAll); }
+        "goto" if toks.len() == 2 => {
+            // Accept hex (`0x14`, `14h`) and decimal.
+            let s = toks[1];
+            let parsed = if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                u32::from_str_radix(rest, 16).ok()
+            } else if let Some(rest) = s.strip_suffix('h').or_else(|| s.strip_suffix('H')) {
+                u32::from_str_radix(rest, 16).ok()
+            } else {
+                s.parse::<u32>().ok()
+            };
+            if let Some(n) = parsed {
+                let _ = tx.send(PlaybackCmd::SetPosition(n));
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
 fn mainloop(song_data: &SongState) -> LoopExit {
 
     if let Ok(size) = crossterm::terminal::size() {
@@ -247,6 +321,8 @@ fn mainloop(song_data: &SongState) -> LoopExit {
         let _ = tx.send(PlaybackCmd::SetUserData("x".to_string(), UserData::ISize(0)));
         let _ = tx.send(PlaybackCmd::SetUserData("y".to_string(), UserData::ISize(0)));
     }
+
+    let mut mode = InputMode::Normal;
 
     if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
     loop {
@@ -259,6 +335,37 @@ fn mainloop(song_data: &SongState) -> LoopExit {
             match crossterm::event::read() {
                 Ok(crossterm::event::Event::Key(event)) => {
                     let tx = song_data.get_sender();
+                    // Command-palette mode short-circuits all normal keymapping.
+                    if let InputMode::Command(ref buf) = mode {
+                        match event.code {
+                            KeyCode::Esc => {
+                                sync_cmdline(&tx, false, "");
+                                mode = InputMode::Normal;
+                            }
+                            KeyCode::Enter => {
+                                let cmd = buf.clone();
+                                sync_cmdline(&tx, false, "");
+                                mode = InputMode::Normal;
+                                if let Some(exit) = execute_command(&cmd, &tx) {
+                                    return exit;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                let mut new_buf = buf.clone();
+                                new_buf.pop();
+                                sync_cmdline(&tx, true, &new_buf);
+                                mode = InputMode::Command(new_buf);
+                            }
+                            KeyCode::Char(c) => {
+                                let mut new_buf = buf.clone();
+                                new_buf.push(c);
+                                sync_cmdline(&tx, true, &new_buf);
+                                mode = InputMode::Command(new_buf);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     match event.code {
                         KeyCode::Backspace => {}
                         KeyCode::Enter => {}
@@ -313,6 +420,13 @@ fn mainloop(song_data: &SongState) -> LoopExit {
                                 'q' => {
                                     let _ = tx.send(PlaybackCmd::Quit);
                                     return LoopExit::Quit;
+                                }
+                                ':' => {
+                                    // Enter command-palette input mode. The
+                                    // outer `if let InputMode::Command...`
+                                    // branch will handle subsequent keys.
+                                    sync_cmdline(&tx, true, "");
+                                    mode = InputMode::Command(String::new());
                                 }
                                 '>' => {
                                     // Next playlist track (Shift-period).

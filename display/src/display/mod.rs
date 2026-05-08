@@ -161,6 +161,22 @@ impl Display {
                 _ => {}
             }
         }
+
+        // Status line for command-palette mode (`:`-prefixed commands).
+        // Visible only when `cmdline_show` user_data is 1; the buffer is in
+        // `cmdline_buf`. Drawn over whatever lives at the bottom row.
+        let show = matches!(play_data.user_data.get("cmdline_show"), Some(UserData::USize(1)));
+        if show {
+            let buf = match play_data.user_data.get("cmdline_buf") {
+                Some(UserData::String(s)) => s.as_str(),
+                _ => "",
+            };
+            let y = height.saturating_sub(1);
+            // Clear the row first so leftover frame data doesn't bleed through.
+            for fx in 0..width { grid.set_cell(fx, y, ' ', theme.col_note, theme.row_bg_even); }
+            let line = format!(":{}_", buf);
+            grid.print(0, y, &line, theme.accent_fg, theme.row_bg_even);
+        }
     }
 
     fn get_theme(theme_id: u32) -> Theme {
@@ -855,9 +871,10 @@ impl Display {
 
         grid.print(c3, start_y,     "--- CHANNELS ---",              acc, bg_h);
         grid.print(c3, start_y + 1, "1..0     : Toggle ch 1..10",    fg, bg);
-        grid.print(c3, start_y + 2, "Alt+1..0 : Toggle ch 11..20",   fg, bg);
-        grid.print(c3, start_y + 3, "Shift+#  : Solo channel",       fg, bg);
+        grid.print(c3, start_y + 2, "Alt+1..0 : Toggle ch 11..20*",  fg, bg);
+        grid.print(c3, start_y + 3, "Shift+#  : Solo channel*",      fg, bg);
         grid.print(c3, start_y + 4, "m / a    : Mute / Unmute All",  fg, bg);
+        grid.print(c3, start_y + 5, "* = needs modifier-aware term",  fg, bg);
 
         // ---- bottom row of sections ----
         grid.print(c1, start_y + 9,  "--- TEMPO / AUDIO ---",        acc, bg_h);
@@ -877,8 +894,15 @@ impl Display {
         grid.print(c3, start_y + 10, "[ / ]  : Scroll X (-/+)",      fg, bg);
         grid.print(c3, start_y + 11, "Up/Down: Scroll Y",            fg, bg);
 
-        grid.print(c1, start_y + 16, "Settings (theme, filter, view, visualizer) persist across runs.", fg, bg);
-        grid.print(c1, start_y + 17, "Pass multiple files on the command line to queue them as a playlist.", fg, bg);
+        // ---- command palette ----
+        grid.print(c1, start_y + 16, "--- COMMAND PALETTE (`:` to enter, Esc to cancel) ---", acc, bg_h);
+        grid.print(c1, start_y + 17, ":ch <N> m | s | u    Toggle / Solo / Unmute channel N (1-based; works for any channel count)", fg, bg);
+        grid.print(c1, start_y + 18, ":mute all | :unmute all                                                                    ", fg, bg);
+        grid.print(c1, start_y + 19, ":goto <N>            Jump to order (decimal, 0x14, or 14h)                                 ", fg, bg);
+        grid.print(c1, start_y + 20, ":next | :prev | :q                                                                          ", fg, bg);
+
+        grid.print(c1, start_y + 22, "Settings (theme, filter, view, visualizer) persist across runs.", fg, bg);
+        grid.print(c1, start_y + 23, "Pass multiple files on the command line to queue them as a playlist.", fg, bg);
     }
 
     fn fixed_width(s: &str, width: usize) -> String {
