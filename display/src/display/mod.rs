@@ -176,6 +176,23 @@ impl Display {
             for fx in 0..width { grid.set_cell(fx, y, ' ', theme.col_note, theme.row_bg_even); }
             let line = format!(":{}_", buf);
             grid.print(0, y, &line, theme.accent_fg, theme.row_bg_even);
+        } else {
+            // Channel-cursor mode hint at the bottom row when active. Both
+            // hints share the same row, so this is mutually exclusive with
+            // the `:` palette by design.
+            let cursor_raw = match play_data.user_data.get("channel_cursor") {
+                Some(UserData::USize(v)) => *v,
+                _ => 0,
+            };
+            if cursor_raw > 0 {
+                let y = height.saturating_sub(1);
+                for fx in 0..width { grid.set_cell(fx, y, ' ', theme.col_note, theme.row_bg_even); }
+                let line = format!(
+                    "[CH {:02}]  Up/Dn or L/R: move   m: mute   s: solo   u: unmute   a: unmute all   Esc: exit",
+                    cursor_raw,
+                );
+                grid.print(0, y, &line, theme.accent_fg, theme.row_bg_even);
+            }
         }
     }
 
@@ -434,6 +451,15 @@ impl Display {
             _ => 0
         };
 
+        // Channel-cursor highlight: 1-based in user_data so 0 means "no
+        // cursor". When set, the row matching the cursor channel gets
+        // the current-row background color (same one used for the
+        // currently-playing pattern row) so it pops visually.
+        let cursor_ch_1based = match play_data.user_data.get("channel_cursor") {
+            Some(UserData::USize(v)) => *v,
+            _ => 0,
+        };
+
         // Table Header (ABSOLUTE PARITY WITH WEB SCREENSHOT)
         let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PITCH | CHAN VOL | ENVELOPE | FADEOUT | PANNING |";
         grid.print(x_start, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
@@ -455,7 +481,14 @@ impl Display {
             }
 
             let channel = &play_data.channel_status[actual_ch];
-            let row_bg = if i % 2 == 1 { theme.row_bg_odd } else { theme.row_bg_even };
+            let is_cursor = cursor_ch_1based > 0 && (cursor_ch_1based - 1) == actual_ch;
+            let row_bg = if is_cursor {
+                theme.pat_curr_bg
+            } else if i % 2 == 1 {
+                theme.row_bg_odd
+            } else {
+                theme.row_bg_even
+            };
 
             let status = if channel.force_off { "MUT" } else if channel.on { "ON " } else { "OFF" };
             let col_status = if channel.force_off { theme.col_off } else if channel.on { theme.col_on } else { theme.col_off };
@@ -894,15 +927,20 @@ impl Display {
         grid.print(c3, start_y + 10, "[ / ]  : Scroll X (-/+)",      fg, bg);
         grid.print(c3, start_y + 11, "Up/Down: Scroll Y",            fg, bg);
 
-        // ---- command palette ----
-        grid.print(c1, start_y + 16, "--- COMMAND PALETTE (`:` to enter, Esc to cancel) ---", acc, bg_h);
-        grid.print(c1, start_y + 17, ":ch <N> m | s | u    Toggle / Solo / Unmute channel N (1-based; works for any channel count)", fg, bg);
-        grid.print(c1, start_y + 18, ":mute all | :unmute all                                                                    ", fg, bg);
-        grid.print(c1, start_y + 19, ":goto <N>            Jump to order (decimal, 0x14, or 14h)                                 ", fg, bg);
-        grid.print(c1, start_y + 20, ":next | :prev | :q                                                                          ", fg, bg);
+        // ---- channel cursor mode ----
+        grid.print(c1, start_y + 16, "--- CHANNEL CURSOR MODE (`g` to enter) ---",   acc, bg_h);
+        grid.print(c1, start_y + 17, "g            Enter cursor; current row is highlighted.", fg, bg);
+        grid.print(c1, start_y + 18, "Up/Down or L/R: move   m: toggle  s: solo  u: unmute  a: unmute all  Esc: exit", fg, bg);
 
-        grid.print(c1, start_y + 22, "Settings (theme, filter, view, visualizer) persist across runs.", fg, bg);
-        grid.print(c1, start_y + 23, "Pass multiple files on the command line to queue them as a playlist.", fg, bg);
+        // ---- command palette ----
+        grid.print(c1, start_y + 20, "--- COMMAND PALETTE (`:` to enter, Esc to cancel) ---", acc, bg_h);
+        grid.print(c1, start_y + 21, ":ch <N> m | s | u    Toggle / Solo / Unmute channel N (1-based; any channel count)", fg, bg);
+        grid.print(c1, start_y + 22, ":mute all | :unmute all                                                          ", fg, bg);
+        grid.print(c1, start_y + 23, ":goto <N>            Jump to order (decimal, 0x14, or 14h)                       ", fg, bg);
+        grid.print(c1, start_y + 24, ":next | :prev | :q                                                                ", fg, bg);
+
+        grid.print(c1, start_y + 26, "Settings (theme, filter, view, visualizer) persist across runs.", fg, bg);
+        grid.print(c1, start_y + 27, "Pass multiple files on the command line to queue them as a playlist.", fg, bg);
     }
 
     fn fixed_width(s: &str, width: usize) -> String {

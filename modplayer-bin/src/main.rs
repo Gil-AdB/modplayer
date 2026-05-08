@@ -238,14 +238,21 @@ fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Setti
     exit
 }
 
-/// Command-palette state. While in `Command(buf)` we capture all
-/// printable keys into the buffer instead of dispatching them. `:` enters
-/// the mode; Enter executes; Esc cancels. The buffer is mirrored to the
-/// audio-thread display via `cmdline_buf` user_data so the user sees what
-/// they're typing.
+/// Command-palette + channel-cursor input modes.
+///
+/// `Command(buf)` is `:`-prefixed. While in it, all printable keys go
+/// into `buf` instead of dispatching; Enter executes, Esc cancels. The
+/// buffer is mirrored to the audio-thread display via `cmdline_buf` /
+/// `cmdline_show` user_data.
+///
+/// `ChannelCursor(idx)` is `g`-entered. Arrow keys move the highlight
+/// across channel rows; m / s / u / a act on the highlighted channel;
+/// Esc exits. The cursor is mirrored to the display via `channel_cursor`
+/// user_data (1-indexed; 0 = no cursor).
 enum InputMode {
     Normal,
     Command(String),
+    ChannelCursor(usize),
 }
 
 /// Push the current command-line buffer into UserData so the display
@@ -258,6 +265,16 @@ fn sync_cmdline(tx: &std::sync::mpsc::Sender<PlaybackCmd>, show: bool, buf: &str
     let _ = tx.send(PlaybackCmd::SetUserData(
         "cmdline_buf".to_string(),
         UserData::String(buf.to_string()),
+    ));
+}
+
+/// Push the channel-cursor index (1-based) so the display can highlight
+/// the active row. `idx=None` clears the cursor.
+fn sync_channel_cursor(tx: &std::sync::mpsc::Sender<PlaybackCmd>, idx: Option<usize>) {
+    let value = match idx { Some(i) => i + 1, None => 0 };
+    let _ = tx.send(PlaybackCmd::SetUserData(
+        "channel_cursor".to_string(),
+        UserData::USize(value),
     ));
 }
 
@@ -324,6 +341,13 @@ fn mainloop(song_data: &SongState) -> LoopExit {
 
     let mut mode = InputMode::Normal;
 
+    // Channel count is stable per song; cache it so we don't lock the
+    // Song mutex on every keypress while in cursor mode.
+    let channel_count = {
+        let s = song_data.get_song().lock().unwrap();
+        s.get_channel_count()
+    };
+
     if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
     loop {
         // Natural song-end → advance to next playlist item.
@@ -335,6 +359,7 @@ fn mainloop(song_data: &SongState) -> LoopExit {
             match crossterm::event::read() {
                 Ok(crossterm::event::Event::Key(event)) => {
                     let tx = song_data.get_sender();
+
                     // Command-palette mode short-circuits all normal keymapping.
                     if let InputMode::Command(ref buf) = mode {
                         match event.code {
@@ -361,6 +386,46 @@ fn mainloop(song_data: &SongState) -> LoopExit {
                                 new_buf.push(c);
                                 sync_cmdline(&tx, true, &new_buf);
                                 mode = InputMode::Command(new_buf);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
+                    // Channel-cursor mode also short-circuits normal keys.
+                    // Up/Down move by 1 (matches the channel rows being
+                    // stacked vertically); Left/Right do the same so users
+                    // who reach for either pair land on the right thing.
+                    if let InputMode::ChannelCursor(idx) = mode {
+                        let max_idx = channel_count.saturating_sub(1);
+                        match event.code {
+                            KeyCode::Esc => {
+                                sync_channel_cursor(&tx, None);
+                                mode = InputMode::Normal;
+                            }
+                            KeyCode::Up | KeyCode::Left => {
+                                let new_idx = idx.saturating_sub(1);
+                                sync_channel_cursor(&tx, Some(new_idx));
+                                mode = InputMode::ChannelCursor(new_idx);
+                            }
+                            KeyCode::Down | KeyCode::Right => {
+                                let new_idx = (idx + 1).min(max_idx);
+                                sync_channel_cursor(&tx, Some(new_idx));
+                                mode = InputMode::ChannelCursor(new_idx);
+                            }
+                            KeyCode::Char('m') => {
+                                let _ = tx.send(PlaybackCmd::ChannelToggle(idx as u8));
+                            }
+                            KeyCode::Char('s') => {
+                                let _ = tx.send(PlaybackCmd::ChannelSolo(idx as u8));
+                            }
+                            KeyCode::Char('u') => {
+                                // No "unmute single" command; toggle works
+                                // when the channel is muted, no-op otherwise.
+                                let _ = tx.send(PlaybackCmd::ChannelToggle(idx as u8));
+                            }
+                            KeyCode::Char('a') => {
+                                let _ = tx.send(PlaybackCmd::ChannelUnmuteAll);
                             }
                             _ => {}
                         }
@@ -427,6 +492,11 @@ fn mainloop(song_data: &SongState) -> LoopExit {
                                     // branch will handle subsequent keys.
                                     sync_cmdline(&tx, true, "");
                                     mode = InputMode::Command(String::new());
+                                }
+                                'g' => {
+                                    // Enter channel-cursor mode at channel 0.
+                                    sync_channel_cursor(&tx, Some(0));
+                                    mode = InputMode::ChannelCursor(0);
                                 }
                                 '>' => {
                                     // Next playlist track (Shift-period).
