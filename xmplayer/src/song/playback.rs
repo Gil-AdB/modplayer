@@ -76,9 +76,14 @@ impl Song {
             current_tick_position: 0,
         };
 
-        // Reset all channels to blank slate, but preserve initial volumes/panning
+        // Reset all channels to blank slate, but preserve initial volumes/
+        // panning AND the per-format `frequency_scale` (set in Song::new
+        // from the VoiceMixFormula table). MOD's Protracker-clock pitch
+        // compensation lives there and must survive song-reset.
+        let mix = crate::song::backend::voice_mix(self.song_data.song_type);
         for (i, ch) in self.channels.iter_mut().enumerate() {
             *ch = ChannelState::new();
+            ch.frequency_scale = mix.freq_scale;
             if i < 64 && i < self.song_data.initial_channel_volume.len() && i < self.song_data.initial_channel_panning.len() {
                 let p = self.song_data.initial_channel_panning[i];
                 if p == 100 {

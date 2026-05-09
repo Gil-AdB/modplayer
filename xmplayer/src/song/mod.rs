@@ -546,9 +546,15 @@ impl Song {
         } else {
             LINEAR_TABLES.as_ref()
         };
+        // Per-format frequency-scale lookup so MOD channels start at the
+        // Protracker-clock-compensated multiplier instead of the default
+        // 1.0. The same VoiceMixFormula table that drives the per-voice
+        // mix loop and the master-side calibration also carries this.
+        let mix = crate::song::backend::voice_mix(song_data.song_type);
         let mut channels = Vec::with_capacity(song_data.channel_count as usize);
         for i in 0..song_data.channel_count as usize {
             let mut channel = ChannelState::new();
+            channel.frequency_scale = mix.freq_scale;
             if i < 64 {
                 let p = song_data.initial_channel_panning[i];
                 if p == 100 {

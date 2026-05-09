@@ -389,6 +389,15 @@ pub struct ChannelState {
     pub(crate) last_samples_pos:               usize,
     pub(crate) loop_row:                       u8,
     pub(crate) loop_count:                     u8,
+    /// Multiplier applied in `update_frequency_voice` to compensate for
+    /// per-format reference-clock differences between our period→Hz table
+    /// (8363*1712/period, the FT2/XM Amiga clock) and the format's
+    /// authentic clock. MOD uses Protracker PAL clock 3546895*4/period
+    /// which is ~0.91% lower (16 cents flatter), so MOD channels need
+    /// `frequency_scale = 14187580/14317456 ≈ 0.99093`. XM/S3M/IT use
+    /// the same clock as our table → scale = 1.0. Set once at Song
+    /// construction from `VoiceMixFormula::freq_scale`.
+    pub(crate) frequency_scale:                f32,
 }
 
 impl ChannelState {
@@ -420,6 +429,7 @@ impl ChannelState {
             last_samples_pos: 0,
             loop_row: 0,
             loop_count: 0,
+            frequency_scale: 1.0,
         }
     }
 
@@ -467,7 +477,12 @@ impl ChannelState {
 
     pub(crate) fn update_frequency_voice(&mut self, voice: &mut Voice, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
         let vib_shift = voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform));
-        self.frequency = self.note.frequency(self.period_shift, vib_shift, semitone, frequency_tables) + voice.frequency_shift;
+        // `frequency_scale` is per-channel (set at Song::new from the
+        // format's VoiceMixFormula). For MOD it compensates for our
+        // d_period2hz_tab using the FT2 amiga clock instead of MOD's
+        // Protracker PAL clock — ~16 cents flatter so we play 16 cents
+        // sharp by default. Other formats default to 1.0.
+        self.frequency = self.note.frequency(self.period_shift, vib_shift, semitone, frequency_tables) * self.frequency_scale + voice.frequency_shift;
         voice.set_frequency(self.frequency, rate)
     }
 

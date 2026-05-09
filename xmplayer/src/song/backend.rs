@@ -275,35 +275,50 @@ pub(super) struct VoiceMixFormula {
     /// libopenmpt's render (combined effect of m_nSamplePreAmp +
     /// bypass-pre-amp /2 in Sndmix.cpp:2511 + MIXING_SCALEF).
     pub global_scale: f32,
+    /// Per-channel frequency multiplier applied in
+    /// `ChannelState::update_frequency_voice`. Compensates for the
+    /// per-format period→Hz reference-clock difference vs OpenMPT.
+    /// MOD: 14187580/14317456 ≈ 0.99093 (Protracker PAL clock vs the
+    /// FT2 Amiga clock our d_period2hz_tab uses). Other formats: 1.0.
+    pub freq_scale: f32,
 }
 
 const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: false,
     apply_global_vol: true,  global_vol_div: 64.0,
-    master_byte_mask: 0xFF,  global_scale: 1.0,
+    // Empirical 1/√2 calibration to libopenmpt's reference render.
+    // Across 13 random XM modules from the corpus, our pre-fix median
+    // ratio was 2.20 (range 1.20-3.37); 1/√2 brings the median to ~1.37.
+    master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
+    freq_scale: 1.0,
 };
 const MOD_MIX: VoiceMixFormula = VoiceMixFormula {
     update_envelopes: false, channel_vol: false, instrument_global: false,
     apply_global_vol: false, global_vol_div: 1.0,
-    master_byte_mask: 0xFF,  global_scale: 1.0,
+    // Pre-calibration MOD median ratio was 1.42; 1/√2 brings it to ~1.01.
+    // freq_scale fixes the 16-cent pitch sharpness from our using the
+    // XM Amiga clock (8363*1712=14317456) for MOD instead of OpenMPT's
+    // Protracker PAL clock (3546895*4=14187580). Snd_fx.cpp:6552.
+    master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
+    freq_scale: 14187580.0 / 14317456.0,
 };
 const S3M_MIX: VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: true,  instrument_global: false,
     apply_global_vol: true,  global_vol_div: 64.0,
     master_byte_mask: 0x7F,  global_scale: std::f32::consts::SQRT_2,
+    freq_scale: 1.0,
 };
 const IT_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: true,
     apply_global_vol: true,  global_vol_div: 128.0,
     master_byte_mask: 0xFF,  global_scale: 1.0,
+    freq_scale: 1.0,
 };
 const STM_MIX: VoiceMixFormula = VoiceMixFormula {
-    // STM dispatches to ModBackend so its voice formula is MOD's; the
-    // master-side fields follow S3M (file format quirk: STM master byte
-    // also packs the stereo flag in bit 7).
     update_envelopes: false, channel_vol: false, instrument_global: false,
     apply_global_vol: false, global_vol_div: 1.0,
     master_byte_mask: 0x7F,  global_scale: std::f32::consts::SQRT_2,
+    freq_scale: 1.0,
 };
 
 pub(super) fn voice_mix(song_type: SongType) -> &'static VoiceMixFormula {

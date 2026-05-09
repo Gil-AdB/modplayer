@@ -64,7 +64,11 @@ mod tests {
         let mut mock_buf = MockBuffer { data: vec![0.0; 10] };
         tester.song.output_channels(0, &mut mock_buf, 1);
         
-        assert!((mock_buf.data[0] - 0.19887).abs() < 0.001);
+        // 0.19887 was the pre-calibration value (XM_MIX.global_scale = 1.0).
+        // The XM corpus calibration in d4631d83 set scale to 1/√2 to bring
+        // our render in line with libopenmpt's reference. The interpolated
+        // sample value is the same; only the master_gain factor changed.
+        assert!((mock_buf.data[0] - 0.19887 * std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
     }
 
     #[test]
@@ -103,7 +107,11 @@ mod tests {
         // Cubic with data = [..., 3/16, 4/16, 5/16, 6/16, ...] at x=0.5
         // Should be very close to Linear for linear data.
         println!("Cubic result: {}", mock_buf.data[0]);
-        assert!((mock_buf.data[0] - 0.19887).abs() < 0.001);
+        // 0.19887 was the pre-calibration value (XM_MIX.global_scale = 1.0).
+        // The XM corpus calibration in d4631d83 set scale to 1/√2 to bring
+        // our render in line with libopenmpt's reference. The interpolated
+        // sample value is the same; only the master_gain factor changed.
+        assert!((mock_buf.data[0] - 0.19887 * std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
     }
 
     #[test]
@@ -141,7 +149,11 @@ mod tests {
         
         println!("Sinc result: {}", mock_buf.data[0]);
         // Sinc for linear data should also be close.
-        assert!((mock_buf.data[0] - 0.19887).abs() < 0.001);
+        // 0.19887 was the pre-calibration value (XM_MIX.global_scale = 1.0).
+        // The XM corpus calibration in d4631d83 set scale to 1/√2 to bring
+        // our render in line with libopenmpt's reference. The interpolated
+        // sample value is the same; only the master_gain factor changed.
+        assert!((mock_buf.data[0] - 0.19887 * std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
     }
 
     #[test]
@@ -180,6 +192,6 @@ mod tests {
         let mut mock_buf = MockBuffer { data: vec![0.0; 10] };
         tester.song.output_channels(0, &mut mock_buf, 1);
         
-        assert!((mock_buf.data[0] - 0.33145).abs() < 0.001);
+        assert!((mock_buf.data[0] - 0.33145 * std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
     }
 }
