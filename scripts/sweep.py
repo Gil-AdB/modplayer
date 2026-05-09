@@ -53,6 +53,14 @@ def parse_args():
                    help="Flag windows above this ratio")
     p.add_argument("--cents-thresh", type=float, default=10.0,
                    help="Flag matched peaks deviating more than this many cents")
+    p.add_argument("--bisect", action="store_true",
+                   help="For each flagged module, render once per channel "
+                        "with that channel muted to attribute the divergence "
+                        "to specific channels. Adds N_channels renders per "
+                        "flagged module; skip with --no-bisect for speed.")
+    p.add_argument("--bisect-max-channels", type=int, default=32,
+                   help="Skip bisect on modules with more channels than this "
+                        "(too many renders).")
     return p.parse_args()
 
 
@@ -108,17 +116,49 @@ def find_openmpt123() -> str:
     return os.environ.get("OPENMPT123") or shutil.which("openmpt123") or "openmpt123"
 
 
-def run_render_wav(bin: Path, module: Path, out: Path, end_time: float):
+def run_render_wav(bin: Path, module: Path, out: Path, end_time: float,
+                   mute_channels=None):
     """Render via our engine. Returns True on success."""
+    cmd = [str(bin), str(module), str(out), "--end-time", str(end_time)]
+    if mute_channels:
+        cmd.extend(["--mute-channels", ",".join(str(c) for c in mute_channels)])
     try:
         subprocess.run(
-            [str(bin), str(module), str(out), "--end-time", str(end_time)],
-            check=True, capture_output=True, timeout=end_time * 4 + 30,
+            cmd, check=True, capture_output=True, timeout=end_time * 4 + 30,
         )
         return out.exists() and out.stat().st_size > 1000
     except Exception as e:
         print(f"  render_wav failed for {module}: {e}", file=sys.stderr)
         return False
+
+
+def detect_channel_count(module: Path) -> int:
+    """Best-effort channel count by reading the module's header. Used to
+    bound the bisect render count without parsing the full file. Returns
+    -1 on unknown formats."""
+    try:
+        data = module.read_bytes()[:200]
+    except Exception:
+        return -1
+    suffix = module.suffix.lower()
+    if suffix == ".s3m":
+        # S3M: 32-byte channel-table at 0x40; count entries < 16 (PCM only;
+        # disabled / Adlib / unused don't get engine slots).
+        if len(data) < 0x60: return -1
+        return sum(1 for b in data[0x40:0x60] if b < 16)
+    if suffix == ".xm":
+        # XM: u16 LE channel count at 0x44.
+        if len(data) < 0x46: return -1
+        return data[0x44] | (data[0x45] << 8)
+    if suffix == ".mod":
+        # Hand-wave: 4 channels for the canonical .MOD; 6/8/12-ch trackers
+        # use different magic words. Good enough for bisect bounding.
+        return 4
+    if suffix == ".it":
+        # IT: u16 LE channel count at offset 0x24.
+        if len(data) < 0x26: return -1
+        return data[0x24] | (data[0x25] << 8)
+    return -1
 
 
 def run_openmpt(bin: str, module: Path, out: Path):
@@ -239,7 +279,7 @@ def compare_window(ours_path: Path, ref_path: Path, t_start: float, t_end: float
 
 
 def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
-    """Returns (status: str, flags_per_window: list, summary: str)."""
+    """Returns (status, flags_per_window, attribution_dict)."""
     out_dir = Path(args.corpus) / "renders"
     out_dir.mkdir(exist_ok=True)
     ours_wav = out_dir / f"{h}.ours.wav"
@@ -250,9 +290,9 @@ def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
         ref_wav.unlink()
 
     if not run_render_wav(render_bin, file_path, ours_wav, args.end_time):
-        return "ours-render-failed", [], ""
+        return "ours-render-failed", [], {}
     if not run_openmpt(omt_bin, file_path, ref_wav):
-        return "openmpt-render-failed", [], ""
+        return "openmpt-render-failed", [], {}
 
     # Walk 1.0s windows at 5s intervals across the rendered region.
     rate, mono = load_wav_mono(ours_wav)
@@ -267,25 +307,119 @@ def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
         if flags:
             flagged.append((ts, flags, stats))
 
-    return ("clean" if not flagged else "flagged"), flagged, ""
+    if not flagged:
+        return "clean", [], {}
+
+    attribution = {}
+    if args.bisect:
+        attribution = bisect_module(args, render_bin, h, file_path,
+                                    flagged, ours_wav, ref_wav, out_dir)
+
+    return "flagged", flagged, attribution
+
+
+def bisect_module(args, render_bin, h, file_path, flagged, ours_wav, ref_wav,
+                  out_dir):
+    """For each flagged window, render with each channel muted in turn and
+    record which channels' mute clears the flag. Returns a dict
+        { window_start_seconds: [list of (channel_idx, residual_severity)] }
+    where severity = abs(log(rms_ratio)) so 0 means perfectly cleared."""
+    n_channels = detect_channel_count(file_path)
+    if n_channels <= 0 or n_channels > args.bisect_max_channels:
+        return {}
+
+    # Pick the worst window per (sign-of-divergence) bucket so we cover
+    # both "too-loud" and "too-quiet" modules with one bisect pass each.
+    by_sign = {"loud": None, "quiet": None}
+    for ts, _flags, stats in flagged:
+        ratio = stats.get("ratio", 1.0)
+        if ratio is None:
+            continue
+        sev = abs(np.log(max(ratio, 1e-9)))
+        bucket = "loud" if ratio > 1.0 else "quiet"
+        cur = by_sign[bucket]
+        if cur is None or sev > cur[1]:
+            by_sign[bucket] = (ts, sev, stats)
+
+    target_windows = [v for v in by_sign.values() if v is not None]
+    if not target_windows:
+        return {}
+
+    out = {}
+    print(f"  bisecting {n_channels} channels...", file=sys.stderr)
+    for ch in range(n_channels):
+        muted_wav = out_dir / f"{h}.mute{ch}.wav"
+        if muted_wav.exists():
+            muted_wav.unlink()
+        if not run_render_wav(render_bin, file_path, muted_wav,
+                              args.end_time, mute_channels=[ch]):
+            continue
+        for ts, sev, stats in target_windows:
+            flags_after, stats_after = compare_window(
+                muted_wav, ref_wav, ts, ts + 1.0,
+                args.rms_low, args.rms_high, args.cents_thresh,
+            )
+            ratio_after = stats_after.get("ratio", 1.0)
+            sev_after = abs(np.log(max(ratio_after, 1e-9))) if ratio_after else 0.0
+            # If muting this channel cleared most of the divergence (severity
+            # dropped by > 50% AND no flags remain), it's a culprit.
+            improvement = sev - sev_after
+            cleared = (not flags_after)
+            entry = out.setdefault(ts, [])
+            entry.append({
+                "channel": ch,
+                "ratio_before": stats.get("ratio"),
+                "ratio_after": ratio_after,
+                "improvement": improvement,
+                "cleared": cleared,
+                "flags_after": flags_after,
+            })
+        muted_wav.unlink(missing_ok=True)
+    return out
 
 
 def render_report(args, results):
-    """results: list of (h, ext, name, status, flagged)."""
+    """results: list of (h, ext, name, status, flagged, attribution)."""
     out = []
     out.append(f"# Sweep report\n")
-    out.append(f"_seed={args.seed} limit={args.limit} end-time={args.end_time}_\n")
+    out.append(f"_seed={args.seed} limit={args.limit} end-time={args.end_time} bisect={args.bisect}_\n")
     flagged = [r for r in results if r[3] == "flagged"]
     clean = [r for r in results if r[3] == "clean"]
     failed = [r for r in results if r[3] not in ("clean", "flagged")]
     out.append(f"\n* {len(results)} modules processed\n")
     out.append(f"* {len(flagged)} flagged, {len(clean)} clean, {len(failed)} failed\n\n")
 
+    # Format rollup — easiest way to spot systemic per-format bugs (e.g.
+    # all MOD modules flagged with the same RMS ratio + pitch shift would
+    # show up as a tight median ratio in the MOD row).
+    rollup = {}
+    for h, ext, name, status, fl, _attr in results:
+        bucket = rollup.setdefault(ext, {"total": 0, "flagged": 0, "ratios": []})
+        bucket["total"] += 1
+        if status == "flagged":
+            bucket["flagged"] += 1
+            for _ts, _flags, stats in fl:
+                ratio = stats.get("ratio")
+                if ratio:
+                    bucket["ratios"].append(ratio)
+    out.append("## By format\n\n")
+    out.append("| format | total | flagged | median ratio | min | max |\n")
+    out.append("|---|---:|---:|---:|---:|---:|\n")
+    for ext in sorted(rollup.keys()):
+        b = rollup[ext]
+        ratios = b["ratios"]
+        if ratios:
+            md = float(np.median(ratios))
+            lo = min(ratios); hi = max(ratios)
+            out.append(f"| {ext} | {b['total']} | {b['flagged']} | {md:.2f} | {lo:.2f} | {hi:.2f} |\n")
+        else:
+            out.append(f"| {ext} | {b['total']} | {b['flagged']} | — | — | — |\n")
+    out.append("\n")
+
     if flagged:
         out.append("## Flagged\n\n")
-        # Sort by severity (number of flagged windows then worst RMS ratio).
         def sev(r):
-            _, _, _, _, fl = r
+            _, _, _, _, fl, _attr = r
             n = len(fl)
             worst = max(
                 (abs(np.log(stats.get("ratio", 1.0))) for _, _, stats in fl),
@@ -293,7 +427,7 @@ def render_report(args, results):
             )
             return (-n, -worst)
         flagged.sort(key=sev)
-        for h, ext, name, _, fl in flagged:
+        for h, ext, name, _, fl, attr in flagged:
             out.append(f"### `{name}` ({ext}, hash {h})\n\n")
             out.append("| t (s) | RMS ours | RMS ref | ratio | flags |\n")
             out.append("|---:|---:|---:|---:|---|\n")
@@ -304,17 +438,33 @@ def render_report(args, results):
                 out.append(f"| {ts:.1f} | {ro:.4f} | {rr:.4f} | {ratio:.2f} | {'; '.join(flags)} |\n")
             if len(fl) > 12:
                 out.append(f"\n_(+{len(fl)-12} more windows)_\n")
+            # Attribution rollup, if bisect was run.
+            if attr:
+                out.append("\n**Channel attribution (bisect):**\n\n")
+                for ts in sorted(attr.keys()):
+                    cleared = sorted(
+                        (e for e in attr[ts] if e["cleared"] or e["improvement"] > 0.5),
+                        key=lambda e: -e["improvement"],
+                    )
+                    if not cleared:
+                        out.append(f"* t={ts:.1f}s: no single channel mute clears the flag (multi-channel cause)\n")
+                        continue
+                    parts = []
+                    for e in cleared[:5]:
+                        tag = "cleared" if e["cleared"] else f"-{e['improvement']:.1f}log"
+                        parts.append(f"ch{e['channel']} ({tag}, ratio {e['ratio_before']:.2f}→{e['ratio_after']:.2f})")
+                    out.append(f"* t={ts:.1f}s: {', '.join(parts)}\n")
             out.append("\n")
 
     if failed:
         out.append("## Failed\n\n")
-        for h, ext, name, status, _ in failed:
+        for h, ext, name, status, _, _ in failed:
             out.append(f"* `{name}` ({ext}, hash {h}) — {status}\n")
         out.append("\n")
 
     if clean:
         out.append(f"## Clean ({len(clean)})\n\n")
-        for h, ext, name, _, _ in clean[:50]:
+        for h, ext, name, _, _, _ in clean[:50]:
             out.append(f"* `{name}` ({ext}, hash {h})\n")
 
     return "".join(out)
@@ -353,8 +503,8 @@ def main():
     results = []
     for h, ext, name, fp in picks:
         print(f"=== {name} ({ext}, hash {h}) ===", file=sys.stderr)
-        status, flagged, _ = sweep_module(args, render_bin, omt_bin, h, ext, name, fp)
-        results.append((h, ext, name, status, flagged))
+        status, flagged, attribution = sweep_module(args, render_bin, omt_bin, h, ext, name, fp)
+        results.append((h, ext, name, status, flagged, attribution))
         append_done(corpus, h, status)
         print(f"  → {status} ({len(flagged)} flagged windows)", file=sys.stderr)
 
