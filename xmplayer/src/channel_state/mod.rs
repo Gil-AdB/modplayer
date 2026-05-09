@@ -856,6 +856,14 @@ impl ChannelState {
     }
 
     pub(crate) fn volume_slide_main(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
+        // XM A: param != 0 stores memory; param == 0 recalls. Without
+        // recall, songs that set the slide on a trigger row (`A0F`)
+        // and continue with `A00` on subsequent rows lose the slide
+        // entirely from row 1 onward. Repro: xem_po.xm ch2 — every
+        // note retriggers fresh while OpenMPT slides each one down,
+        // making our render ~2× louder. OpenMPT does this for all
+        // formats in CSoundFile::VolumeSlide (Snd_fx.cpp:4815-4823).
+        let param = self.recall_or_set(EffectMemorySlot::VolSlide, param);
         if first_tick { return; }
         let x = param >> 4;
         let y = param & 0x0F;
