@@ -4,9 +4,13 @@
 //
 // Usage:
 //   render_wav <module> <output.wav> [--start-time SEC] [--end-time SEC]
+//                                    [--mute-channels a,b,c]
 //
-//   --start-time SEC  Skip first SEC seconds (forward via fast-forward).
-//   --end-time SEC    Stop at SEC seconds (default: full song).
+//   --start-time SEC      Skip first SEC seconds (forward via fast-forward).
+//   --end-time SEC        Stop at SEC seconds (default: full song).
+//   --mute-channels list  Comma-separated channel indices to silence by setting
+//                         channel.force_off = true. Useful for A/B testing
+//                         which channel produces a divergence vs OpenMPT.
 //
 // WAV format: PCM IEEE float32, 2 channels, 48000 Hz.
 
@@ -58,6 +62,7 @@ fn main() {
 
     let mut start_time = 0.0f32;
     let mut end_time = f32::INFINITY;
+    let mut muted_channels: Vec<usize> = Vec::new();
     let mut i = 3;
     while i < args.len() {
         match args[i].as_str() {
@@ -68,6 +73,13 @@ fn main() {
             "--end-time" => {
                 i += 1;
                 end_time = args.get(i).and_then(|s| s.parse().ok()).expect("bad --end-time");
+            }
+            "--mute-channels" => {
+                i += 1;
+                let v = args.get(i).expect("--mute-channels needs a list");
+                muted_channels = v.split(',')
+                    .filter_map(|s| s.trim().parse().ok())
+                    .collect();
             }
             other => {
                 eprintln!("unknown flag: {}", other);
@@ -83,6 +95,17 @@ fn main() {
     };
     let (_reader, writer) = TripleBuffer::new().split();
     let mut song = Song::new(&song_data, writer, RATE);
+
+    // Apply channel mutes via force_off. Each backend's per-voice loop
+    // observes `channel.force_off || channel.tremor_silenced` and zeros
+    // the voice output for that channel. The flag stays set for the
+    // whole render — re-asserted every tick is unnecessary.
+    for &ch in &muted_channels {
+        if ch < song.channels.len() {
+            song.channels[ch].force_off = true;
+            eprintln!("mute: channel {} force_off=true", ch);
+        }
+    }
 
     // Optional seek
     if start_time > 0.0 {

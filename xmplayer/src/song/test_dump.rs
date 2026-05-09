@@ -45,17 +45,31 @@ pub struct TickDump {
 
 impl TickDump {
     pub fn to_string(&self) -> String {
+        self.to_string_filtered(&[])
+    }
+
+    /// Filtered variant: when `channels` is non-empty, only voices whose
+    /// `channel_idx` is in the slice are printed. Both ON voices and cut
+    /// voices respect the filter — important for grep-by-time
+    /// investigations where the user wants ALL state for one channel,
+    /// including the cut_reason that explains why a voice fell silent.
+    /// Single source of truth so state_dump's --channels flag and the
+    /// unfiltered `to_string()` always print the same fields (the prior
+    /// channel-filter format was a separate string that omitted
+    /// `last_render_tick` and dropped cut voices entirely — a state_dump
+    /// blind spot that misled the t=119-121s investigation).
+    pub fn to_string_filtered(&self, channels: &[usize]) -> String {
+        let want = |idx: usize| channels.is_empty() || channels.contains(&idx);
         let mut out = String::new();
-        out.push_str(&format!("[Order {:03} | Row {:03} | Tick {:03}] (Voices: {} / Channels: {}) (Speed: {} / BPM: {} / GVol: {} / Freq: {})\n", 
+        out.push_str(&format!("[Order {:03} | Row {:03} | Tick {:03}] (Voices: {} / Channels: {}) (Speed: {} / BPM: {} / GVol: {} / Freq: {})\n",
             self.song_position, self.row, self.tick, self.active_voices, self.active_channels, self.speed, self.bpm, self.global_volume, self.frequency_type));
-        
+
         let mut sorted_voices = self.voices.clone();
         sorted_voices.sort_by_key(|v| v.channel_idx);
 
         for v in &sorted_voices {
-            if !v.is_on {
-                continue;
-            }
+            if !want(v.channel_idx) { continue; }
+            if !v.is_on { continue; }
             // last_render_tick is in sample-frames; format as `R:N` where
             // N=0 means the trigger ran but the mixer hasn't (synthetic
             // tests / paused state). A non-zero value lets state_dump
@@ -89,6 +103,7 @@ impl TickDump {
         // voices that have a cut_reason set (None means never cut, i.e.
         // never triggered).
         for v in &sorted_voices {
+            if !want(v.channel_idx) { continue; }
             if v.is_on { continue; }
             if let Some(reason) = &v.cut_reason {
                 out.push_str(&format!(

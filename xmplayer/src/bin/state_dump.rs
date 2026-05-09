@@ -243,30 +243,7 @@ fn main() {
             // by timestamp: at 48000 Hz, t=120s == frame 5760000.
             let _ = out.write_all(format!("[T:{:>10}] ", frame_pos).as_bytes());
             let dump = dump_tick(&song);
-            // If channel filter is active, redact (skip) other voice rows.
-            let s = if args.channels.is_empty() {
-                dump.to_string()
-            } else {
-                let header = format!(
-                    "[Order {:03} | Row {:03} | Tick {:03}] (Voices: {} / Channels: {})\n",
-                    dump.song_position, dump.row, dump.tick,
-                    dump.active_voices, dump.active_channels,
-                );
-                let mut s = header;
-                let mut sorted = dump.voices.clone();
-                sorted.sort_by_key(|v| v.channel_idx);
-                for v in &sorted {
-                    if !v.is_on { continue; }
-                    if !args.channels.contains(&v.channel_idx) { continue; }
-                    s.push_str(&format!(
-                        "  Ch {:02}: ON | Inst {:02} | Samp {:02} | {} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} | Pan {:03} ({:03}) | Eff {:02x} {:02x}\n",
-                        v.channel_idx, v.instrument, v.sample, v.note_str, v.sample_pos,
-                        v.du, v.output_volume, v.panning, v.final_panning,
-                        v.effect, v.effect_param,
-                    ));
-                }
-                s
-            };
+            let s = dump.to_string_filtered(&args.channels);
             let _ = out.write_all(s.as_bytes());
         }
 
