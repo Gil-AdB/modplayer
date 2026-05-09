@@ -77,8 +77,36 @@ pub struct Voice {
     pub(crate) filter_state:                   ResonantFilter,
     pub on:                             bool,
     pub surround:                       bool,
-    pub channel_idx:                    usize, 
+    pub channel_idx:                    usize,
     pub(crate) last_played_note:               u8,
+
+    // ---- mixer instrumentation (write-only telemetry; never read by the
+    // playback path) -----------------------------------------------------
+    /// Global tick counter (`Song.tick_counter`-equivalent) of the last
+    /// time this voice was actually rendered by `Song::output_channels`.
+    /// Distinguishes "still being mixed" from "trigger fired but mixer
+    /// has since cut us" — useful when reading state_dump output, which
+    /// otherwise sees `voice.sample_position` frozen at the trigger value
+    /// and can't tell the two states apart. 0 = never rendered.
+    pub last_render_tick:               u64,
+    /// Reason the mixer set `voice.on = false`, if any. Persists across
+    /// the cut so post-mortem dumps can attribute silenced voices.
+    pub cut_reason:                     Option<VoiceCutReason>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VoiceCutReason {
+    /// `LoopType::NoLoop` sample reached its end and the mixer set the
+    /// volume to 0 + cleared `on`. Reference: output.rs end-of-sample
+    /// branch (the `OnePastTheEnd` arm).
+    SampleEnd,
+    /// Engine-side note action set `voice.on = false` (NoteAction::Cut,
+    /// IT NNA cut, S3M Sxx note cut, key-off without sustaining envelope).
+    /// Set from the trigger logic; the mixer just observes it.
+    NoteCut,
+    /// Voice volume reached 0 via fadeout / envelope and the mixer
+    /// elected to drop the voice instead of mixing 0-gain samples.
+    Faded,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -130,6 +158,8 @@ impl Voice {
             surround: false,
             channel_idx: 0,
             last_played_note: 0,
+            last_render_tick: 0,
+            cut_reason: None,
         }
     }
 

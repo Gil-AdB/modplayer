@@ -276,6 +276,15 @@ impl Song {
         for voice in &mut self.voices {
             if !voice.on { continue; }
 
+            // Mixer instrumentation: stamp the global sample-frame position
+            // every time we actually render a voice. Distinguishes "this
+            // voice is being mixed" from "trigger fired earlier but mixer
+            // has since cut us" in state_dump output (the latter is what
+            // the prior 119-121s investigation got wrong — state_dump
+            // reads `voice.sample_position` which is frozen at trigger
+            // time and never advances outside this loop).
+            voice.last_render_tick = current_buf_position as u64;
+
             let sample = self.song_data.get_sample(voice);
             let vol_right = PANNING_TAB[      voice.panning.final_panning as usize] as f32 / 65536.0;
             let vol_left  = PANNING_TAB[256 - voice.panning.final_panning as usize] as f32 / 65536.0;
@@ -386,6 +395,7 @@ impl Song {
             while i < ticks_to_generate {
                 if voice.sample_position as u32 >= sample.length {
                     voice.on = false;
+                    voice.cut_reason = Some(crate::channel_state::VoiceCutReason::SampleEnd);
                     break;
                 }
 
@@ -447,6 +457,7 @@ impl Song {
                     match sample.loop_type {
                         LoopType::NoLoop => {
                             voice.on = false;
+                            voice.cut_reason = Some(crate::channel_state::VoiceCutReason::SampleEnd);
                             voice.volume.set_volume(0);
                             break;
                         }

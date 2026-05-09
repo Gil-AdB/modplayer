@@ -528,15 +528,22 @@ pub(super) fn cut_or_nna_existing_voice(
     match song_type {
         SongType::XM | SongType::MOD => {
             voices[prev_voice_idx].on = false;
+            voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
         }
         _ => {
             let nna = instruments[voices[prev_voice_idx].instrument].nna;
             match nna {
-                0 => { voices[prev_voice_idx].on = false; }       // Cut
+                0 => {
+                    voices[prev_voice_idx].on = false;
+                    voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+                }
                 1 => { /* Continue */ }
                 2 => { voices[prev_voice_idx].key_off(instruments, false); } // Note Off
                 3 => { voices[prev_voice_idx].sustained = false; } // Fade
-                _ => { voices[prev_voice_idx].on = false; }
+                _ => {
+                    voices[prev_voice_idx].on = false;
+                    voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+                }
             }
         }
     }
@@ -554,8 +561,10 @@ pub(super) fn mute_silent_voices(voices: &mut [Voice], channels: &[ChannelState]
             && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < SILENCE_FLOOR)
         {
             voice.on = false;
+            voice.cut_reason = Some(crate::channel_state::VoiceCutReason::Faded);
         } else if !is_host_voice && voice.volume.output_volume < SILENCE_FLOOR {
             voice.on = false;
+            voice.cut_reason = Some(crate::channel_state::VoiceCutReason::Faded);
         }
     }
 }
@@ -797,7 +806,10 @@ pub(super) fn apply_extended(
         ExtendedCmdKind::NoteCutAtTick => {
             if tick == y as u32 {
                 channel.on = false;
-                if let Some(v) = voice.as_deref_mut() { v.on = false; }
+                if let Some(v) = voice.as_deref_mut() {
+                    v.on = false;
+                    v.cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+                }
             }
         }
         ExtendedCmdKind::PatternDelay => {

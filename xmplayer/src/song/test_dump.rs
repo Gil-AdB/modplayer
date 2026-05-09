@@ -21,6 +21,12 @@ pub struct VoiceDump {
     pub channel_volume: u8,
     pub relative_note: i8,
     pub finetune: i8,
+    /// Mixer telemetry — last sample-frame this voice was rendered.
+    /// 0 = trigger has fired but mixer hasn't run yet (synthetic test).
+    pub last_render_tick: u64,
+    /// Reason for the last cut, if any. `None` while the voice is on
+    /// or before any cut was recorded.
+    pub cut_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -50,8 +56,13 @@ impl TickDump {
             if !v.is_on {
                 continue;
             }
+            // last_render_tick is in sample-frames; format as `R:N` where
+            // N=0 means the trigger ran but the mixer hasn't (synthetic
+            // tests / paused state). A non-zero value lets state_dump
+            // distinguish "still being mixed" from "frozen at trigger" —
+            // the prior 119-121s investigation made the wrong call there.
             out.push_str(&format!(
-                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | {} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} (CV:{:02}) | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | Eff {:02x} {:02x} | Rel:{:4} Fine:{:4}\n",
+                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | {} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} (CV:{:02}) | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | Eff {:02x} {:02x} | Rel:{:4} Fine:{:4} | R:{:>10}\n",
                 v.channel_idx,
                 v.instrument,
                 v.sample,
@@ -68,8 +79,23 @@ impl TickDump {
                 v.effect,
                 v.effect_param,
                 v.relative_note,
-                v.finetune
+                v.finetune,
+                v.last_render_tick,
             ));
+        }
+        // Recently-cut voices: dump the reason so a 23×-RMS-spike-style
+        // investigation can see "ch5 cut at frame N for SampleEnd" rather
+        // than guessing from frozen sample_position values. We only print
+        // voices that have a cut_reason set (None means never cut, i.e.
+        // never triggered).
+        for v in &sorted_voices {
+            if v.is_on { continue; }
+            if let Some(reason) = &v.cut_reason {
+                out.push_str(&format!(
+                    "  Ch {:02}: cut={} | Inst {:02} | Samp {:02} | last_render={}\n",
+                    v.channel_idx, reason, v.instrument, v.sample, v.last_render_tick,
+                ));
+            }
         }
         out
     }
@@ -100,6 +126,8 @@ pub fn dump_tick(song: &Song) -> TickDump {
             channel_volume: song.channels[voice.channel_idx].channel_volume,
             relative_note: song.song_data.instruments[voice.instrument].samples[voice.sample].relative_note,
             finetune: song.song_data.instruments[voice.instrument].samples[voice.sample].finetune,
+            last_render_tick: voice.last_render_tick,
+            cut_reason: voice.cut_reason.map(|r| format!("{:?}", r)),
         });
     }
 

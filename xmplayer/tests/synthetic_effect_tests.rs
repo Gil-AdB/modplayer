@@ -475,6 +475,45 @@ fn test_s3m_instrument_only_row_reloads_sample_volume() {
 }
 
 #[test]
+fn test_voice_cut_reason_records_sample_end() {
+    // A no-loop sample played past its end gets cut by the mixer with
+    // VoiceCutReason::SampleEnd. Without instrumentation, this state
+    // looks identical to "voice still alive" in state_dump output
+    // (sample_position is frozen at the trigger value because the dump
+    // path never invokes the mixer). The cut_reason field gives an
+    // unambiguous answer.
+    use xmplayer::channel_state::VoiceCutReason;
+    let mut builder = MockSongBuilder::new(SongType::XM, 1);
+    let short_data = vec![0.5f32; 64];
+    builder.instruments[1].samples[0].data = short_data;
+    builder.instruments[1].samples[0].length = 64;
+    builder.instruments[1].samples[0].setup_loops_and_padding();
+    builder.add_empty_pattern(2);
+    builder.add_pattern_row(0, 0, 60, 1, 64, 0, 0); // C-5
+    let mut tester = builder.get_tester();
+
+    tester.tick();
+    let v_idx = tester.song.voices.iter().position(|v| v.on).expect("voice on after trigger");
+    assert!(tester.song.voices[v_idx].cut_reason.is_none(),
+        "cut_reason still None during playback");
+
+    // Force the sample position past the end and run a render pass via
+    // output_channels so the mixer's SampleEnd branch fires.
+    use xmplayer::song::InterleavedBufferAdaptar;
+    tester.song.voices[v_idx].sample_position = 1000.0;
+    tester.song.is_fast_forwarding = false;
+    let mut buf = vec![0.0f32; 32];
+    let mut adapter = InterleavedBufferAdaptar { buf: &mut buf };
+    tester.song.output_channels(0, &mut adapter, 8);
+
+    assert!(!tester.song.voices[v_idx].on, "voice cut by mixer");
+    assert_eq!(tester.song.voices[v_idx].cut_reason, Some(VoiceCutReason::SampleEnd),
+        "cut_reason recorded as SampleEnd");
+    assert_eq!(tester.song.voices[v_idx].last_render_tick, 0,
+        "last_render_tick stamped by mixer (current_buf_position=0 here)");
+}
+
+#[test]
 fn test_s3m_s2_finetune_changes_period_via_table() {
     // S3M S2x sets channel c5_speed from S3M_FINETUNE_TABLE and recomputes
     // the live period. Reference: OpenMPT Snd_fx.cpp:5189-5206 +
