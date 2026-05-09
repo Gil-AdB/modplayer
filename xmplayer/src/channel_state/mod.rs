@@ -266,10 +266,17 @@ impl Voice {
 
     pub(crate) fn update_fadeout(&mut self) {
         if !self.sustained {
-            if self.volume.fadeout_vol - self.volume.fadeout_speed < 0 {
+            // OpenMPT subtracts fadeout * 2 per tick (Sndmix.cpp:1381).
+            // We were subtracting just fadeout_speed → half the rate, so
+            // fading voices stayed audible twice as long as in OpenMPT.
+            // Visible across IT/XM modules with non-default fadeout
+            // values: voices that should have faded by the next note
+            // overlapped into it, making the mix uniformly louder.
+            let step = self.volume.fadeout_speed.saturating_mul(2);
+            if self.volume.fadeout_vol - step < 0 {
                 self.volume.fadeout_vol = 0;
             } else {
-                self.volume.fadeout_vol -= self.volume.fadeout_speed;
+                self.volume.fadeout_vol -= step;
             }
         }
     }
