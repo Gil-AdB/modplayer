@@ -762,14 +762,17 @@ impl ChannelState {
     }
 
     pub(crate) fn it_vol_col_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut amount: i8) {
-        // Note: original code stored only abs(amount), so a recall after a
-        // negative input always returned positive. Preserved here as-is for
-        // bit-exact compatibility; an IT-spec-correct version would split
-        // up/down into separate slots.
+        // Memory stores signed amount cast to u8 so we round-trip the
+        // sign on recall. Pre-fix code stored `amount.abs()`, which
+        // meant a "C5" (slide DOWN by 5, amount=-5) memory got recalled
+        // as +5 (slide UP) on the next zero-param row. OpenMPT's
+        // VolumeSlide stores the param byte with direction encoded in
+        // the high/low nibble; we preserve direction by routing the
+        // signed i8 through u8 (cast preserves bit pattern).
         if amount == 0 {
             amount = self.mem(EffectMemorySlot::ItVolColVolSlide) as i8;
         } else {
-            self.set_mem(EffectMemorySlot::ItVolColVolSlide, amount.abs() as u8);
+            self.set_mem(EffectMemorySlot::ItVolColVolSlide, amount as u8);
         }
         self.volume_slide(voice, first_tick, amount);
     }
@@ -778,7 +781,7 @@ impl ChannelState {
         if amount == 0 {
             amount = self.mem(EffectMemorySlot::ItVolColFineVolSlide) as i8;
         } else {
-            self.set_mem(EffectMemorySlot::ItVolColFineVolSlide, amount.abs() as u8);
+            self.set_mem(EffectMemorySlot::ItVolColFineVolSlide, amount as u8);
         }
         self.fine_volume_slide(voice, first_tick, amount);
     }

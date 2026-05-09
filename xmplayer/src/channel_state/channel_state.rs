@@ -677,11 +677,12 @@ impl Note {
 
     pub(crate) fn frequency(&self, period_shift: i16, period_offset: i32, semitone: bool, frequency_tables: &AudioTables) -> f32 {
         // IT linear-mode override: the trigger path stashed an absolute
-        // Hz value (computed from c5_speed via OpenMPT's IT-linear formula
-        // — our period table can't represent that mapping). Skip the
-        // table lookup. Pitch slides still write to `period` and don't
-        // affect this path yet — that's a follow-up; the static-trigger
-        // pitch is the dominant mass of the IT regression.
+        // Hz value (computed from c5_speed via OpenMPT's IT-linear
+        // formula — our period table can't represent that mapping).
+        // Skip the table lookup. Pitch slides still write to `period`
+        // and don't update linear_hz — that's a bigger fix because
+        // IT-linear uses MULTIPLICATIVE slides (LinearSlideUpTable
+        // factors), not the additive period-shifts our code applies.
         if self.linear_hz != 0.0 {
             return self.linear_hz;
         }
