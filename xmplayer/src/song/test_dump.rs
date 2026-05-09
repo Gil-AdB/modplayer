@@ -10,6 +10,11 @@ pub struct VoiceDump {
     pub sample_pos: f32,
     pub du: f32,
     pub output_volume: f32,
+    /// Raw voice slot volume (0..64) before envelope / fadeout / mixing.
+    /// `output_volume` already folds in the slot, the envelope, the
+    /// channel volume and the global volume — when chasing a "vol
+    /// reaches 0 too early" bug we want to see the slot in isolation.
+    pub voice_volume: u8,
     pub panning: u8,
     pub final_panning: u8,
     pub sustained: bool,
@@ -76,7 +81,7 @@ impl TickDump {
             // distinguish "still being mixed" from "frozen at trigger" —
             // the prior 119-121s investigation made the wrong call there.
             out.push_str(&format!(
-                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | {} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} (CV:{:02}) | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | Eff {:02x} {:02x} | Rel:{:4} Fine:{:4} | R:{:>10}\n",
+                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | {} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} (Vraw:{:02} CV:{:02}) | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | Eff {:02x} {:02x} | Rel:{:4} Fine:{:4} | R:{:>10}\n",
                 v.channel_idx,
                 v.instrument,
                 v.sample,
@@ -84,6 +89,7 @@ impl TickDump {
                 v.sample_pos,
                 v.du,
                 v.output_volume,
+                v.voice_volume,
                 v.channel_volume,
                 v.panning,
                 v.final_panning,
@@ -128,6 +134,7 @@ pub fn dump_tick(song: &Song) -> TickDump {
             sample_pos: voice.sample_position,
             du: voice.du,
             output_volume: voice.volume.output_volume,
+            voice_volume: voice.volume.volume,
             panning: voice.panning.panning,
             final_panning: voice.panning.final_panning,
             sustained: voice.sustained,
