@@ -734,6 +734,12 @@ pub(super) struct EffectCtx<'a> {
     pub rate:           f32,
     pub old_effects:    bool,
     pub compatible_g:   bool,
+    /// S3M ST3 fast-volume-slides quirk (cwtv 0x1300 or fastVolSlides
+    /// flag bit). When true, vol slides apply on tick 0 too — not just
+    /// non-first-ticks. Songs from buggy ST3 v3.00 (e.g. 2ND_PM.S3M)
+    /// rely on this; without it slides accumulate 33% less per row and
+    /// voices stay audible past their intended cutoff.
+    pub fast_volume_slides: bool,
     /// True when the song uses Amiga-period mode (false = linear). S3M is
     /// always Amiga; IT/XM read the flag from their headers. Used by the
     /// S3M/IT arpeggio formula override — in linear mode the existing
@@ -1223,7 +1229,7 @@ pub(super) fn apply_effect(
             channel.volume_slide_main(voice.as_deref_mut(), ctx.note_delay_first_tick, pattern.effect_param);
         }
         EffectKind::VolSlideItStyle => {
-            channel.it_volume_slide(voice.as_deref_mut(), ctx.note_delay_first_tick, pattern.effect_param);
+            channel.it_volume_slide(voice.as_deref_mut(), ctx.note_delay_first_tick, pattern.effect_param, ctx.fast_volume_slides);
         }
         EffectKind::SetVolume => {
             if ctx.first_tick {
@@ -1309,7 +1315,7 @@ fn apply_vol_slide(
             channel.volume_slide_main(voice, ctx.first_tick, param);
         }
         _ => {
-            channel.it_volume_slide(voice, ctx.note_delay_first_tick, param);
+            channel.it_volume_slide(voice, ctx.note_delay_first_tick, param, ctx.fast_volume_slides);
         }
     }
 }

@@ -75,10 +75,21 @@
             return Err(SimpleError::new("Unknown s3m format - patterns"));
         }
 
-        let _flags = file.read_u16()?;
+        let flags = file.read_u16()?;
 
-        let _cwtv = file.read_u16()?;
+        let cwtv = file.read_u16()?;
         let _signed_samples = file.read_u16()?;
+
+        // ST3 fast-volume-slides quirk: when set, vol slides apply on every
+        // tick (including tick 0), not just non-first-ticks. OpenMPT
+        // (Load_s3m.cpp:466) enables this for cwtv == 0x1300 (ST3 v3.00,
+        // a buggy version that always behaves this way) AND for files with
+        // the explicit fast-volume-slides flag bit (0x40 in flags). Without
+        // honoring this, songs saved with that ST3 version (including
+        // 2ND_PM.S3M which has cwtv 0x1300) play vol slides 33% slower
+        // than OpenMPT — voices stay audible past the song's intent and
+        // overlap into subsequent patterns.
+        let fast_volume_slides = (cwtv == 0x1300) || (flags & 0x40) != 0;
 
         let signature = file.read_string(4);
 
@@ -198,6 +209,7 @@
             mixing_volume:           128,
             old_effects: false,
             compatible_g: true, // S3M always uses compatible G behavior
+            fast_volume_slides,
         })
     }
 

@@ -121,6 +121,7 @@ impl MockSongBuilder {
             mixing_volume: 128,
             old_effects: false,
             compatible_g: false,
+            fast_volume_slides: false,
         }
     }
 

@@ -458,6 +458,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             mixing_volume,
             old_effects: (flags & 0x10) != 0,
             compatible_g: (flags & 0x20) != 0,
+            fast_volume_slides: false,
         })
     }
 

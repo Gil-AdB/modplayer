@@ -109,6 +109,12 @@ pub struct SongData {
     pub                     mixing_volume:           u8,
     pub                     old_effects:             bool,
     pub                     compatible_g:            bool,
+    /// S3M ST3 fast-volume-slides quirk: vol slides apply on EVERY tick
+    /// including tick 0, not just non-first-ticks. Set by the S3M loader
+    /// when cwtv == 0x1300 (buggy ST3 v3.00) or when the file's
+    /// fast-volume-slides flag bit (flags & 0x40) is set. Other formats
+    /// leave this at false.
+    pub                     fast_volume_slides:      bool,
 }
 
 impl Default for SongData {
@@ -137,6 +143,7 @@ impl Default for SongData {
             mixing_volume: 128,
             old_effects: false,
             compatible_g: false,
+            fast_volume_slides: false,
         }
     }
 }

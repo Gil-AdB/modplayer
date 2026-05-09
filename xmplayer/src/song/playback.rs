@@ -396,6 +396,7 @@ impl Song {
                             old_effects: self.old_effects,
                             compatible_g: self.compatible_g,
                             use_amiga: self.song_data.use_amiga,
+                            fast_volume_slides: self.song_data.fast_volume_slides,
                         };
                         apply_extended(kind, &mut self.channels[i], None, &mut ctx, pat.get_y());
                     }

@@ -788,7 +788,7 @@ impl ChannelState {
         self.porta_to_note(SongType::IT, voice, first_tick, speed, compatible_g, rate, tables);
     }
 
-    pub(crate) fn it_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
+    pub(crate) fn it_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8, fast_volume_slides: bool) {
         let param = self.recall_or_set(EffectMemorySlot::ItVolSlide, param);
 
         let x = param >> 4;
@@ -797,16 +797,23 @@ impl ChannelState {
         // IT/S3M Dxy decode (see ITTECH.TXT): the upper nibble takes
         // precedence when both nibbles are non-zero. DFy/DxF select fine
         // variants only when one of the two is exactly F.
+        //
+        // The `fast_volume_slides` flag (S3M ST3 v3.00 quirk; OpenMPT
+        // Load_s3m.cpp:466) controls whether non-fine slides apply on
+        // tick 0 too. We forward it to `volume_slide` by lying about
+        // first_tick (treating it as non-first-tick when the quirk is
+        // on). Fine slides explicitly fire only on first_tick and are
+        // not affected by the quirk.
         if x == 0x0F && y != 0 {        // DFy: Fine Down
             self.fine_volume_slide(voice, first_tick, -(y as i8));
         } else if y == 0x0F && x != 0 { // DxF: Fine Up
             self.fine_volume_slide(voice, first_tick, x as i8);
         } else if x != 0 && y == 0 {    // Dx0: Up by x
-            self.volume_slide(voice, first_tick, x as i8);
+            self.volume_slide(voice, first_tick && !fast_volume_slides, x as i8);
         } else if x == 0 && y != 0 {    // D0y: Down by y
-            self.volume_slide(voice, first_tick, -(y as i8));
+            self.volume_slide(voice, first_tick && !fast_volume_slides, -(y as i8));
         } else if x != 0 {              // Dxy with both non-zero: low nibble ignored, slide up
-            self.volume_slide(voice, first_tick, x as i8);
+            self.volume_slide(voice, first_tick && !fast_volume_slides, x as i8);
         }
     }
 

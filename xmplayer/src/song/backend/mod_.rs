@@ -160,6 +160,7 @@ impl ModuleBackend for ModBackend {
                 old_effects: r.old_effects,
                 compatible_g: r.compatible_g,
                 use_amiga: r.song_data.use_amiga,
+                fast_volume_slides: r.song_data.fast_volume_slides,
             };
             dispatch_main_and_extended(
                 pattern, channel, voice_ref.as_deref_mut(),

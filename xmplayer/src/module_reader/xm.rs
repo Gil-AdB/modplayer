@@ -313,6 +313,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
         mixing_volume:           128,
         old_effects: false,
         compatible_g: false,
+        fast_volume_slides: false,
     })
 }
 

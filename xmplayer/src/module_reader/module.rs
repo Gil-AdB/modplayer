@@ -113,6 +113,7 @@
             mixing_volume:           128,
             old_effects: true,
             compatible_g: true,
+            fast_volume_slides: false,
         })
     }
 
