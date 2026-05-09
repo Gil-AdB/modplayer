@@ -61,6 +61,13 @@ def parse_args():
     p.add_argument("--bisect-max-channels", type=int, default=32,
                    help="Skip bisect on modules with more channels than this "
                         "(too many renders).")
+    p.add_argument("--solo-bisect", action="store_true",
+                   help="Per-channel solo on BOTH our engine and libopenmpt "
+                        "(via the openmpt_solo tool). For each channel: "
+                        "compare ours_solo vs ref_solo directly, computing "
+                        "per-channel rms and rms(ours - ref) divergence — "
+                        "the smoking-gun diagnostic that mute-out can't "
+                        "give. Implies --bisect (channel attribution).")
     return p.parse_args()
 
 
@@ -114,6 +121,37 @@ def find_render_wav() -> Path:
 
 def find_openmpt123() -> str:
     return os.environ.get("OPENMPT123") or shutil.which("openmpt123") or "openmpt123"
+
+
+def find_openmpt_solo() -> Path:
+    """libopenmpt-linked solo renderer for per-channel attribution. Built
+    by tools/build_openmpt_solo.sh — we don't auto-build because that
+    needs cc + libopenmpt headers; better to fail clearly if missing.
+    """
+    p = REPO / "target" / "release" / "openmpt_solo"
+    if not p.exists():
+        raise FileNotFoundError(
+            f"openmpt_solo not built. Run tools/build_openmpt_solo.sh"
+        )
+    return p
+
+
+def run_openmpt_solo(bin: Path, module: Path, out: Path, end_time: float,
+                     solo_channel: int):
+    """Render a single channel via the libopenmpt extension interface.
+    `solo_channel` muting all others. Output filename is <out>."""
+    try:
+        subprocess.run(
+            [str(bin), str(module), str(out),
+             "--solo", str(solo_channel),
+             "--end-time", str(end_time)],
+            check=True, capture_output=True, timeout=end_time * 4 + 30,
+        )
+        return out.exists() and out.stat().st_size > 1000
+    except Exception as e:
+        print(f"  openmpt_solo failed for {module} ch={solo_channel}: {e}",
+              file=sys.stderr)
+        return False
 
 
 def run_render_wav(bin: Path, module: Path, out: Path, end_time: float,
@@ -290,6 +328,87 @@ def compare_window(ours_path: Path, ref_path: Path, t_start: float, t_end: float
     return flags, stats
 
 
+def solo_bisect_module(args, render_bin, solo_bin, h, file_path, flagged,
+                       out_dir, n_channels):
+    """For one module, render each channel solo with both engines, then
+    compute per-channel divergence for the WORST-flagged window. Returns
+    a dict { channel_idx: {ours_rms, ref_rms, diff_rms, peaks_match} }
+    where diff_rms = RMS of (ours_solo - ref_solo) over the window. A
+    high diff_rms is a direct attribution of the bug to that channel.
+
+    Cost: 2 × N_channels renders (ours + ref) per bisected module."""
+    # Pick the most-divergent flagged window.
+    worst = None
+    for ts, flags, stats in flagged:
+        ratio = stats.get("ratio", 1.0) or 1.0
+        sev = abs(np.log(max(ratio, 1e-9)))
+        if worst is None or sev > worst[1]:
+            worst = (ts, sev, stats)
+    if worst is None:
+        return {}
+    target_ts, _sev, _stats = worst
+
+    out = {}
+    print(f"  solo-bisecting {n_channels} channels at t={target_ts:.1f}s ...",
+          file=sys.stderr)
+    for ch in range(n_channels):
+        ours_wav = out_dir / f"{h}.solo{ch}.ours.wav"
+        ref_wav = out_dir / f"{h}.solo{ch}.ref.wav"
+        for w in (ours_wav, ref_wav):
+            if w.exists(): w.unlink()
+
+        # Our engine: solo via mute-all-others with --mute-channels.
+        all_other = [c for c in range(n_channels) if c != ch]
+        if not run_render_wav(render_bin, file_path, ours_wav, args.end_time,
+                              mute_channels=all_other):
+            continue
+        # libopenmpt: native --solo via the ext interactive interface.
+        if not run_openmpt_solo(solo_bin, file_path, ref_wav, args.end_time, ch):
+            ours_wav.unlink(missing_ok=True)
+            continue
+
+        # Compare the two solo renders at the target window. We use a
+        # tighter window (1.0s) here because a single channel rarely
+        # has dense low-frequency content that needs the 2.0s
+        # resolution; tighter window = sharper transient capture.
+        try:
+            ro, mo = load_wav_mono(ours_wav)
+            rr, mr = load_wav_mono(ref_wav)
+            if ro != rr:
+                continue
+            s = int(target_ts * ro)
+            e = s + int(1.0 * ro)
+            e = min(e, min(len(mo), len(mr)))
+            if e - s < int(0.05 * ro):
+                continue
+            o = mo[s:e]; r = mr[s:e]
+            n = min(len(o), len(r))
+            o = o[:n]; r = r[:n]
+            ours_rms = rms(o)
+            ref_rms = rms(r)
+            diff = o - r
+            diff_rms = rms(diff)
+            # Peak comparison: does the channel play at the same pitch?
+            p_o = top_peaks(ro, o, n=4)
+            p_r = top_peaks(ro, r, n=4)
+            peaks_match = "—"
+            if p_o and p_r:
+                # Top peak frequency ratio in cents (signed).
+                cents = 1200.0 * np.log2(p_o[0][0] / p_r[0][0]) if p_o[0][0] > 0 and p_r[0][0] > 0 else 0
+                peaks_match = f"{p_o[0][0]:.0f}Hz vs {p_r[0][0]:.0f}Hz ({cents:+.0f}c)"
+            out[ch] = {
+                "ours_rms": ours_rms,
+                "ref_rms": ref_rms,
+                "diff_rms": diff_rms,
+                "peaks_match": peaks_match,
+            }
+        finally:
+            ours_wav.unlink(missing_ok=True)
+            ref_wav.unlink(missing_ok=True)
+
+    return out
+
+
 def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
     """Returns (status, flags_per_window, attribution_dict)."""
     out_dir = Path(args.corpus) / "renders"
@@ -327,9 +446,22 @@ def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
         return "clean", [], {}
 
     attribution = {}
-    if args.bisect:
+    if args.bisect or args.solo_bisect:
         attribution = bisect_module(args, render_bin, h, file_path,
                                     flagged, ours_wav, ref_wav, out_dir)
+
+    if args.solo_bisect:
+        n_channels = detect_channel_count(file_path)
+        if n_channels > 0 and n_channels <= args.bisect_max_channels:
+            try:
+                solo_bin = find_openmpt_solo()
+                solo_attr = solo_bisect_module(args, render_bin, solo_bin, h,
+                                                file_path, flagged, out_dir,
+                                                n_channels)
+                if solo_attr:
+                    attribution["__solo__"] = solo_attr
+            except FileNotFoundError as e:
+                print(f"  solo-bisect skipped: {e}", file=sys.stderr)
 
     return "flagged", flagged, attribution
 
@@ -456,20 +588,37 @@ def render_report(args, results):
                 out.append(f"\n_(+{len(fl)-12} more windows)_\n")
             # Attribution rollup, if bisect was run.
             if attr:
-                out.append("\n**Channel attribution (bisect):**\n\n")
-                for ts in sorted(attr.keys()):
-                    cleared = sorted(
-                        (e for e in attr[ts] if e["cleared"] or e["improvement"] > 0.5),
-                        key=lambda e: -e["improvement"],
-                    )
-                    if not cleared:
-                        out.append(f"* t={ts:.1f}s: no single channel mute clears the flag (multi-channel cause)\n")
-                        continue
-                    parts = []
-                    for e in cleared[:5]:
-                        tag = "cleared" if e["cleared"] else f"-{e['improvement']:.1f}log"
-                        parts.append(f"ch{e['channel']} ({tag}, ratio {e['ratio_before']:.2f}→{e['ratio_after']:.2f})")
-                    out.append(f"* t={ts:.1f}s: {', '.join(parts)}\n")
+                solo = attr.pop("__solo__", None) if isinstance(attr, dict) else None
+                if attr:
+                    out.append("\n**Channel attribution (mute-bisect):**\n\n")
+                    for ts in sorted(attr.keys()):
+                        cleared = sorted(
+                            (e for e in attr[ts] if e["cleared"] or e["improvement"] > 0.5),
+                            key=lambda e: -e["improvement"],
+                        )
+                        if not cleared:
+                            out.append(f"* t={ts:.1f}s: no single channel mute clears the flag (multi-channel cause)\n")
+                            continue
+                        parts = []
+                        for e in cleared[:5]:
+                            tag = "cleared" if e["cleared"] else f"-{e['improvement']:.1f}log"
+                            parts.append(f"ch{e['channel']} ({tag}, ratio {e['ratio_before']:.2f}→{e['ratio_after']:.2f})")
+                        out.append(f"* t={ts:.1f}s: {', '.join(parts)}\n")
+
+                if solo:
+                    # Per-channel diagnostic: for each channel, ours-solo
+                    # vs ref-solo. Sort by diff_rms so the most-divergent
+                    # channels appear first.
+                    out.append("\n**Per-channel solo (ours vs OpenMPT, both solo):**\n\n")
+                    out.append("| ch | ours rms | ref rms | diff rms | top peaks (cents) |\n")
+                    out.append("|---:|---:|---:|---:|---|\n")
+                    rows = sorted(solo.items(), key=lambda kv: -(kv[1].get("diff_rms") or 0))
+                    for ch, st in rows[:12]:
+                        out.append(
+                            f"| {ch} | {st['ours_rms']:.4f} | {st['ref_rms']:.4f} | {st['diff_rms']:.4f} | {st['peaks_match']} |\n"
+                        )
+                    if len(rows) > 12:
+                        out.append(f"\n_(+{len(rows)-12} more channels)_\n")
             out.append("\n")
 
     if failed:
