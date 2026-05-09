@@ -150,6 +150,26 @@ impl Sample {
     pub fn setup_loops_and_padding(&mut self) {
         if self.length == 0 || self.data.is_empty() { return; }
 
+        // Sanitize degenerate loops. If loop_end <= loop_start (or
+        // loop_len is otherwise zero/invalid), the mixer's wrap math
+        // becomes `position = position - loop_end + loop_start` =
+        // `position` — sample_position never advances, the wrap fires
+        // every tick, position grows by `du` per tick without bound,
+        // and eventually overflows to NaN. Repro: bz_pif.it has IT
+        // samples with such loops; our render produced ~3M NaN samples
+        // starting at t=30s. OpenMPT's S3MTools.cpp:36 / IT loader
+        // also resets degenerate loops to no-loop. Match the behavior.
+        if self.loop_type != LoopType::NoLoop
+            && (self.loop_end <= self.loop_start
+                || self.loop_end - self.loop_start < 2
+                || self.loop_end > self.length)
+        {
+            self.loop_type = LoopType::NoLoop;
+            self.loop_start = 0;
+            self.loop_end = self.length;
+            self.loop_len = self.length;
+        }
+
         self.original_loop_end = self.loop_end;
         if self.loop_type == LoopType::PingPongLoop {
             self.is_ping_pong = true;
