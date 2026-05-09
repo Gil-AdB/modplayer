@@ -247,6 +247,111 @@ pub(super) fn delay_schedule(song_type: SongType) -> DelaySchedule {
     }
 }
 
+/// Per-format mixer parameters. Drives both the per-voice volume loop
+/// (the "Process all active voices" stanza in each backend, formerly
+/// inlined and duplicated) and the central master-gain calculation in
+/// `output.rs`. Keeping every format-specific knob in one struct means
+/// any future quirk lands as a single field with one entry per format —
+/// the same pattern as `DelaySchedule` / `RowTiming`.
+#[derive(Clone, Copy)]
+pub(super) struct VoiceMixFormula {
+    /// XM/S3M/IT update envelopes per tick; MOD has no envelopes.
+    pub update_envelopes: bool,
+    /// Multiply by `channel.channel_volume / 64`. S3M's `Mxx` slot —
+    /// other formats don't have a channel-level volume.
+    pub channel_vol: bool,
+    /// Multiply by `voice.instrument_global_volume / 128`. IT only —
+    /// XM/S3M/MOD don't have a per-instrument global volume.
+    pub instrument_global: bool,
+    /// Multiply by `global_volume / global_vol_div`. MOD has no song
+    /// global volume so this is gated by `apply_global_vol`.
+    pub apply_global_vol: bool,
+    pub global_vol_div: f32,
+    /// Mask applied to `master_volume` before computing master_gain. S3M
+    /// packs `stereo on` into bit 7 (e.g. 0xB0 = stereo + master 0x30);
+    /// for those formats we mask 0x7F. XM/MOD/IT use the byte as-is.
+    pub master_byte_mask: u8,
+    /// Post-master scaling factor. S3M needs an empirical √2 to match
+    /// libopenmpt's render (combined effect of m_nSamplePreAmp +
+    /// bypass-pre-amp /2 in Sndmix.cpp:2511 + MIXING_SCALEF).
+    pub global_scale: f32,
+}
+
+const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
+    update_envelopes: true,  channel_vol: false, instrument_global: false,
+    apply_global_vol: true,  global_vol_div: 64.0,
+    master_byte_mask: 0xFF,  global_scale: 1.0,
+};
+const MOD_MIX: VoiceMixFormula = VoiceMixFormula {
+    update_envelopes: false, channel_vol: false, instrument_global: false,
+    apply_global_vol: false, global_vol_div: 1.0,
+    master_byte_mask: 0xFF,  global_scale: 1.0,
+};
+const S3M_MIX: VoiceMixFormula = VoiceMixFormula {
+    update_envelopes: true,  channel_vol: true,  instrument_global: false,
+    apply_global_vol: true,  global_vol_div: 64.0,
+    master_byte_mask: 0x7F,  global_scale: std::f32::consts::SQRT_2,
+};
+const IT_MIX:  VoiceMixFormula = VoiceMixFormula {
+    update_envelopes: true,  channel_vol: false, instrument_global: true,
+    apply_global_vol: true,  global_vol_div: 128.0,
+    master_byte_mask: 0xFF,  global_scale: 1.0,
+};
+const STM_MIX: VoiceMixFormula = VoiceMixFormula {
+    // STM dispatches to ModBackend so its voice formula is MOD's; the
+    // master-side fields follow S3M (file format quirk: STM master byte
+    // also packs the stereo flag in bit 7).
+    update_envelopes: false, channel_vol: false, instrument_global: false,
+    apply_global_vol: false, global_vol_div: 1.0,
+    master_byte_mask: 0x7F,  global_scale: std::f32::consts::SQRT_2,
+};
+
+pub(super) fn voice_mix(song_type: SongType) -> &'static VoiceMixFormula {
+    match song_type {
+        SongType::XM  => &XM_MIX,
+        SongType::S3M => &S3M_MIX,
+        SongType::IT  => &IT_MIX,
+        SongType::STM => &STM_MIX,
+        _             => &MOD_MIX,
+    }
+}
+
+/// Run the per-voice update + output_volume computation for every active
+/// voice. Replaces the four near-duplicate "Process all active voices"
+/// loops the backends used to inline. The format-specific axis (which
+/// factors apply, with what divisors) lives entirely in the `mix` table.
+pub(super) fn process_voices(
+    voices: &mut [crate::channel_state::Voice],
+    channels: &[crate::channel_state::ChannelState],
+    instruments: &Vec<crate::instrument::Instrument>,
+    rate: f32,
+    global_volume: u32,
+    mix: &VoiceMixFormula,
+) {
+    for voice in voices.iter_mut() {
+        if !voice.on { continue; }
+        let channel = &channels[voice.channel_idx];
+        let silenced = channel.force_off || channel.tremor_silenced;
+
+        if mix.update_envelopes {
+            voice.update_envelopes(instruments, rate);
+        }
+        voice.update_fadeout();
+
+        let mut v = voice.compute_base_volume();
+        if mix.channel_vol {
+            v *= channel.channel_volume as f32 / 64.0;
+        }
+        if mix.instrument_global {
+            v *= voice.instrument_global_volume as f32 / 128.0;
+        }
+        if mix.apply_global_vol {
+            v *= global_volume as f32 / mix.global_vol_div;
+        }
+        voice.set_output_volume(if silenced { 0.0 } else { v });
+    }
+}
+
 /// Per-channel timing for the row currently being processed: the tick
 /// (within the row) at which each per-row event fires. For most rows
 /// everything lives on tick 0; SDx/EDx note-delay shifts the trigger

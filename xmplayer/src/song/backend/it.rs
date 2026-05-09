@@ -4,8 +4,9 @@ use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, dispatch_main_and_extended, init_channel_iter,
-    init_voice_basics, mute_silent_voices, set_channel_note, EffectCtx,
-    ModuleBackend, SongPlaybackResources, IT_EFFECT_TABLE, IT_S_TABLE,
+    init_voice_basics, mute_silent_voices, process_voices, set_channel_note,
+    voice_mix, EffectCtx, ModuleBackend, SongPlaybackResources,
+    IT_EFFECT_TABLE, IT_S_TABLE,
 };
 
 pub struct ItBackend {}
@@ -234,30 +235,16 @@ impl ModuleBackend for ItBackend {
             }
         }
 
-        // 2. Process all active voices (IT volume formula).
-        let global_vol_f32 = r.global_volume.volume as f32 / 128.0;
-        for voice in r.voices.iter_mut() {
-            if !voice.on { continue; }
-            let channel = &r.channels[voice.channel_idx];
-            let silenced = channel.force_off || channel.tremor_silenced;
-
-            voice.update_envelopes(instruments, r.rate);
-            voice.update_fadeout();
-
-            // IT formula: fadeout * envelope * note_vol/64 + tremolo, clamped,
-            //   * sample_global/64 * inst_global/128 * global_vol/128.
-            // sample_global is already inside compute_base_volume(); don't
-            // multiply by it again here (fixes a regression where samples with
-            // non-default global volume came out attenuated by an extra
-            // sample_global/64 factor).
-            let inst_vol = voice.instrument_global_volume as f32 / 128.0;
-            let output_vol = voice.compute_base_volume() * inst_vol * global_vol_f32;
-            voice.set_output_volume(output_vol);
-
-            if silenced {
-                voice.set_output_volume(0.0);
-            }
-        }
+        // 2. Process all active voices (formula-table driven; the IT
+        // entry sets `instrument_global` + `apply_global_vol` with
+        // div=128, matching `compute_base_volume() * inst_vol/128 *
+        // global_vol/128`. sample_global is already inside
+        // compute_base_volume() — don't reapply it here, that was a
+        // historic double-multiply regression.)
+        process_voices(
+            r.voices, r.channels, instruments, r.rate,
+            r.global_volume.volume, voice_mix(r.song_data.song_type),
+        );
 
         mute_silent_voices(r.voices, r.channels);
     }

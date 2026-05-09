@@ -2,9 +2,9 @@ use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
-    init_channel_iter, init_voice_basics, mute_silent_voices, set_channel_note,
-    EffectCtx, ModuleBackend, RowTiming, SongPlaybackResources,
-    S3M_EFFECT_TABLE, S3M_S_TABLE,
+    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices,
+    set_channel_note, voice_mix, EffectCtx, ModuleBackend, RowTiming,
+    SongPlaybackResources, S3M_EFFECT_TABLE, S3M_S_TABLE,
 };
 
 pub struct S3MBackend {}
@@ -222,28 +222,16 @@ impl ModuleBackend for S3MBackend {
             }
         }
 
-        // 2. Process all active voices (S3M volume formula).
-        let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
-        for voice in r.voices.iter_mut() {
-            if !voice.on { continue; }
-            let channel = &r.channels[voice.channel_idx];
-            let silenced = channel.force_off || channel.tremor_silenced;
-
-            voice.update_envelopes(instruments, r.rate);
-            voice.update_fadeout();
-
-            // S3M formula: compute_base_volume() * channel_vol/64 * global_vol/64
-            // (master_volume is applied centrally in output.rs to match OpenMPT's
-            // single-application model; the previous duplicate per-voice
-            // multiply made our render ~2× louder than OpenMPT's reference.)
-            let channel_vol = channel.channel_volume as f32 / 64.0;
-            let output_vol = voice.compute_base_volume() * channel_vol * global_vol_f32;
-            voice.set_output_volume(output_vol);
-
-            if silenced {
-                voice.set_output_volume(0.0);
-            }
-        }
+        // 2. Process all active voices (formula-table driven; the S3M
+        // entry sets `channel_vol` + `apply_global_vol` with div=64,
+        // matching `compute_base_volume() * channel_vol/64 * global_vol/64`.
+        // master_volume is applied centrally in output.rs via the same
+        // table — the previous duplicate per-voice multiply made our
+        // render ~2× louder than OpenMPT's reference.)
+        process_voices(
+            r.voices, r.channels, instruments, r.rate,
+            r.global_volume.volume, voice_mix(r.song_data.song_type),
+        );
 
         mute_silent_voices(r.voices, r.channels);
     }

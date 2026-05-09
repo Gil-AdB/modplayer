@@ -263,25 +263,15 @@ impl Song {
             return;
         }
 
-        // S3M / STM master volume includes a high-bit stereo flag (S3M
-        // master_volume = 0xB0 means stereo on, master = 0x30 = 48). Mask
-        // it off only for those formats — XM/MOD/IT default master to 128
-        // and the bit is meaningful as part of the value, not a flag.
-        // After consolidating S3M's per-voice master multiply (used to live
-        // in s3m.rs) into this central path, an empirical √2 factor brings
-        // the median RMS ratio ours/openmpt_s3m to 1.001 across 2ND_PM.S3M.
-        // The cumulative origin in OpenMPT-land is m_nSamplePreAmp scaling
-        // + the `realvol /= 2` bypass-pre-amp attenuation (Sndmix.cpp:2511)
-        // + MIXING_SCALEF normalization; we can't reproduce step-by-step
-        // but the net offset is √2.
-        let (raw_master, scale) = match self.song_data.song_type {
-            crate::module_reader::SongType::S3M | crate::module_reader::SongType::STM => {
-                (self.master_volume & 0x7F, std::f32::consts::SQRT_2)
-            }
-            _ => (self.master_volume, 1.0),
-        };
+        // Both axes (master byte mask + post-master scale) come from the
+        // shared per-format mixer table (`backend::voice_mix`). S3M/STM
+        // mask bit 7 (stereo flag) and apply √2 to match libopenmpt's
+        // reference; XM/MOD/IT use the byte as-is at unity. Same source
+        // of truth as the per-voice formula consumed by `process_voices`.
+        let mix = crate::song::backend::voice_mix(self.song_data.song_type);
+        let raw_master = self.master_volume & mix.master_byte_mask;
         let master_gain = (raw_master as f32 / 128.0) * (self.mixing_volume as f32 / 128.0);
-        let final_master_gain = master_gain * scale;
+        let final_master_gain = master_gain * mix.global_scale;
 
         for voice in &mut self.voices {
             if !voice.on { continue; }

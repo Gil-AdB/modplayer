@@ -2,8 +2,9 @@ use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
-    init_channel_iter, init_voice_basics, mute_silent_voices, set_channel_note,
-    EffectCtx, ModuleBackend, SongPlaybackResources, XM_EFFECT_TABLE, XM_E_TABLE,
+    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices,
+    set_channel_note, voice_mix, EffectCtx, ModuleBackend, SongPlaybackResources,
+    XM_EFFECT_TABLE, XM_E_TABLE,
 };
 
 pub struct XmBackend {}
@@ -170,24 +171,14 @@ impl ModuleBackend for XmBackend {
             }
         }
 
-        // 2. Process all active voices (XM volume formula).
-        let global_vol_f32 = r.global_volume.volume as f32 / 64.0;
-        for voice in r.voices.iter_mut() {
-            if !voice.on { continue; }
-            let channel = &r.channels[voice.channel_idx];
-            let silenced = channel.force_off || channel.tremor_silenced;
-
-            voice.update_envelopes(instruments, r.rate);
-            voice.update_fadeout();
-
-            // XM formula: compute_base_volume() * global_vol/64
-            let output_vol = voice.compute_base_volume() * global_vol_f32;
-            voice.set_output_volume(output_vol);
-
-            if silenced {
-                voice.set_output_volume(0.0);
-            }
-        }
+        // 2. Process all active voices (formula-table driven; the XM
+        // entry sets `apply_global_vol` with `global_vol_div = 64` and no
+        // channel/inst-global multipliers, matching the previous inline
+        // formula `compute_base_volume() * global_vol/64`).
+        process_voices(
+            r.voices, r.channels, instruments, r.rate,
+            r.global_volume.volume, voice_mix(r.song_data.song_type),
+        );
 
         mute_silent_voices(r.voices, r.channels);
     }
