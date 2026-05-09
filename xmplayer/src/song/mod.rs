@@ -24,8 +24,8 @@ mod playback;
 
 pub struct BPM {
     pub bpm:                    u32,
-    tick_duration_in_ms:        f32,
-    tick_duration_in_frames:    usize,
+    pub tick_duration_in_ms:        f32,
+    pub tick_duration_in_frames:    usize,
 
 }
 

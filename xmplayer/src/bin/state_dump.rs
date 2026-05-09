@@ -176,6 +176,19 @@ fn main() {
     // order (so the user doesn't wait for the whole song when they asked
     // for one slice).
     let max_requested_order = args.orders.iter().copied().max();
+    // Throwaway buffer for the per-tick mixer call. We don't write the
+    // audio anywhere — the only reason to invoke `output_channels` here
+    // is to populate `voice.last_render_tick` and `voice.cut_reason`,
+    // which only get set inside the mixer. Without this the dump would
+    // see frozen `sample_position` for any voice that ever triggered,
+    // even if the mixer cut it many ticks ago (the false-positive that
+    // led the 119-121s investigation astray before the instrumentation
+    // landed).
+    // sink and frame_pos: throwaway audio buffer for the per-tick mixer
+    // call; frame_pos is the GLOBAL sample-frame counter (used for the
+    // `last_render_tick` stamp in the dump, not as an offset into sink).
+    let mut sink = vec![0.0f32; 8192];
+    let mut frame_pos: u64 = 0;
     loop {
         let pos = song.song_position;
         if let Some(max_o) = max_requested_order {
@@ -196,11 +209,39 @@ fn main() {
             && (in_row_window || (args.row_range.is_none() && at_first_tick))
             && (args.all_ticks || at_first_tick);
 
-        // Run effects for the current tick first, then dump (so the dump
-        // reflects post-effect state).
+        // Run effects for the current tick first, then render samples
+        // through the mixer (so cut_reason / last_render_tick get
+        // populated), then dump.
         song.process_tick();
+        // Render this tick's samples into the throwaway sink. Pass
+        // current_buf_position = 0 each iteration since the buffer
+        // restarts at index 0 every tick (we only care about the side
+        // effects on voice state, not the audio). last_render_tick on
+        // each voice gets stamped to 0 each time, but we then overwrite
+        // it manually with the global frame counter so the dump can
+        // distinguish "rendered at frame N" from "never rendered".
+        let frames_this_tick = song.bpm.tick_duration_in_frames.min(sink.len() / 2);
+        if frames_this_tick > 0 {
+            let mut adapter = xmplayer::song::InterleavedBufferAdaptar { buf: &mut sink[..frames_this_tick * 2] };
+            adapter.buf.fill(0.0);
+            song.output_channels(0, &mut adapter, frames_this_tick);
+            frame_pos = frame_pos.wrapping_add(frames_this_tick as u64);
+            for v in &mut song.voices {
+                if v.last_render_tick == 0 && v.on {
+                    // Mixer ran but stamped 0; promote to the global counter
+                    // so future ticks can distinguish.
+                    v.last_render_tick = frame_pos;
+                } else if v.last_render_tick > 0 {
+                    // Mixer wrote a per-tick offset (small); rebase to global.
+                    v.last_render_tick = frame_pos;
+                }
+            }
+        }
 
         if print_now {
+            // Prefix line with global frame_pos so output can be grepped
+            // by timestamp: at 48000 Hz, t=120s == frame 5760000.
+            let _ = out.write_all(format!("[T:{:>10}] ", frame_pos).as_bytes());
             let dump = dump_tick(&song);
             // If channel filter is active, redact (skip) other voice rows.
             let s = if args.channels.is_empty() {
