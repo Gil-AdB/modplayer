@@ -68,6 +68,25 @@ def parse_args():
                         "per-channel rms and rms(ours - ref) divergence — "
                         "the smoking-gun diagnostic that mute-out can't "
                         "give. Implies --bisect (channel attribution).")
+    p.add_argument("--per-channel-vu", action="store_true",
+                   help="Per-channel timeline RMS comparison (catches "
+                        "sustained per-channel volume divergences that the "
+                        "master-mix sweep dilutes away). Renders each "
+                        "channel solo on both engines, walks 250ms windows "
+                        "across the full duration, and flags channels with "
+                        "sustained ratio offsets >25%% lasting >50%% of "
+                        "active windows. This is the harness that would "
+                        "have caught the FEATSOFV.XM ch15 4× volume bug "
+                        "the master-mix sweep missed.")
+    p.add_argument("--vu-window-sec", type=float, default=0.25,
+                   help="Window size for --per-channel-vu (default 250ms)")
+    p.add_argument("--vu-ratio-thresh", type=float, default=0.25,
+                   help="Flag windows with abs(log(ours/ref)) above this "
+                        "(default 0.25 ≈ ratio outside 0.78x–1.28x)")
+    p.add_argument("--vu-coverage-thresh", type=float, default=0.5,
+                   help="Channel is flagged if more than this fraction of "
+                        "active windows exceed --vu-ratio-thresh "
+                        "(default 0.5 = sustained, not transient)")
     return p.parse_args()
 
 
@@ -426,6 +445,151 @@ def solo_bisect_module(args, render_bin, solo_bin, h, file_path, flagged,
     return out
 
 
+def per_channel_vu_module(args, render_bin, solo_bin, h, file_path,
+                          out_dir, n_channels):
+    """Walk per-channel solo renders across the full timeline, return a
+    list of (channel_idx, summary_dict) entries for channels with
+    sustained ratio drift.
+
+    For each channel:
+      * render solo on ours (mute every other channel via render_wav)
+      * render solo on ref (libopenmpt set_channel_volume(0) for others)
+      * walk `--vu-window-sec` windows; for each one compute
+        ours_rms / ref_rms ratio
+      * count windows where abs(log(ratio)) > `--vu-ratio-thresh`
+        (out-of-band) AS A FRACTION of "active" windows (where at least
+        one engine has rms > 0.001)
+      * flag the channel if the out-of-band fraction exceeds
+        `--vu-coverage-thresh`
+
+    Cost: 2 × N_channels full-duration renders, same as solo-bisect.
+    The diff vs solo-bisect is that solo-bisect compares ONE window
+    (the "worst-flagged" one from the master sweep), while this walks
+    the entire timeline so it catches sustained issues even when the
+    master sweep was clean (the FEATSOFV ch15 case).
+    """
+    win_sec = args.vu_window_sec
+    ratio_thresh = args.vu_ratio_thresh
+    coverage_thresh = args.vu_coverage_thresh
+
+    print(f"  per-channel-vu: rendering {n_channels} solos x 2 engines "
+          f"(window={win_sec*1000:.0f}ms, ratio_thresh={ratio_thresh:.2f}, "
+          f"coverage_thresh={coverage_thresh:.2f}) ...", file=sys.stderr)
+
+    flagged_channels = []
+    for ch in range(n_channels):
+        ours_wav = out_dir / f"{h}.solo{ch}.ours.wav"
+        ref_wav = out_dir / f"{h}.solo{ch}.ref.wav"
+        for w in (ours_wav, ref_wav):
+            if w.exists(): w.unlink()
+
+        all_other = [c for c in range(n_channels) if c != ch]
+        if not run_render_wav(render_bin, file_path, ours_wav, args.end_time,
+                              mute_channels=all_other):
+            continue
+        if not run_openmpt_solo(solo_bin, file_path, ref_wav, args.end_time, ch):
+            ours_wav.unlink(missing_ok=True)
+            continue
+
+        try:
+            ro, mo = load_wav_mono(ours_wav)
+            rr, mr = load_wav_mono(ref_wav)
+            if ro != rr:
+                continue
+            n = min(len(mo), len(mr))
+            mo = mo[:n]; mr = mr[:n]
+            win = int(win_sec * ro)
+            if win < 4: continue
+
+            active = 0
+            offending = 0
+            worst_ratio = 1.0
+            worst_t = 0.0
+            ratios_at = []
+            # Track max consecutive offending ACTIVE windows. Also
+            # track max consecutive offending windows aligned in
+            # direction (both > 1 or both < 1) — a channel that
+            # dithers above-then-below isn't sustained drift even
+            # if the count is high.
+            cur_run = 0
+            cur_run_dir = 0  # +1 = ours louder, -1 = ours quieter
+            max_run = 0
+            max_run_t0 = 0.0
+            max_run_dir = 0
+            run_start = 0.0
+            for s in range(0, n - win, win):
+                o_w = mo[s:s+win]
+                r_w = mr[s:s+win]
+                o_rms = float(np.sqrt(np.mean(o_w**2)))
+                r_rms = float(np.sqrt(np.mean(r_w**2)))
+                if max(o_rms, r_rms) < 0.001:
+                    # Active windows must be contiguous to count as a
+                    # "run"; silent gaps reset the counter.
+                    cur_run = 0
+                    continue
+                active += 1
+                # Add a 1e-6 floor so a "ours silent / ref loud" or
+                # vice-versa case still produces a finite log ratio
+                # (worth flagging).
+                ratio = (o_rms + 1e-6) / (r_rms + 1e-6)
+                lr = np.log(max(ratio, 1e-9))
+                lr_abs = abs(lr)
+                t_now = s / ro
+                ratios_at.append((t_now, ratio))
+                if lr_abs > ratio_thresh:
+                    offending += 1
+                    if lr_abs > abs(np.log(max(worst_ratio, 1e-9))):
+                        worst_ratio = ratio
+                        worst_t = t_now
+                    new_dir = 1 if lr > 0 else -1
+                    if new_dir == cur_run_dir:
+                        cur_run += 1
+                    else:
+                        cur_run = 1
+                        cur_run_dir = new_dir
+                        run_start = t_now
+                    if cur_run > max_run:
+                        max_run = cur_run
+                        max_run_t0 = run_start
+                        max_run_dir = cur_run_dir
+                else:
+                    cur_run = 0
+                    cur_run_dir = 0
+
+            if active == 0:
+                continue
+            coverage = offending / active
+            # Flag if EITHER overall coverage exceeds the threshold OR
+            # the longest sustained run is at least 2 seconds (8 windows
+            # at the default 250ms). The latter catches FEATSOFV-style
+            # bugs where a channel is wrong for one phrase but fine
+            # most of the song.
+            sustained_run_sec = max_run * win_sec
+            min_run_sec = 2.0
+            if coverage > coverage_thresh or sustained_run_sec >= min_run_sec:
+                # Pull the median of out-of-band ratios for a stable
+                # summary number — single windows can be noisy at low
+                # signal levels.
+                bad = [r for _, r in ratios_at if abs(np.log(max(r, 1e-9))) > ratio_thresh]
+                med = float(np.median(bad)) if bad else 1.0
+                flagged_channels.append((ch, {
+                    "active_windows": active,
+                    "offending_windows": offending,
+                    "coverage": coverage,
+                    "median_bad_ratio": med,
+                    "worst_ratio": worst_ratio,
+                    "worst_t": worst_t,
+                    "max_run_sec": sustained_run_sec,
+                    "max_run_t0": max_run_t0,
+                    "max_run_dir": "loud" if max_run_dir > 0 else "quiet",
+                }))
+        finally:
+            ours_wav.unlink(missing_ok=True)
+            ref_wav.unlink(missing_ok=True)
+
+    return flagged_channels
+
+
 def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
     """Returns (status, flags_per_window, attribution_dict)."""
     out_dir = Path(args.corpus) / "renders"
@@ -461,10 +625,28 @@ def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
         if flags:
             flagged.append((ts, flags, stats))
 
-    if not flagged:
-        return "clean", [], {}
-
+    # --per-channel-vu walks the timeline regardless of whether the
+    # master sweep flagged anything (sustained per-channel issues that
+    # the master mix dilutes are exactly what this catches).
     attribution = {}
+    if args.per_channel_vu:
+        if n_channels > 0 and n_channels <= args.bisect_max_channels:
+            try:
+                solo_bin = find_openmpt_solo()
+                vu_flags = per_channel_vu_module(
+                    args, render_bin, solo_bin, h, file_path, out_dir,
+                    n_channels,
+                )
+                if vu_flags:
+                    attribution["__per_channel_vu__"] = vu_flags
+            except FileNotFoundError as e:
+                print(f"  per-channel-vu skipped: {e}", file=sys.stderr)
+
+    if not flagged and not attribution.get("__per_channel_vu__"):
+        return "clean", [], {}
+    if not flagged and attribution.get("__per_channel_vu__"):
+        return "flagged", [], attribution
+
     if args.bisect or args.solo_bisect:
         attribution = bisect_module(args, render_bin, h, file_path,
                                     flagged, ours_wav, ref_wav, out_dir)
@@ -597,18 +779,41 @@ def render_report(args, results):
         flagged.sort(key=sev)
         for h, ext, name, _, fl, attr in flagged:
             out.append(f"### `{name}` ({ext}, hash {h})\n\n")
-            out.append("| t (s) | RMS ours | RMS ref | ratio | flags |\n")
-            out.append("|---:|---:|---:|---:|---|\n")
-            for ts, flags, stats in fl[:12]:
-                ro = stats.get("rms_ours", 0.0)
-                rr = stats.get("rms_ref", 0.0)
-                ratio = stats.get("ratio", float("nan"))
-                out.append(f"| {ts:.1f} | {ro:.4f} | {rr:.4f} | {ratio:.2f} | {'; '.join(flags)} |\n")
-            if len(fl) > 12:
-                out.append(f"\n_(+{len(fl)-12} more windows)_\n")
+            if fl:
+                out.append("| t (s) | RMS ours | RMS ref | ratio | flags |\n")
+                out.append("|---:|---:|---:|---:|---|\n")
+                for ts, flags, stats in fl[:12]:
+                    ro = stats.get("rms_ours", 0.0)
+                    rr = stats.get("rms_ref", 0.0)
+                    ratio = stats.get("ratio", float("nan"))
+                    out.append(f"| {ts:.1f} | {ro:.4f} | {rr:.4f} | {ratio:.2f} | {'; '.join(flags)} |\n")
+                if len(fl) > 12:
+                    out.append(f"\n_(+{len(fl)-12} more windows)_\n")
+            else:
+                out.append("_(master-mix sweep clean; flagged via "
+                           "`--per-channel-vu` only)_\n")
             # Attribution rollup, if bisect was run.
             if attr:
                 solo = attr.pop("__solo__", None) if isinstance(attr, dict) else None
+                vu = attr.pop("__per_channel_vu__", None) if isinstance(attr, dict) else None
+                if vu:
+                    out.append("\n**Per-channel VU sustained drift "
+                               "(timeline-wide RMS ratio):**\n\n")
+                    out.append("| ch | active wins | offending | coverage | "
+                               "median bad | longest run | worst |\n")
+                    out.append("|---:|---:|---:|---:|---:|---|---|\n")
+                    rows = sorted(vu, key=lambda kv: -kv[1].get("max_run_sec", 0))
+                    for ch, st in rows[:16]:
+                        out.append(
+                            f"| {ch} | {st['active_windows']} | "
+                            f"{st['offending_windows']} | "
+                            f"{100*st['coverage']:.0f}% | "
+                            f"{st['median_bad_ratio']:.2f}x | "
+                            f"{st.get('max_run_sec', 0):.1f}s @ {st.get('max_run_t0', 0):.1f}s ({st.get('max_run_dir', '?')}) | "
+                            f"{st['worst_ratio']:.2f}x @ {st['worst_t']:.1f}s |\n"
+                        )
+                    if len(rows) > 16:
+                        out.append(f"\n_(+{len(rows)-16} more channels)_\n")
                 if attr:
                     out.append("\n**Channel attribution (mute-bisect):**\n\n")
                     for ts in sorted(attr.keys()):
