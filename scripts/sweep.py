@@ -256,8 +256,17 @@ def top_peaks(rate, mono, n=8, threshold_rel=0.1):
 
 
 def compare_window(ours_path: Path, ref_path: Path, t_start: float, t_end: float,
-                   rms_low: float, rms_high: float, cents_thresh: float):
-    """Returns (flag_reasons: list[str], stats: dict). Empty reasons → clean."""
+                   rms_low: float, rms_high: float, cents_thresh: float,
+                   n_channels: int = 8):
+    """Returns (flag_reasons: list[str], stats: dict). Empty reasons → clean.
+
+    `n_channels` scales the spectral peak budget. With ~8 channels each
+    contributing fundamental + 2-3 strong harmonics, top-N peaks should
+    be at least ~3-4× channel count. Using 12 fixed missed real
+    divergences on 32-channel XMs (a quiet broken channel's peaks never
+    made the top-12 set when 32 active channels each had louder peaks).
+    Cap at 96 — diminishing returns past that, and the magnitude
+    threshold filter still drops noise."""
     rate_o, mono_o_full = load_wav_mono(ours_path)
     rate_r, mono_r_full = load_wav_mono(ref_path)
     if rate_o != rate_r:
@@ -285,18 +294,22 @@ def compare_window(ours_path: Path, ref_path: Path, t_start: float, t_end: float
         if ratio < rms_low or ratio > rms_high:
             flags.append(f"rms-ratio={ratio:.2f}")
 
-    # Spectral check: pull more peaks each side, then for each "ours" peak
-    # find the nearest "ref" peak BY FREQUENCY (not by magnitude rank).
-    # The previous code matched in rank order, which produced spurious
-    # 1000+ cent "shifts" whenever peak rankings were slightly different
-    # (e.g. ours peak#3 at 87 Hz vs ref peak#3 at 406 Hz, even though both
-    # spectra have peaks at 87 and 406 Hz). Wider candidate window catches
-    # the actual matching peak.
-    p_o = top_peaks(rate_o, o, n=12)
-    p_r = top_peaks(rate_o, r, n=12)
+    # Spectral check: scale the candidate-peak budget by channel count,
+    # bounded to [12, 96]. Rationale: each active channel contributes a
+    # fundamental + 2-3 harmonics; with 32 active channels, top-12 peaks
+    # is < 1 peak/channel which silently misses divergences in quieter
+    # channels. We compare top-N "primary" peaks (= 1.5 × channels,
+    # bounded too) against the wider candidate set so each primary peak
+    # has a fair chance of finding its match.
+    n_candidates = max(12, min(96, n_channels * 4))
+    n_primary = max(6, min(48, int(n_channels * 1.5)))
+    p_o = top_peaks(rate_o, o, n=n_candidates)
+    p_r = top_peaks(rate_o, r, n=n_candidates)
+    primary_o = p_o[:n_primary]
+    primary_r = p_r[:n_primary]
     cents_offenders = 0
     cents_list = []
-    for fo, _ in p_o[:6]:
+    for fo, _ in primary_o:
         if not p_r:
             continue
         # Match by frequency proximity (smallest absolute Hz delta) across
@@ -309,21 +322,25 @@ def compare_window(ours_path: Path, ref_path: Path, t_start: float, t_end: float
             if abs(cents) > cents_thresh:
                 cents_offenders += 1
     stats["cents"] = cents_list
-    if cents_offenders >= 2:
-        flags.append(f"pitch-shift({cents_offenders}/6 peaks > {cents_thresh}c)")
+    # Threshold scales: a 32-channel module flagging on 2/48 peaks is
+    # noise; we want the rate to scale.
+    cents_threshold = max(2, n_primary // 3)
+    if cents_offenders >= cents_threshold:
+        flags.append(f"pitch-shift({cents_offenders}/{n_primary} peaks > {cents_thresh}c)")
 
-    # Missing-peak heuristic: peaks in ref that don't have a match in ours
-    # within 6 Hz at a nontrivial magnitude.
+    # Missing-peak heuristic: scaled equivalently. >= half of primary
+    # peaks in the ref missing in ours.
     missing = 0
-    for fr, mr in p_r[:6]:
+    for fr, mr in primary_r:
         if not p_o:
             missing += 1
             continue
         nearest_f, _ = min(p_o, key=lambda kv: abs(kv[0] - fr))
         if abs(nearest_f - fr) > 6.0:
             missing += 1
-    if missing >= 3:
-        flags.append(f"missing-peaks({missing}/6)")
+    missing_threshold = max(3, n_primary // 2)
+    if missing >= missing_threshold:
+        flags.append(f"missing-peaks({missing}/{n_primary})")
 
     return flags, stats
 
@@ -433,11 +450,13 @@ def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
     duration = len(mono) / rate
     flagged = []
     win = 2.0
+    n_channels = max(1, detect_channel_count(file_path))
     sample_starts = list(np.arange(5.0, min(duration, args.end_time) - win, 5.0))
     for ts in sample_starts:
         flags, stats = compare_window(
             ours_wav, ref_wav, ts, ts + win,
             args.rms_low, args.rms_high, args.cents_thresh,
+            n_channels=n_channels,
         )
         if flags:
             flagged.append((ts, flags, stats))
@@ -506,6 +525,7 @@ def bisect_module(args, render_bin, h, file_path, flagged, ours_wav, ref_wav,
             flags_after, stats_after = compare_window(
                 muted_wav, ref_wav, ts, ts + 2.0,
                 args.rms_low, args.rms_high, args.cents_thresh,
+                n_channels=n_channels,
             )
             ratio_after = stats_after.get("ratio", 1.0)
             sev_after = abs(np.log(max(ratio_after, 1e-9))) if ratio_after else 0.0
