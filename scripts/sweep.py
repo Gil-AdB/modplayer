@@ -247,18 +247,30 @@ def compare_window(ours_path: Path, ref_path: Path, t_start: float, t_end: float
         if ratio < rms_low or ratio > rms_high:
             flags.append(f"rms-ratio={ratio:.2f}")
 
-    # Spectral check: top-N peaks each, find pairwise nearest, cents diff.
-    p_o = top_peaks(rate_o, o, n=8)
-    p_r = top_peaks(rate_o, r, n=8)
+    # Spectral check: pull more peaks each side, then for each "ours" peak
+    # find the nearest "ref" peak BY FREQUENCY (not by magnitude rank).
+    # The previous code matched in rank order, which produced spurious
+    # 1000+ cent "shifts" whenever peak rankings were slightly different
+    # (e.g. ours peak#3 at 87 Hz vs ref peak#3 at 406 Hz, even though both
+    # spectra have peaks at 87 and 406 Hz). Wider candidate window catches
+    # the actual matching peak.
+    p_o = top_peaks(rate_o, o, n=12)
+    p_r = top_peaks(rate_o, r, n=12)
     cents_offenders = 0
+    cents_list = []
     for fo, _ in p_o[:6]:
         if not p_r:
             continue
+        # Match by frequency proximity (smallest absolute Hz delta) across
+        # the WIDER ref-peak set, but only count it as a "matched peak" if
+        # within 6 Hz — a missed match is a missing-peak case, not pitch.
         nearest_f, _ = min(p_r, key=lambda kv: abs(kv[0] - fo))
         if nearest_f > 0 and fo > 0 and abs(nearest_f - fo) < 6.0:
             cents = 1200.0 * np.log2(nearest_f / fo)
+            cents_list.append(cents)
             if abs(cents) > cents_thresh:
                 cents_offenders += 1
+    stats["cents"] = cents_list
     if cents_offenders >= 2:
         flags.append(f"pitch-shift({cents_offenders}/6 peaks > {cents_thresh}c)")
 
@@ -294,14 +306,18 @@ def sweep_module(args, render_bin, omt_bin, h, ext, name, file_path):
     if not run_openmpt(omt_bin, file_path, ref_wav):
         return "openmpt-render-failed", [], {}
 
-    # Walk 1.0s windows at 5s intervals across the rendered region.
+    # Walk 2.0s windows at 5s intervals. 2s gives 0.5 Hz FFT bin width
+    # — ~8 cents resolution at 100 Hz vs the 1.0s window's ~17 cents.
+    # Pre-fix the harness was reporting pitch-shift on bin-edge peaks
+    # that were actually within tolerance.
     rate, mono = load_wav_mono(ours_wav)
     duration = len(mono) / rate
     flagged = []
-    sample_starts = list(np.arange(5.0, min(duration, args.end_time) - 1.0, 5.0))
+    win = 2.0
+    sample_starts = list(np.arange(5.0, min(duration, args.end_time) - win, 5.0))
     for ts in sample_starts:
         flags, stats = compare_window(
-            ours_wav, ref_wav, ts, ts + 1.0,
+            ours_wav, ref_wav, ts, ts + win,
             args.rms_low, args.rms_high, args.cents_thresh,
         )
         if flags:
@@ -356,7 +372,7 @@ def bisect_module(args, render_bin, h, file_path, flagged, ours_wav, ref_wav,
             continue
         for ts, sev, stats in target_windows:
             flags_after, stats_after = compare_window(
-                muted_wav, ref_wav, ts, ts + 1.0,
+                muted_wav, ref_wav, ts, ts + 2.0,
                 args.rms_low, args.rms_high, args.cents_thresh,
             )
             ratio_after = stats_after.get("ratio", 1.0)
