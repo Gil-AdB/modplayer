@@ -133,13 +133,28 @@ impl ModuleBackend for ItBackend {
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
                                 set_channel_note(channel, voice, sample.relative_note, sample.finetune, mapped_note, r.rate, r.frequency_tables);
-                                // IT c5_speed override: same as S3M but with note offset
-                                // -1 (engine note 61 = OpenMPT formula note 60). See the
-                                // porta-target branch above for the relative_note caveat.
+                                // IT c5_speed override. Two paths:
+                                //   - amiga mode: formula returns amiga-scale period and
+                                //     d_period2hz_tab maps it correctly (S3M-shape).
+                                //   - linear mode (most IT files): OpenMPT treats period
+                                //     == freq directly (Snd_fx.cpp:6566). Our
+                                //     d_period2hz_tab can't represent that mapping, so
+                                //     we compute the freq via OpenMPT's IT-linear
+                                //     formula (`Note::it_linear_frequency`) and stash
+                                //     it on `note.linear_hz`; `Note::frequency` returns
+                                //     it directly without going through the period
+                                //     table. Pre-fix: dU=8.323 = 399 kHz output, voices
+                                //     ultrasonic & inaudible (sweep ratio 0.04).
+                                channel.note.linear_hz = 0.0;
                                 if sample.c5_speed != 0 {
-                                    let p = crate::channel_state::channel_state::Note::note_to_period_s3m(mapped_note as u8, -1, sample.c5_speed);
-                                    channel.note.period = p;
-                                    channel.note.base_period = p;
+                                    if r.song_data.use_amiga {
+                                        let p = crate::channel_state::channel_state::Note::note_to_period_s3m(mapped_note as u8, -1, sample.c5_speed);
+                                        channel.note.period = p;
+                                        channel.note.base_period = p;
+                                    } else {
+                                        let hz = crate::channel_state::channel_state::Note::it_linear_frequency(mapped_note as u8, sample.c5_speed);
+                                        channel.note.linear_hz = hz;
+                                    }
                                     channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
                                 }
                                 voice.last_played_note = pattern.note;

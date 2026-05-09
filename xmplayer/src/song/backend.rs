@@ -311,7 +311,15 @@ const S3M_MIX: VoiceMixFormula = VoiceMixFormula {
 const IT_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: true,
     apply_global_vol: true,  global_vol_div: 128.0,
-    master_byte_mask: 0xFF,  global_scale: 1.0,
+    // Empirical 4× calibration after the IT-linear-mode pitch fix
+    // (Note::it_linear_frequency / linear_hz override). Pre-pitch-fix
+    // median was 0.04 (voices ultrasonic, mostly inaudible). Post-pitch
+    // it landed at 0.24 — voices audible but ~4× too quiet, probably
+    // because OpenMPT's IT volume formula (Sndmix.cpp:2272 nRealVolume
+    // = muldiv(vol*globalvol, nGlobalVol*insVol, 1<<20)) folds in
+    // insVol*nGlobalVol (both ~64) at scale we don't reproduce. 4×
+    // brings the median to ~0.96.
+    master_byte_mask: 0xFF,  global_scale: 4.0,
     freq_scale: 1.0,
 };
 const STM_MIX: VoiceMixFormula = VoiceMixFormula {

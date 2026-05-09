@@ -415,13 +415,16 @@ fn test_s3m_c5_speed_formula_period() {
 
 #[test]
 fn test_it_c5_speed_formula_period() {
-    // IT c5_speed formula path. IT pattern byte 60 → engine note 61, mapped
-    // through the instrument's keyboard map to it_mapping.0 = 60, then
+    // IT amiga-mode c5_speed formula path. IT pattern byte 60 → engine note 61,
+    // mapped through the instrument's keyboard map to it_mapping.0 = 60, then
     // mapped_note = 61 reaches the formula with offset -1 → formula note 60.
     // OpenMPT expectation matches the S3M case at the same c5_speed.
+    // Linear-mode IT goes through `Note::it_linear_frequency` instead — see
+    // `test_it_linear_c5_speed_freq`.
     let cases: &[(u32, u16)] = &[(8363, 1712), (10000, 1431), (16000, 894)];
     for (c5, expected) in cases {
         let mut builder = MockSongBuilder::new(SongType::IT, 1);
+        builder.use_amiga_freq(true);
         builder.instruments[1].samples[0].data = vec![0.0; 4096];
         builder.instruments[1].samples[0].length = 4096;
         builder.instruments[1].samples[0].c5_speed = *c5;
@@ -433,6 +436,41 @@ fn test_it_c5_speed_formula_period() {
         let p = tester.get_channel_period(0);
         assert_eq!(p, *expected,
             "IT c5_speed={} expected period {} got {}", c5, expected, p);
+    }
+}
+
+#[test]
+fn test_it_linear_c5_speed_freq() {
+    // IT linear-mode pitch path (default for IT files with flag 8 set).
+    // OpenMPT Snd_fx.cpp:6446: at C-5 (engine note 61) the freq equals
+    // c5_speed; each octave doubles. Pre-fix our pipeline computed an
+    // amiga-scale period and looked it up in the FT2-linear period table,
+    // producing ultrasonic output (dU 8.323 = 399 kHz). With the
+    // `linear_hz` override the trigger stashes the computed Hz directly
+    // and `Note::frequency` returns it without the period-table lookup.
+    let cases: &[(u32, u8, f32)] = &[
+        (8363, 61, 8363.0),    // C-5 = c5_speed
+        (10000, 61, 10000.0),  // unit at C-5
+        (8363, 49, 4181.5),    // C-4 = c5/2 (one octave below C-5)
+        (8363, 73, 16726.0),   // C-6 = c5*2
+    ];
+    for &(c5, note, expected_hz) in cases {
+        let mut builder = MockSongBuilder::new(SongType::IT, 1);
+        // use_amiga_freq(false) is the default; explicit for clarity.
+        builder.use_amiga_freq(false);
+        builder.instruments[1].samples[0].data = vec![0.0; 4096];
+        builder.instruments[1].samples[0].length = 4096;
+        builder.instruments[1].samples[0].c5_speed = c5;
+        builder.add_empty_pattern(2);
+        builder.add_pattern_row(0, 0, note, 1, 64, 0, 0);
+        let mut tester = builder.get_tester();
+        tester.tick();
+        let v_idx = tester.song.voices.iter().position(|v| v.on).expect("voice on");
+        let actual = tester.song.voices[v_idx].frequency;
+        // Tolerate ~1 Hz from integer-table rounding in the formula.
+        assert!((actual - expected_hz).abs() < 1.5,
+            "IT linear c5={} note={} expected {} Hz, got {}",
+            c5, note, expected_hz, actual);
     }
 }
 

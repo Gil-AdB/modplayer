@@ -438,6 +438,16 @@ pub struct Note {
     /// arpeggio formula override and any future formula-based effect must
     /// read this, not `sample.c5_speed`, so S2 changes propagate.
     pub c5_speed:        u32,
+    /// IT-linear-mode override: when nonzero, `frequency()` returns this
+    /// value directly and skips the `d_period2hz_tab` lookup. IT linear
+    /// stores `period == freq` (Hz) per OpenMPT Snd_fx.cpp:6566 — our
+    /// existing FT2-linear period table can't represent that mapping, so
+    /// we compute the freq once at trigger via OpenMPT's formula and
+    /// stash it here. Pitch slides on this path still write to `period`
+    /// using the LUT scale; the slide effects will need a per-format
+    /// path eventually but the static-trigger pitch fix is the
+    /// dominant mass of the IT regression (sweep ratio 0.04 → fix-target).
+    pub linear_hz:       f32,
 }
 
 impl Note {
@@ -450,6 +460,7 @@ impl Note {
             base_period: 0,
             original_note: 0,
             c5_speed: 0,
+            linear_hz: 0.0,
         }
     }
 
@@ -665,13 +676,38 @@ impl Note {
     }
 
     pub(crate) fn frequency(&self, period_shift: i16, period_offset: i32, semitone: bool, frequency_tables: &AudioTables) -> f32 {
+        // IT linear-mode override: the trigger path stashed an absolute
+        // Hz value (computed from c5_speed via OpenMPT's IT-linear formula
+        // — our period table can't represent that mapping). Skip the
+        // table lookup. Pitch slides still write to `period` and don't
+        // affect this path yet — that's a follow-up; the static-trigger
+        // pitch is the dominant mass of the IT regression.
+        if self.linear_hz != 0.0 {
+            return self.linear_hz;
+        }
         let mut period = self.period as i32 + period_shift as i32 + period_offset;
-        
+
         if semitone {
             period = ((period + 32) / 64) * 64;
         }
 
         return frequency_tables.d_period2hz_tab[period.clamp(0, 65535) as usize] as f32;
+    }
+
+    /// IT linear-mode pitch: OpenMPT Snd_fx.cpp:6446. At C-5 (engine 61)
+    /// the freq is exactly c5_speed; each octave doubles, each semitone
+    /// goes via LinearSlideUpTable. Returns Hz directly (period field
+    /// is unused on this path).
+    pub(crate) fn it_linear_frequency(engine_note: u8, c5_speed: u32) -> f32 {
+        // OpenMPT's note0 = our_engine_note - 1 (their NOTE_MIN convention).
+        let n = (engine_note as i32 - 1).max(0) as u32;
+        let factor = crate::tables::LINEAR_SLIDE_UP_TABLE[((n % 12) * 16) as usize] as u64;
+        let shift = n / 12;
+        // freq = c5_speed * (factor << shift) / (65536 << 5)
+        // i.e.  c5_speed * 2^((shift) - 5) * (factor / 65536)
+        let num = factor << shift;
+        let den: u64 = 65536u64 << 5;
+        ((c5_speed as u64 * num) / den) as f32
     }
 
     const NOTES: [&'static str;12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
