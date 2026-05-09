@@ -38,3 +38,17 @@ ft2-clone/
 # (`*_master.txt` are legacy frozen master-format dumps and stay tracked.)
 xmplayer/test_data/*_refactor.txt
 xmplayer/test_data/*_dump.txt
+
+# Corpus harness — modules and renders are big, manifest is generated.
+# We track tools/build_corpus.sh and scripts/sweep.py but not the corpus
+# contents themselves. corpus/README.md is allow-listed so the directory
+# is documented even when empty.
+corpus/*.tsv
+corpus/*.md
+corpus/renders/
+corpus/s3m/
+corpus/xm/
+corpus/it/
+corpus/mod/
+corpus/stm/
+!corpus/README.md
