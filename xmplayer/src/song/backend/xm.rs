@@ -61,12 +61,28 @@ impl ModuleBackend for XmBackend {
                                 let final_sample_idx = sample_idx - 1;
                                 
                                 let prev_voice_idx = channel.voice_idx.unwrap_or(i);
+                                // FT2 quirk (kFT2ReloadSampleSettings, OpenMPT
+                                // Snd_fx.cpp:2877): a note WITHOUT an instrument
+                                // column keeps the current voice volume. Only an
+                                // explicit instrument number reloads sample
+                                // default volume + panning. Repro: FEATSOFV.XM
+                                // ch15 around 50.4–51.2s — pattern says
+                                // `4F 00 80 00 00` (F#6, no inst, vol col 0x80
+                                // fine-slide-down 0). Pre-fix we retrig'd to
+                                // sample default (55) and played 4–5× louder
+                                // than OpenMPT, which had carried over the
+                                // previous tick's Vraw≈22.
+                                let prev_vol = r.voices[prev_voice_idx].volume.volume;
                                 cut_or_nna_existing_voice(r.voices, instruments, r.song_data.song_type, i, prev_voice_idx);
 
                                 let voice_idx = alloc_voice(r.voices);
                                 init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
                                 let voice = &mut r.voices[voice_idx];
-                                voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
+                                if pattern.instrument != 0 {
+                                    voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
+                                } else {
+                                    voice.volume.retrig(prev_vol as i32);
+                                }
                                 voice.panning.panning = r.song_data.initial_channel_panning[i];
 
                                 // XM: a note without instrument keeps the current instrument/envelope phase.
