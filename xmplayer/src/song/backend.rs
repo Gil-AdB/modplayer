@@ -321,7 +321,7 @@ const IT_MIX:  VoiceMixFormula = VoiceMixFormula {
     // that OpenMPT applies (48/256 = 0.1875 per voice in libopenmpt
     // mode). Per-module per-window variance is large; this scale
     // covers the bulk.
-    master_byte_mask: 0xFF,  global_scale: 2.0,
+    master_byte_mask: 0xFF,  global_scale: 3.0,
     freq_scale: 1.0,
 };
 const STM_MIX: VoiceMixFormula = VoiceMixFormula {
