@@ -15,7 +15,7 @@ mod leak;
 
 #[cfg(feature="sdl2-feature")] use sdl2::audio::AudioCallback;
 #[cfg(any(feature="sdl2-feature", feature="external-audio"))]
-use xmplayer::song::{PlaybackCmd, CallbackState, InterleavedBufferAdaptar};
+use xmplayer::song::{PlaybackCmd, CallbackState, InterleavedBufferAdaptar, PlanarBufferAdaptar};
 #[cfg(any(feature="sdl2-feature", feature="external-audio"))]
 use std::sync::mpsc;
 #[cfg(feature="sdl2-feature")] use std::sync::mpsc::{Receiver, Sender};
@@ -177,6 +177,30 @@ extern "C" fn Modplayer_FillBuffer(app_ptr: *mut c_void, out: *mut f32, frames: 
     let mut adaptar = InterleavedBufferAdaptar { buf: slice };
     if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) {
         // Song reached end — let host see it via the next call returning silence.
+    }
+}
+
+// Planar variant: writes into two separate L/R buffers. Saves the JS host
+// a deinterleave step when feeding an AudioWorkletNode (which expects per-
+// channel Float32Arrays). `left` and `right` each receive `frames` f32s.
+#[cfg(feature="external-audio")]
+#[unsafe(no_mangle)]
+extern "C" fn Modplayer_FillBufferPlanar(app_ptr: *mut c_void,
+                                          left: *mut f32,
+                                          right: *mut f32,
+                                          frames: u32) {
+    use std::ops::DerefMut;
+    if app_ptr.is_null() || left.is_null() || right.is_null() { return; }
+    let self_ = unsafe { &mut *(app_ptr as *mut App) };
+    let n = frames as usize;
+    let l_slice = unsafe { std::slice::from_raw_parts_mut(left,  n) };
+    let r_slice = unsafe { std::slice::from_raw_parts_mut(right, n) };
+    let mut song = self_.song_handle.get_song().lock().unwrap();
+    let mut rx = self_.song_handle.get_rx().lock().unwrap();
+    song.handle_commands(rx.deref_mut());
+    let mut adaptar = PlanarBufferAdaptar { buf: [l_slice, r_slice] };
+    if let CallbackState::Complete = song.get_next_tick(&mut adaptar, rx.deref_mut()) {
+        // Song reached end — host sees it via subsequent silence.
     }
 }
 
