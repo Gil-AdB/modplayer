@@ -1,0 +1,43 @@
+diff --git a/soundlib/Sndmix.cpp b/soundlib/Sndmix.cpp
+index 34fbb1b..60eff61 100644
+--- a/soundlib/Sndmix.cpp
++++ b/soundlib/Sndmix.cpp
+@@ -2405,6 +2405,38 @@ bool CSoundFile::ReadNote()
+ 			}
+ 
+ 			auto [ninc, freq] = GetChannelIncrement(chn, period, nPeriodFrac);
++			// === FEAT/S3M-REFACTOR INSTRUMENTATION ===
++			// Per-tick state dump for comparing against our engine.
++			// Activated by env var OMT_DUMP_CH=<channel_index>. Output:
++			//   T=<sample_pos> ord=N row=N tick=N ch=N note=N period=N freq=N
++			//   vibpos=N vibdep=N vibspd=N nVol=N pos=Lo.Hi
++			// pos uses .position64 if linear time; otherwise position.
++			{
++				static const char *dump_ch_env = getenv("OMT_DUMP_CH");
++				static long dump_ch = dump_ch_env ? atol(dump_ch_env) : -1;
++				if (dump_ch >= 0 && static_cast<long>(nChn) == dump_ch) {
++					// Total samples elapsed since song start. m_nBufferCount
++					// counts down within a tick, m_nSamplesPerTick is the
++					// tick duration; we accumulate completed-tick frames.
++					fprintf(stderr,
++						"[OMT] ord=%u row=%u tick=%u ch=%u note=%u period=%d freq=%d "
++						"vibpos=%u vibdep=%u vibspd=%u nVol=%d nFineTune=%d pos=%llu inc=%llu\n",
++						(unsigned)m_PlayState.m_nCurrentOrder,
++						(unsigned)m_PlayState.m_nRow,
++						(unsigned)m_PlayState.m_nTickCount,
++						(unsigned)nChn,
++						(unsigned)chn.nNote,
++						(int)period,
++						(int)freq,
++						(unsigned)chn.nVibratoPos,
++						(unsigned)chn.nVibratoDepth,
++						(unsigned)chn.nVibratoSpeed,
++						(int)chn.nVolume,
++						(int)chn.nFineTune,
++						(unsigned long long)chn.position.GetInt(),
++						(unsigned long long)ninc.GetInt());
++				}
++			}
+ #ifndef MODPLUG_TRACKER
+ 			ninc.MulDiv(m_nFreqFactor, 65536);
+ #endif  // !MODPLUG_TRACKER
