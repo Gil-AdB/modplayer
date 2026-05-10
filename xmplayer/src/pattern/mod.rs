@@ -91,6 +91,31 @@ impl Pattern {
         }
     }
 
+    /// True if the current row carries a vibrato or vibrato-combo effect.
+    /// Used to gate vib-shift application: master only adds the wave's
+    /// frequency offset when the row asks for vibrato (Snd song.rs:1593),
+    /// otherwise the persisted `vibrato_state.pos` keeps biasing the
+    /// pitch on every subsequent tick (FEATSOFV.XM ch14/ch15 +19 cents
+    /// sharp on sustained held notes after a vibrato passage).
+    pub(crate) fn has_vibrato(&self, song_type: SongType) -> bool {
+        match song_type {
+            SongType::XM | SongType::MOD => {
+                self.effect == 0x04 || self.effect == 0x06
+                    || (self.volume >= 0xa0 && self.volume <= 0xbf)
+            }
+            SongType::S3M => {
+                // H = vibrato, K = vibrato + vol slide, U = fine vibrato.
+                self.effect == 0x08 || self.effect == 0x0b || self.effect == 0x15
+            }
+            SongType::IT => {
+                // H = vibrato, K = vibrato + vol slide. U is fine vibrato
+                // (effect 0x15 in IT).
+                self.effect == 0x08 || self.effect == 0x0b || self.effect == 0x15
+            }
+            _ => self.effect == 0x04 || self.effect == 0x06,
+        }
+    }
+
     pub(crate) fn is_note_delay(&self, song_type: SongType) -> bool {
         match song_type {
             SongType::IT | SongType::S3M => {

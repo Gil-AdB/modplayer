@@ -422,6 +422,7 @@ pub(super) fn init_channel_iter(
     first_tick: bool,
 ) -> bool {
     channel.tremor_silenced = false;
+    channel.vibrato_active_this_row = pattern.has_vibrato(song_type);
     if pattern.instrument != 0 {
         channel.last_instrument = if (pattern.instrument as usize) < instruments.len() {
             pattern.instrument as usize

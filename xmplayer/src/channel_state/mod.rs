@@ -386,6 +386,15 @@ pub struct ChannelState {
     /// Reset to false at the top of every channel iteration so it only
     /// persists for the tick on which Tremor was dispatched.
     pub(crate) tremor_silenced:                bool,
+    /// True when the row currently being processed carries a vibrato or
+    /// vibrato-combo effect (or vol-col vibrato for XM/MOD). Set in
+    /// `init_channel_iter` from `pattern.has_vibrato`. Gates the
+    /// vibrato wave's frequency contribution inside
+    /// `update_frequency_voice` — without it the persisted
+    /// `vibrato_state.pos` keeps biasing pitch on every tick of every
+    /// subsequent row, even ones that don't ask for vibrato. Mirrors
+    /// master's `if pattern.has_vibrato()` gate.
+    pub(crate) vibrato_active_this_row:        bool,
     pub(crate) period_shift:                   i16,
     pub(crate) last_played_note:               u8,
     pub(crate) vibrato_waveform:               u8,
@@ -426,6 +435,7 @@ impl ChannelState {
             tremor: 0,
             tremor_count: 0,
             tremor_silenced: false,
+            vibrato_active_this_row: false,
             period_shift: 0,
             last_played_note: 0,
             vibrato_waveform:       0,
@@ -483,7 +493,14 @@ impl ChannelState {
 
 
     pub(crate) fn update_frequency_voice(&mut self, voice: &mut Voice, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
-        let vib_shift = voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform));
+        // Vibrato shift only contributes when the current row asks for
+        // vibrato — `vibrato_state` itself persists between rows (FT2
+        // semantics), so without this gate the wave's last position
+        // keeps biasing pitch on every subsequent update_frequency_voice
+        // call. See comment on ChannelState::vibrato_active_this_row.
+        let vib_shift = if self.vibrato_active_this_row {
+            voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform))
+        } else { 0 };
         // `frequency_scale` is per-channel (set at Song::new from the
         // format's VoiceMixFormula). For MOD it compensates for our
         // d_period2hz_tab using the FT2 amiga clock instead of MOD's
