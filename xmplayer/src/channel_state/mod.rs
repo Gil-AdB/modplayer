@@ -214,10 +214,18 @@ impl Voice {
             self.frequency_shift = self.frequency * (pitch_shift_units as f32 * 0.00375);
         }
 
-        // Auto-vibrato
+        // Auto-vibrato — wave sign matches OpenMPT (Sndmix.cpp:1907,
+        // `vdelta = -ITSinusTable[pos]`). Our VIB_SINE_TAB stores -sin
+        // already, so OpenMPT's effective wave is +sin (rising at
+        // pos=64). We negate here to match. Pre-negation: drum-kit
+        // notes (depth=7 rate=25) played 10c flat against libopenmpt
+        // because the wave's first half-cycle pushed pitch down where
+        // OMT pushed it up, and the multiplicative compounding inside
+        // `frequency_shift = self.frequency * vib_shift` skewed the
+        // average DC offset accordingly.
         let auto_vibrato = self.vibrato_envelope_state.handle(&instrument.vibrato_envelope, self.sustained);
         if auto_vibrato != 0 {
-            let vib_shift = (auto_vibrato as f32 / 16384.0) * 0.05946; 
+            let vib_shift = (-(auto_vibrato as f32) / 16384.0) * 0.05946;
             self.frequency_shift += self.frequency * vib_shift;
         }
 
