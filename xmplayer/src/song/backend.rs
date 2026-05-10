@@ -286,9 +286,15 @@ pub(super) struct VoiceMixFormula {
 const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: false,
     apply_global_vol: true,  global_vol_div: 64.0,
-    // Empirical 1/√2 calibration to libopenmpt's reference render.
-    // Across 13 random XM modules from the corpus, our pre-fix median
-    // ratio was 2.20 (range 1.20-3.37); 1/√2 brings the median to ~1.37.
+    // Single-scalar approximation of OpenMPT's voice-count-dependent
+    // gain. OpenMPT applies a per-voice samplePreAmp (~48/256 = 0.1875
+    // for XM) plus an auto-normalization that scales sums of many
+    // active voices. Modeling either properly requires runtime voice
+    // counting; the constant scalar here lands close on dense-voice
+    // mixes and high on sparse ones. Tuned on a 13-module corpus
+    // sample (median 1.37x post-fix). Per-module residual: 0.5-4×
+    // depending on active voice density (e.g. FEATSOFV.XM 0.95×;
+    // css5_8bits.xm 3.7× — sparse-voice case).
     master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
     freq_scale: 1.0,
 };
