@@ -91,12 +91,14 @@ const SIN_TABLE: [i32; 32] =
 pub struct VibratoState {
     pub speed:  i8,
     pub depth:  i16,
-    pub pos:    i8,
-    /// S3M Uxy / IT u: depth byte represents 1/64 semitone units, vs Hxy's
-    /// 1/16. We honor the 4× finer scale by extra-shifting the wave output
-    /// here. Set on first_tick by `vibrato_inner` (`fine` arg) and reset by
-    /// the regular vibrato path; persists with the rest of vibrato state
-    /// when no vibrato effect is on the current row.
+    /// 256-step counter (4× the FT2 64-step logical cycle for sub-tick
+    /// resolution). Increments each tick by `speed` (which `vibrato_inner`
+    /// stores ×4) and wraps at 256 via u8 overflow. Pre-fix this was an
+    /// i8 with `pos -= 64` at 31 — that prematurely wrapped the wave from
+    /// the positive half straight into the negative half on the same
+    /// tick the increment crossed 31, producing a non-sinusoidal jagged
+    /// shape that time-averaged to a non-zero offset.
+    pub pos:    u8,
     pub fine:   bool,
 }
 
@@ -113,25 +115,31 @@ impl VibratoState {
 
 
     pub(crate) fn get_frequency_shift(&mut self, wave_control: WaveControl) -> i32 {
-        let delta;
-        let vibrato_pos = (self.pos >> 2) & 31;
-        match wave_control {
-            WaveControl::SIN => { delta = SIN_TABLE[vibrato_pos as usize] * self.depth as i32; }
+        // pos (0..255) → FT2 logical position (0..63) by divide-by-4.
+        // Upper half (32..63) is the negative half-cycle of the wave.
+        let logical_pos = (self.pos as u16) >> 2;
+        let in_negative_half = logical_pos >= 32;
+        let table_idx = (logical_pos & 31) as usize;
+        let delta = match wave_control {
+            WaveControl::SIN => SIN_TABLE[table_idx] * self.depth as i32,
             WaveControl::RAMP => {
-                let temp:i32 = (vibrato_pos * 8) as i32;
-                delta = if self.pos < 0 { 255 - temp } else { temp } as i32
+                let temp: i32 = (table_idx as i32) * 8;
+                let raw = if in_negative_half { 255 - temp } else { temp };
+                raw * self.depth as i32
             }
-            WaveControl::SQUARE => { delta = 255; }
-        }
-        // >> 5 produces ST3/FT2-compatible swing for Hxy (depth = 1/16
-        // semitone). Fine vibrato (Uxy / IT u) is 4× finer, so >> 7.
-        let shift = if self.fine { 7 } else { 5 };
-        ((delta >> shift) * (if self.pos < 0 { -1 } else { 1 })) as i32
+            // Square: ±max scaled by depth. Pre-fix this was a bare 255
+            // regardless of depth, leaking a constant +7-period shift on
+            // any channel that had E4y waveform=2 set, even with no
+            // active 4xy.
+            WaveControl::SQUARE => 255 * self.depth as i32,
+        };
+        let shift_amt = if self.fine { 7 } else { 5 };
+        let s = delta >> shift_amt;
+        if in_negative_half { -s } else { s }
     }
 
     pub(crate) fn next_tick(&mut self) {
-        self.pos += self.speed;
-        if self.pos > 31 { self.pos -= 64; }
+        self.pos = self.pos.wrapping_add(self.speed as u8);
     }
 }
 
