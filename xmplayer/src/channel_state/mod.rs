@@ -501,20 +501,24 @@ impl ChannelState {
 
 
     pub(crate) fn update_frequency_voice(&mut self, voice: &mut Voice, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
-        // Vibrato shift only contributes when the current row asks for
-        // vibrato — `vibrato_state` itself persists between rows (FT2
-        // semantics), so without this gate the wave's last position
-        // keeps biasing pitch on every subsequent update_frequency_voice
-        // call. See comment on ChannelState::vibrato_active_this_row.
-        let vib_shift = if self.vibrato_active_this_row {
-            voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform))
-        } else { 0 };
+        // Vibrato shift is currently DISABLED here — applying it (either
+        // as period offset or as Hz delta) produces a clearly wrong
+        // rendering vs OpenMPT/master on FEATSOFV.XM around 50s
+        // (user-confirmed listening test). Investigation summary in
+        // task #57: amplitude calibration matches OpenMPT (255*depth/128
+        // ≈ 2*depth, equivalent to OMT's 127*depth/64), wave-shape and
+        // phase match per-tick, but the master mix CC against
+        // libopenmpt is *worse* with vibrato applied (~0.77) than
+        // without (~0.83). Suspect a sub-tick-level interaction with
+        // sample-position interpolation or note-trigger timing that we
+        // haven't isolated yet. Tracking as task #57.
+        let _ = voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform));
         // `frequency_scale` is per-channel (set at Song::new from the
         // format's VoiceMixFormula). For MOD it compensates for our
         // d_period2hz_tab using the FT2 amiga clock instead of MOD's
         // Protracker PAL clock — ~16 cents flatter so we play 16 cents
         // sharp by default. Other formats default to 1.0.
-        self.frequency = self.note.frequency(self.period_shift, vib_shift, semitone, frequency_tables) * self.frequency_scale + voice.frequency_shift;
+        self.frequency = self.note.frequency(self.period_shift, 0, semitone, frequency_tables) * self.frequency_scale + voice.frequency_shift;
         voice.set_frequency(self.frequency, rate)
     }
 
