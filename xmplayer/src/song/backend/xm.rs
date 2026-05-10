@@ -20,6 +20,13 @@ impl ModuleBackend for XmBackend {
         let first_tick = *r.tick == 0;
         let first_row_tick = r.first_row_tick && first_tick;
 
+        // Debug context for the inline `[OUR]` dump in
+        // update_frequency_voice (gated by OUR_DUMP_CH env var, only
+        // when running diagnostic builds vs OMT instrumentation).
+        crate::channel_state::DUMP_CTX_ORD.store(*r.song_position as i32, std::sync::atomic::Ordering::Relaxed);
+        crate::channel_state::DUMP_CTX_ROW.store(*r.row as i32, std::sync::atomic::Ordering::Relaxed);
+        crate::channel_state::DUMP_CTX_TICK.store(*r.tick as i32, std::sync::atomic::Ordering::Relaxed);
+
         let instruments = &r.song_data.instruments;
 
         // 1. Process channels
@@ -186,6 +193,12 @@ impl ModuleBackend for XmBackend {
                     channel.period_shift = 0;
                 }
                 channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                // Post-increment the vibrato wave AFTER end-of-tick
+                // freq update, to match FT2/OMT semantic. See comment
+                // in channel_state/mod.rs::vibrato_inner.
+                if channel.vibrato_active_this_row && !first_tick {
+                    channel.advance_vibrato_pos(v);
+                }
             }
         }
 

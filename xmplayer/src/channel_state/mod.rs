@@ -1,4 +1,14 @@
 use crate::channel_state::channel_state::{EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState, WaveControl};
+use std::sync::atomic::{AtomicI32, Ordering};
+
+/// Debug context: ord/row/tick of the currently-processing tick, set
+/// by the backend at the top of each per-channel iteration via
+/// `DUMP_CTX::set`. Read by the inline `[OUR]` dump in
+/// `update_frequency_voice` so the per-tick output is diffable
+/// against OpenMPT's `[OMT]` dump (tools/openmpt_instrumentation.patch).
+pub static DUMP_CTX_ORD: AtomicI32 = AtomicI32::new(-1);
+pub static DUMP_CTX_ROW: AtomicI32 = AtomicI32::new(-1);
+pub static DUMP_CTX_TICK: AtomicI32 = AtomicI32::new(-1);
 use crate::instrument::Instruments;
 use crate::tables::AudioTables;
 use crate::module_reader::SongType;
@@ -512,18 +522,50 @@ impl ChannelState {
         // without (~0.83). Suspect a sub-tick-level interaction with
         // sample-position interpolation or note-trigger timing that we
         // haven't isolated yet. Tracking as task #57.
-        let _ = voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform));
-        // `frequency_scale` is per-channel (set at Song::new from the
-        // format's VoiceMixFormula). For MOD it compensates for our
-        // d_period2hz_tab using the FT2 amiga clock instead of MOD's
-        // Protracker PAL clock — ~16 cents flatter so we play 16 cents
-        // sharp by default. Other formats default to 1.0.
-        self.frequency = self.note.frequency(self.period_shift, 0, semitone, frequency_tables) * self.frequency_scale + voice.frequency_shift;
-        voice.set_frequency(self.frequency, rate)
+        let vib_shift = if self.vibrato_active_this_row {
+            voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform))
+        } else { 0 };
+        self.frequency = self.note.frequency(self.period_shift, vib_shift, semitone, frequency_tables) * self.frequency_scale + voice.frequency_shift;
+        voice.set_frequency(self.frequency, rate);
+        // FEAT/S3M-REFACTOR INSTRUMENTATION mirror — pairs with OMT's
+        // [OMT] dump in tools/openmpt_instrumentation.patch. Activate
+        // via env var OUR_DUMP_CH=<channel_index>. Print fields in the
+        // same order as OMT so a diff is straight-line.
+        let ours_dump_ch_env = std::env::var("OUR_DUMP_CH").ok();
+        let ours_dump_ch: i32 = ours_dump_ch_env.as_deref().and_then(|s| s.parse().ok()).unwrap_or(-1);
+        if ours_dump_ch >= 0 && voice.channel_idx as i32 == ours_dump_ch && !semitone && voice.on {
+            // Only emit on the semitone=false (end-of-tick) call so we
+            // don't double-print for vibrato_inner's internal call.
+            // Skip emit when voice is off (would dump stale slot state).
+            let ord = DUMP_CTX_ORD.load(Ordering::Relaxed);
+            let row = DUMP_CTX_ROW.load(Ordering::Relaxed);
+            let tick = DUMP_CTX_TICK.load(Ordering::Relaxed);
+            eprintln!("[OUR] ord={} row={} tick={} ch={} note={} period={} vib_shift={} period_shift={} freq={} vibpos={} vibdep={} vibspd={} vibwf={} fine={} vraw={} pos={:.0}",
+                ord, row, tick,
+                voice.channel_idx, voice.last_played_note,
+                self.note.period as i32 + self.period_shift as i32 + vib_shift,
+                vib_shift, self.period_shift,
+                self.frequency as i32,
+                voice.vibrato_state.pos,
+                voice.vibrato_state.depth,
+                voice.vibrato_state.speed,
+                self.vibrato_waveform,
+                voice.vibrato_state.fine,
+                voice.volume.volume,
+                voice.sample_position);
+        }
     }
 
     pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
         self.vibrato_inner(voice, first_tick, speed, depth, old_effects, false, rate, tables, song_type);
+    }
+
+    /// Post-increment the vibrato wave position, to match FT2/OMT
+    /// semantic of "compute delta with current pos, then advance".
+    /// Called by the backend after end-of-tick update_frequency_voice
+    /// when vibrato is active on the current row AND not first_tick.
+    pub(crate) fn advance_vibrato_pos(&mut self, voice: &mut Voice) {
+        voice.vibrato_state.next_tick();
     }
 
     /// S3M U / IT u command: like vibrato but the depth multiplier is 1
@@ -534,35 +576,36 @@ impl ChannelState {
     }
 
     fn vibrato_inner(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, fine: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
-        let (cur_speed, cur_depth) = if song_type == SongType::XM || song_type == SongType::MOD {
-            // XM/MOD pack speed+depth into a single byte memory.
-            let packed = self.recall_or_set(EffectMemorySlot::VibratoParam, (speed << 4) | depth);
-            (packed >> 4, packed & 0x0F)
-        } else {
-            // IT/S3M store speed and depth independently.
-            if speed != 0 { self.set_mem(EffectMemorySlot::VibratoSpeed, speed); }
-            if depth != 0 { self.set_mem(EffectMemorySlot::VibratoDepth, depth); }
-            (self.mem(EffectMemorySlot::VibratoSpeed), self.mem(EffectMemorySlot::VibratoDepth))
-        };
+        // FT2/OMT (Snd_fx.cpp:4694): speed and depth are independent
+        // memory lanes — `if (param & 0x0F) depth = ...; if (param &
+        // 0xF0) speed = ...`. Only the non-zero nibble updates its
+        // field; the other retains its previous value. Pre-fix we
+        // packed both into one VibratoParam slot, so a row like H02
+        // (depth update only) wiped speed to 0 — observed as our
+        // ch14 vibspd=0 at order 5 row 9+ while OMT held vibspd=8.
+        let _ = song_type; // memory semantics now unified across formats
+        if speed != 0 { self.set_mem(EffectMemorySlot::VibratoSpeed, speed); }
+        if depth != 0 { self.set_mem(EffectMemorySlot::VibratoDepth, depth); }
+        let cur_speed = self.mem(EffectMemorySlot::VibratoSpeed);
+        let cur_depth = self.mem(EffectMemorySlot::VibratoDepth);
 
         if let Some(v) = voice {
             if first_tick {
-                // Speed is stored ×4 to allow finer-than-1-tick wave
-                // resolution (per ST3 / FT2 / master at song.rs:1654 — the
-                // master comment reads "S3M did this in order to support
-                // finer vibrato"). Depth is stored raw — the fine variant
-                // gets its smaller swing through `vibrato_state.fine` (an
-                // extra >>2 in get_frequency_shift), not by scaling depth
-                // here. The previous depth-×{4,8} multiplier produced 4-8×
-                // the swing master/FT2 use, audible as a clear detune on
-                // long held vibrato notes (e.g. 2ND_PM.S3M order 0x13 ch7).
-                let _ = old_effects; // historic XM-old-fx mode unaffected by these scales
+                // Speed stored ×4 for sub-tick wave resolution (matches
+                // master at song.rs:1654). Depth stored raw.
+                let _ = old_effects;
                 v.vibrato_state.speed = (cur_speed as u16 * 4) as i8;
                 v.vibrato_state.depth = cur_depth as i16;
                 v.vibrato_state.fine = fine;
-            } else {
-                v.vibrato_state.next_tick();
             }
+            // Apply shift using CURRENT pos (FT2/OMT semantic: compute
+            // delta before advancing pos). The post-increment moves to
+            // backend.rs::apply_vibrato_post_increment, which runs
+            // AFTER the end-of-tick update_frequency_voice so that call
+            // also sees the pre-increment pos. Pre-fix we called
+            // next_tick HERE (before update_frequency_voice), which put
+            // our wave one tick ahead of OMT and produced an audibly
+            // wrong vibrato. Repro: FEATSOFV.XM ch14 around 50s.
             self.update_frequency_voice(v, rate, true, tables);
         }
     }

@@ -213,7 +213,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "vibrato shift disabled in update_frequency_voice — task #57"]
     fn test_s3m_fine_vibrato_smaller_swing_than_vibrato() {
         // S3M U (effect 21) is fine vibrato: same params as H but the depth
         // multiplier is 1 instead of 4. Compare voice frequency excursion

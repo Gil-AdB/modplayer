@@ -221,6 +221,9 @@ impl ModuleBackend for S3MBackend {
 
             if let Some(v) = voice_ref.as_deref_mut() {
                 channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                if channel.vibrato_active_this_row && !first_tick {
+                    channel.advance_vibrato_pos(v);
+                }
             }
         }
 

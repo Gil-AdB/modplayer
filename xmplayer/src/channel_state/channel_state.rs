@@ -135,14 +135,14 @@ impl VibratoState {
         };
         // OpenMPT XM regular vibrato (Sndmix.cpp:861, 1730):
         //   vdelta = ModSinusTable[pos]   // ±127 peak
-        //   period_delta = (sin * depth) / 64
-        // Peak ≈ 2 * depth period units. Our SIN_TABLE peaks at +255
-        // (half-cycle, sign comes from in_negative_half), so we shift
-        // by 7 (divide by 128) to match: 255*depth/128 ≈ 2*depth.
-        // Pre-fix `>> 5` made our amplitude 4× too large vs OMT (255/32
-        // peak vs OMT's 127/64). For fine vibrato (S3M Uxy / IT u) the
-        // swing is 1/4 the regular Hxy — extra >>2.
-        let shift_amt = if self.fine { 9 } else { 7 };
+        //   vibdep stored as byte*4 internally
+        //   period_delta = (sin * vibdep) / 64
+        // Peak ≈ 127 * (byte*4) / 64 ≈ 8*byte period units.
+        // Our SIN_TABLE peaks at +255 (half-cycle, sign comes from
+        // in_negative_half), depth stored raw. `>>5` gives
+        // 255 * byte / 32 ≈ 8*byte → matches OMT.
+        // Fine vibrato (S3M Uxy / IT u) is 1/4 the swing — extra >>2.
+        let shift_amt = if self.fine { 7 } else { 5 };
         let s = delta >> shift_amt;
         if in_negative_half { -s } else { s }
     }
