@@ -71,12 +71,9 @@ impl ModuleBackend for ItBackend {
                             if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
                                 let sample = &instruments[inst_idx].samples[sample_idx - 1];
                                 channel.porta_to_note.target_note.period = if sample.c5_speed != 0 {
-                                    // IT: mapped_note = it_mapping.0 + 1 (1-indexed engine
-                                    // = OpenMPT NOTE_MIN-relative + 1). Formula wants
-                                    // `note - NOTE_MIN`, hence offset -1. Don't apply
+                                    // IT: mapped 1-indexed; offset -1. Don't apply
                                     // sample.relative_note — IT's loader bakes the
-                                    // c5_speed offset into it via -12 + LUT-rounding,
-                                    // and the formula already accounts for c5_speed.
+                                    // c5_speed offset into it.
                                     let mapped = (it_mapping.0 + 1) as u8;
                                     crate::channel_state::channel_state::Note::note_to_period_s3m(mapped, -1, sample.c5_speed)
                                 } else {
@@ -133,18 +130,9 @@ impl ModuleBackend for ItBackend {
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
                                 set_channel_note(channel, voice, sample.relative_note, sample.finetune, mapped_note, r.rate, r.frequency_tables);
-                                // IT c5_speed override. Two paths:
-                                //   - amiga mode: formula returns amiga-scale period and
-                                //     d_period2hz_tab maps it correctly (S3M-shape).
-                                //   - linear mode (most IT files): OpenMPT treats period
-                                //     == freq directly (Snd_fx.cpp:6566). Our
-                                //     d_period2hz_tab can't represent that mapping, so
-                                //     we compute the freq via OpenMPT's IT-linear
-                                //     formula (`Note::it_linear_frequency`) and stash
-                                //     it on `note.linear_hz`; `Note::frequency` returns
-                                //     it directly without going through the period
-                                //     table. Pre-fix: dU=8.323 = 399 kHz output, voices
-                                //     ultrasonic & inaudible (sweep ratio 0.04).
+                                // IT c5_speed: amiga goes through the period
+                                // table; linear mode stashes Hz on linear_hz
+                                // and `Note::frequency` returns it directly.
                                 channel.note.linear_hz = 0.0;
                                 if sample.c5_speed != 0 {
                                     if r.song_data.use_amiga {
@@ -168,7 +156,7 @@ impl ModuleBackend for ItBackend {
             NoteAction::Off => {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].key_off(instruments, false);
+                        r.voices[v_idx].key_off(instruments, r.song_data.song_type);
                     }
                 }
             }

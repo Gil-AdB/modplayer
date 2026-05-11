@@ -20,9 +20,7 @@ impl ModuleBackend for XmBackend {
         let first_tick = *r.tick == 0;
         let first_row_tick = r.first_row_tick && first_tick;
 
-        // Debug context for the inline `[OUR]` dump in
-        // update_frequency_voice (gated by OUR_DUMP_CH env var, only
-        // when running diagnostic builds vs OMT instrumentation).
+        // Context for the OUR_DUMP_CH-gated `[OUR]` debug dump.
         crate::channel_state::DUMP_CTX_ORD.store(*r.song_position as i32, std::sync::atomic::Ordering::Relaxed);
         crate::channel_state::DUMP_CTX_ROW.store(*r.row as i32, std::sync::atomic::Ordering::Relaxed);
         crate::channel_state::DUMP_CTX_TICK.store(*r.tick as i32, std::sync::atomic::Ordering::Relaxed);
@@ -39,18 +37,32 @@ impl ModuleBackend for XmBackend {
                 channel, pattern, instruments, r.song_data.song_type, *r.tick, first_tick,
             );
 
-            // Note trigger logic
-            match pattern.note_action(r.song_data.song_type) {
-            NoteAction::Trigger(_) => {
+            // FT2: on a delayed row with no note byte, the trigger falls
+            // back to the channel's last note. Without it, an
+            // instrument-only delayed row never retriggers.
+            let action = pattern.note_action(r.song_data.song_type);
+            let trigger_note_value: u8 = match action {
+                NoteAction::Trigger(n) => n,
+                NoteAction::None
+                    if pattern.is_note_delay(r.song_data.song_type)
+                        && note_delay_first_tick
+                        && channel.last_played_note != 0 =>
+                {
+                    channel.last_played_note
+                }
+                _ => 0,
+            };
+
+            if trigger_note_value != 0 {
                 if pattern.is_porta_to_note(r.song_data.song_type) {
                     if first_tick {
                         let inst_idx = channel.last_instrument;
-                        if inst_idx != 0 && (pattern.note as usize - 1) < instruments[inst_idx].sample_indexes.len() {
-                            let it_mapping = instruments[inst_idx].sample_indexes[pattern.note as usize - 1];
+                        if inst_idx != 0 && (trigger_note_value as usize - 1) < instruments[inst_idx].sample_indexes.len() {
+                            let it_mapping = instruments[inst_idx].sample_indexes[trigger_note_value as usize - 1];
                             let sample_idx = it_mapping.1 as usize;
                             if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
                                 let sample = &instruments[inst_idx].samples[sample_idx - 1];
-                                let real_note = (pattern.note as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
+                                let real_note = (trigger_note_value as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                                 channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
                             }
                         }
@@ -60,25 +72,17 @@ impl ModuleBackend for XmBackend {
                     let inst_idx = channel.last_instrument;
                     if inst_idx != 0 {
                         let instrument = &instruments[inst_idx];
-                        let note_idx = (pattern.note - 1) as usize;
+                        let note_idx = (trigger_note_value - 1) as usize;
                         if note_idx < instrument.sample_indexes.len() {
                             let it_mapping = instrument.sample_indexes[note_idx];
                             let sample_idx = it_mapping.1 as usize;
                             if sample_idx > 0 && (sample_idx - 1) < instrument.samples.len() {
                                 let final_sample_idx = sample_idx - 1;
-                                
+
                                 let prev_voice_idx = channel.voice_idx.unwrap_or(i);
-                                // FT2 quirk (kFT2ReloadSampleSettings, OpenMPT
-                                // Snd_fx.cpp:2877): a note WITHOUT an instrument
-                                // column keeps the current voice volume. Only an
-                                // explicit instrument number reloads sample
-                                // default volume + panning. Repro: FEATSOFV.XM
-                                // ch15 around 50.4–51.2s — pattern says
-                                // `4F 00 80 00 00` (F#6, no inst, vol col 0x80
-                                // fine-slide-down 0). Pre-fix we retrig'd to
-                                // sample default (55) and played 4–5× louder
-                                // than OpenMPT, which had carried over the
-                                // previous tick's Vraw≈22.
+                                // FT2: a note WITHOUT an instrument column keeps
+                                // the current voice volume. Only an explicit
+                                // instrument reloads sample default vol+pan.
                                 let prev_vol = r.voices[prev_voice_idx].volume.volume;
                                 cut_or_nna_existing_voice(r.voices, instruments, r.song_data.song_type, i, prev_voice_idx);
 
@@ -93,37 +97,31 @@ impl ModuleBackend for XmBackend {
                                 voice.panning.panning = r.song_data.initial_channel_panning[i];
 
                                 // XM: a note without instrument keeps the current instrument/envelope phase.
-                                // Envelopes reset only when a new instrument is explicitly provided.
                                 voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
 
-                                // XM spec: RealNote = PatternNote + RelativeTone.
                                 let sample = &instrument.samples[final_sample_idx];
-                                set_channel_note(channel, voice, sample.relative_note, sample.finetune, pattern.note, r.rate, r.frequency_tables);
-                                voice.last_played_note = pattern.note;
+                                set_channel_note(channel, voice, sample.relative_note, sample.finetune, trigger_note_value, r.rate, r.frequency_tables);
+                                voice.last_played_note = trigger_note_value;
                                 channel.voice_idx = Some(voice_idx);
                             }
                         }
                     }
                 }
             }
-            NoteAction::Off => {
-                if note_delay_first_tick {
+            match action {
+                NoteAction::Off if note_delay_first_tick => {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].key_off(instruments, false);
+                        r.voices[v_idx].key_off(instruments, r.song_data.song_type);
                     }
                 }
-            }
-            NoteAction::Cut => {
-                if note_delay_first_tick {
+                NoteAction::Cut if note_delay_first_tick => {
                     if let Some(v_idx) = channel.voice_idx {
                         r.voices[v_idx].on = false;
                         r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
                         r.voices[v_idx].volume.output_volume = 0.0;
                     }
                 }
-            }
-            // XM doesn't support note 122 (fade) or note > 96 - both fall through.
-            NoteAction::Fade | NoteAction::None => {}
+                _ => {}
             }
 
             apply_porta_retrig_if_needed(
@@ -188,24 +186,15 @@ impl ModuleBackend for XmBackend {
             );
 
             if let Some(v) = voice_ref.as_deref_mut() {
-                // If effect is not Arpeggio, reset period_shift
-                if pattern.effect != 0 {
-                    channel.period_shift = 0;
-                }
                 channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
-                // Post-increment the vibrato wave AFTER end-of-tick
-                // freq update, to match FT2/OMT semantic. See comment
-                // in channel_state/mod.rs::vibrato_inner.
+                // Post-increment vibrato wave AFTER the freq update (FT2).
                 if channel.vibrato_active_this_row && !first_tick {
                     channel.advance_vibrato_pos(v);
                 }
             }
         }
 
-        // 2. Process all active voices (formula-table driven; the XM
-        // entry sets `apply_global_vol` with `global_vol_div = 64` and no
-        // channel/inst-global multipliers, matching the previous inline
-        // formula `compute_base_volume() * global_vol/64`).
+        // 2. Process all active voices.
         process_voices(
             r.voices, r.channels, instruments, r.rate,
             r.global_volume.volume, voice_mix(r.song_data.song_type),

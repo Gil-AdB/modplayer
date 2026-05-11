@@ -114,7 +114,7 @@ fn test_it_sustain_loop() {
     assert_eq!(tester.song.voices[0].volume_envelope_state.frame, 10);
     
     // Now Key Off
-    tester.song.voices[0].key_off(&builder.instruments, false);
+    tester.song.voices[0].key_off(&builder.instruments, SongType::IT);
     
     // Should now continue past frame 20
     for _ in 0..15 { tester.tick(); }

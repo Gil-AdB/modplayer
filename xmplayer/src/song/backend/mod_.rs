@@ -69,22 +69,18 @@ impl ModuleBackend for ModBackend {
                         let voice = &mut r.voices[voice_idx];
                         if pattern.instrument != 0 {
                             voice.volume.retrig(instruments[inst_idx].samples[sample_idx].volume as i32);
-                            if instruments[inst_idx].samples[sample_idx].panning < 255 {
-                                voice.panning.panning = instruments[inst_idx].samples[sample_idx].panning;
-                            } else {
-                                voice.panning.panning = r.song_data.initial_channel_panning[i];
-                            }
+                            // ProTracker hard-pans channels in an LRRL
+                            // pattern and never moves them; the per-sample
+                            // panning field is an FT2 extension that real
+                            // MOD files don't carry.
+                            voice.panning.panning = r.song_data.initial_channel_panning[i];
                         }
                         voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
 
                         let sample = &instruments[inst_idx].samples[sample_idx];
                         set_channel_note(channel, voice, sample.relative_note, sample.finetune, pattern.note, r.rate, r.frequency_tables);
-                        // STM lands here (dispatch is ModBackend) — its loader
-                        // populates c5_speed, real MOD samples leave it at 0.
-                        // Same +11 note-offset as S3M because the STM parser
-                        // already adds the equivalent octave shift (+25 vs the
-                        // S3M parser's +1, absorbing OpenMPT's +36-vs-+12
-                        // STM-vs-S3M loader difference).
+                        // STM uses c5_speed (loader-populated); MOD leaves
+                        // it at 0. +11 mirrors S3M (STM parser octave shift).
                         if sample.c5_speed != 0 {
                             let p = crate::channel_state::channel_state::Note::note_to_period_s3m(pattern.note, 11, sample.c5_speed);
                             channel.note.period = p;
@@ -106,11 +102,7 @@ impl ModuleBackend for ModBackend {
                         let voice = &mut r.voices[voice_idx];
                         if voice.on && voice.channel_idx == i {
                             voice.volume.retrig(instruments[inst_idx].samples[sample_idx].volume as i32);
-                            if instruments[inst_idx].samples[sample_idx].panning < 255 {
-                                voice.panning.panning = instruments[inst_idx].samples[sample_idx].panning;
-                            } else {
-                                voice.panning.panning = r.song_data.initial_channel_panning[i];
-                            }
+                            voice.panning.panning = r.song_data.initial_channel_panning[i];
                             voice.volume_envelope_state.reset(0, &instruments[inst_idx].volume_envelope);
                             voice.panning_envelope_state.reset(0, &instruments[inst_idx].panning_envelope);
                             voice.pitch_envelope_state.reset(0, &instruments[inst_idx].pitch_envelope);

@@ -214,12 +214,7 @@ pub const PANNING_TAB: [u32;257] = // bit-exact to FT2 table
 65536
 ];
 
-/// LinearSlideUpTable: 65536 × 2^(i/192) rounded to integer, used for
-/// IT-linear-mode pitch math. 192 = 16 finetune steps × 12 semitones.
-/// Bit-exact with OpenMPT's Tables.cpp:540 (LinearSlideUpTable). Used
-/// in `Note::it_linear_frequency` to compute the freq-at-note from
-/// c5_speed; the formula's `note%12*16` index maps semitone offsets via
-/// this table.
+/// LinearSlideUpTable: 65536 × 2^(i/192). IT-linear pitch math.
 pub const LINEAR_SLIDE_UP_TABLE: [u32; 256] = [
     65536, 65773, 66011, 66250, 66489, 66730, 66971, 67213,
     67456, 67700, 67945, 68191, 68438, 68685, 68933, 69183,

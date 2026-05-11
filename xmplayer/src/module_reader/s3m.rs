@@ -80,15 +80,9 @@
         let cwtv = file.read_u16()?;
         let _signed_samples = file.read_u16()?;
 
-        // ST3 fast-volume-slides quirk: when set, vol slides apply on every
-        // tick (including tick 0), not just non-first-ticks. OpenMPT
-        // (Load_s3m.cpp:466) enables this for cwtv == 0x1300 (ST3 v3.00,
-        // a buggy version that always behaves this way) AND for files with
-        // the explicit fast-volume-slides flag bit (0x40 in flags). Without
-        // honoring this, songs saved with that ST3 version (including
-        // 2ND_PM.S3M which has cwtv 0x1300) play vol slides 33% slower
-        // than OpenMPT — voices stay audible past the song's intent and
-        // overlap into subsequent patterns.
+        // ST3 fast-volume-slides: vol slides apply on every tick (incl.
+        // tick 0). Enabled for ST3 v3.00 (cwtv 0x1300, buggy) or the
+        // explicit flag bit.
         let fast_volume_slides = (cwtv == 0x1300) || (flags & 0x40) != 0;
 
         let signature = file.read_string(4);
@@ -126,21 +120,13 @@
         let instrument_ptrs = file.read_u16_vec(instrument_count as usize)?;
         let pattern_ptrs = file.read_u16_vec(pattern_count as usize)?;
 
-        // S3M has no per-channel-volume block in the header. Channel volumes
-        // start at 64 and are only ever altered at runtime by Mxx (Set
-        // Channel Volume). Master hardcodes [64; 64] here too.
+        // S3M has no header channel-volume block; channels start at 64
+        // and are only changed at runtime via Mxx.
         let initial_channel_volume = [64u8; 64];
 
-        // ST3 default panning per the S3M spec / OpenMPT Load_s3m.cpp:522-523.
-        // For stereo files (master_volume bit 7 set), each PCM channel defaults
-        // to hard-ish L (0x33 = 51) or R (0xCC = 204) based on the channel
-        // settings byte's bit 3. For mono files, all channels default to
-        // center (128). The optional pan-data block (default_panning_present
-        // == 0xFC = 252) overrides per channel.
-        //
-        // Without this, .S3M files render mono / center-panned, losing the
-        // L/R separation OpenMPT and ST3 produce — audible as a "flat" or
-        // "off" mix even when pitch/volume per-channel are correct.
+        // ST3 default panning. Stereo files (master_volume bit 7): each
+        // PCM channel defaults to L (0x33) or R (0xCC) per channel byte
+        // bit 3. Optional pan-data block (0xFC) overrides per channel.
         let is_stereo = (master_volume & 0x80) != 0;
         let mut initial_channel_panning = [128u8; 64];
         if is_stereo {

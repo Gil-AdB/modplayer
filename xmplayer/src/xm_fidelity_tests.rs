@@ -101,12 +101,11 @@ mod tests {
     }
 
     #[test]
-    fn test_xm_key_off_no_envelope() {
-        // Key-off with no volume envelope: voice does NOT cut
-        // immediately — fadeout (instrument.volume_fadeout) ramps the
-        // voice volume down per tick (Voice::update_fadeout, OpenMPT
-        // Sndmix.cpp:1381 equivalent). With mock fadeout=0 the voice
-        // plays forever after key-off — FT2-accurate behavior.
+    fn test_xm_key_off_no_envelope_silences_voice() {
+        // FT2: key-off with no volume envelope zeros the voice volume
+        // (`realVol = 0; outVol = 0`). Voice stays alive (sample
+        // position advances) but is silent — equivalent to a cut for
+        // audible output.
         let mut builder = MockSongBuilder::new(SongType::XM, 1);
         builder.add_empty_pattern(1);
         builder.add_pattern_row(0, 0, 48, 1, 255, 0x14, 0x03); // K03
@@ -117,11 +116,10 @@ mod tests {
             tester.tick();
             assert!(tester.song.voices[0].sustained);
         }
-        // Tick 3 triggers Key Off — sustain ends, voice remains on
-        // because fadeout=0 means no decay.
         tester.tick();
         assert!(!tester.song.voices[0].sustained, "K03 should end sustain at tick 3");
-        assert!(tester.song.voices[0].on, "voice stays on; fadeout=0 means no decay");
+        assert_eq!(tester.song.voices[0].volume.volume, 0,
+            "key-off with no vol-env should zero voice volume");
     }
 
     #[test]
@@ -153,6 +151,48 @@ mod tests {
         tester.tick();
         let env_after = tester.song.voices[0].volume_envelope_state.frame;
         assert!(env_after >= env_before, "Envelope reset unexpectedly: before={}, after={}", env_before, env_after);
+    }
+
+    #[test]
+    fn test_xm_set_envelope_pos_pan_gating() {
+        // FT2 logic bug: panning-envelope position only updates when the
+        // *volume* envelope's sustain flag is set. Volume-envelope
+        // position is gated on the volume envelope being enabled.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(2);
+
+        // Volume envelope enabled, sustain OFF.
+        builder.instruments[1].volume_envelope.on = true;
+        builder.instruments[1].volume_envelope.sustain = false;
+        builder.instruments[1].volume_envelope.points[0].frame = 0;
+        builder.instruments[1].volume_envelope.points[0].value = 64;
+        builder.instruments[1].volume_envelope.points[1].frame = 40;
+        builder.instruments[1].volume_envelope.points[1].value = 32;
+        builder.instruments[1].volume_envelope.size = 2;
+
+        // Panning envelope present and enabled (independent of vol-env sustain).
+        builder.instruments[1].panning_envelope.on = true;
+        builder.instruments[1].panning_envelope.points[0].frame = 0;
+        builder.instruments[1].panning_envelope.points[0].value = 32;
+        builder.instruments[1].panning_envelope.points[1].frame = 40;
+        builder.instruments[1].panning_envelope.points[1].value = 16;
+        builder.instruments[1].panning_envelope.size = 2;
+
+        // Row 0: trigger. Row 1: Lxx = L20 (set env pos to 0x20 = 32).
+        builder.add_pattern_row(0, 0, 48, 1, 255, 0x00, 0x00);
+        builder.add_pattern_row(0, 1, 0, 0, 255, 0x15, 0x20);
+
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        tester.tick(); // row 1 tick 0 — Lxx fires
+
+        let v = &tester.song.voices[0];
+        // vol-env.on=true → vol-env position jumped to 32 (+1 for tick advance).
+        assert!(v.volume_envelope_state.frame >= 32 && v.volume_envelope_state.frame <= 33,
+            "vol-env frame should be ~32, got {}", v.volume_envelope_state.frame);
+        // vol-env.sustain=false → pan-env position NOT moved (stayed at start).
+        assert!(v.panning_envelope_state.frame < 32,
+            "pan-env should not have moved: frame={}", v.panning_envelope_state.frame);
     }
 
     #[test]
@@ -381,5 +421,98 @@ mod tests {
                     "{:?} combo should slide volume down (was {}, now {})",
                     st, v_before, v_after);
         }
+    }
+
+    #[test]
+    fn test_xm_note_delay_instrument_only_retriggers_last_note() {
+        // FT2: an EDx delayed row with note=0 retriggers using the
+        // channel's last played note.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(4);
+        // Row 0: C-4 trigger (last_played_note = 48).
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 48, instrument: 1, volume: 255, effect: 0x00, effect_param: 0x00,
+        });
+        // Row 1: no note, instrument only, delayed by 2 ticks.
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 0, instrument: 1, volume: 255, effect: 0x0E, effect_param: 0xD2,
+        });
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        let pos_before = tester.song.voices[0].sample_position;
+        // Walk ticks until the delay (2) fires.
+        for _ in 0..3 { tester.tick(); }
+        let pos_after = tester.song.voices[0].sample_position;
+        assert_eq!(pos_after, 4.0,
+            "delayed instrument-only row should retrigger (sample_position reset to 4.0). before={} after={}",
+            pos_before, pos_after);
+        assert_eq!(tester.song.voices[0].last_played_note, 48);
+    }
+
+    #[test]
+    fn test_xm_porta_to_note_no_glissando_no_snap() {
+        // Without glissando, porta_to_note must NOT snap to semitones —
+        // the live period should land at an intermediate value.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(8);
+        // Row 0: C-4 trigger.
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 255, effect: 0x00, effect_param: 0x00,
+        });
+        // Row 1: portamento to C#4 at slow speed; expect non-semitone period.
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 50, instrument: 0, volume: 255, effect: 0x03, effect_param: 0x01,
+        });
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        tester.tick(); // tick 0: porta target loaded, no slide yet
+        tester.tick(); // tick 1: one slide step
+        let period = tester.song.channels[0].note.period as i32;
+        // Without glissando, period should not be an exact multiple of 64.
+        assert_ne!(period % 64, 0,
+            "expected non-semitone period during porta without glissando, got {}", period);
+    }
+
+    #[test]
+    fn test_xm_period_shift_cleared_on_note_trigger() {
+        // After an arpeggio row leaves a non-zero period_shift, the next
+        // row's new note must start from a clean shift (FT2 resets
+        // outPeriod = realPeriod on trigger).
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(8);
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 255, effect: 0x00, effect_param: 0x37,
+        });
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 51, instrument: 1, volume: 255, effect: 0x00, effect_param: 0x00,
+        });
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        tester.tick();
+        assert_eq!(tester.song.channels[0].period_shift, 0);
+        let expected_hz = 8363.0 * 2.0f32.powf(2.0 / 12.0);
+        tester.assert_pitch_near(0, expected_hz, 5.0);
+    }
+
+    #[test]
+    fn test_xm_period_shift_persists_across_non_arpeggio_effect() {
+        // FT2 only resets outPeriod on arpeggio tick%3==0 or note trigger.
+        // A non-arpeggio effect must NOT clear the leftover shift.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(8);
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 255, effect: 0x00, effect_param: 0x07,
+        });
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 0, instrument: 0, volume: 255, effect: 0x08, effect_param: 0x80,
+        });
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        let shift_before = tester.song.channels[0].period_shift;
+        assert_ne!(shift_before, 0,
+            "expected arpeggio to leave a non-zero period_shift");
+        tester.tick();
+        assert_eq!(tester.song.channels[0].period_shift, shift_before,
+            "non-arpeggio effect must not clear period_shift");
     }
 }

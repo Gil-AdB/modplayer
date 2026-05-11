@@ -35,7 +35,7 @@ impl ModuleBackend for S3MBackend {
             NoteAction::Off => {
                 if *r.tick == timing.trigger_tick {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].key_off(instruments, false);
+                        r.voices[v_idx].key_off(instruments, r.song_data.song_type);
                     }
                 }
             }
@@ -124,30 +124,17 @@ impl ModuleBackend for S3MBackend {
                 }
             }
             // S3M "instrument with no note" reloads the sample's default
-            // volume on the live voice. Without this, a perpetual D0A volume
-            // slide on rows with only an instrument byte drains volume to 0
-            // and never recovers (audible at 2ND_PM ~4:24-4:27 — the bass
-            // ch1 slid to silence). OpenMPT does this in Snd_fx.cpp:2873-2964
-            // (`retrigEnv = note == NOTE_NONE && instr != 0` →
-            //  `chn.nVolume = oldSample->nVolume`, gated on HasSampleData
-            //  for S3M). MOD has the same quirk and already handles it in
-            // mod_.rs's NoteAction::None branch — this is the S3M parallel.
+            // volume on the live voice (parallels mod_.rs).
             NoteAction::None if pattern.instrument != 0 && first_tick => {
                 let inst_idx = channel.last_instrument;
                 if inst_idx != 0 {
                     let instrument = &instruments[inst_idx];
-                    // Look up the sample for the most recently played note
-                    // (S3M instruments have a 1:1 keyboard map, so any
-                    // valid note works as a sample-index source). Use the
-                    // channel's last_played_note as the reference; if it
-                    // isn't set yet we have nothing to reload.
                     let lookup_note = channel.last_played_note;
                     if lookup_note >= 1 && (lookup_note as usize - 1) < instrument.sample_indexes.len() {
                         let it_mapping = instrument.sample_indexes[lookup_note as usize - 1];
                         let sample_idx = it_mapping.1 as usize;
                         if sample_idx > 0 && (sample_idx - 1) < instrument.samples.len() {
                             let sample = &instrument.samples[sample_idx - 1];
-                            // OpenMPT's HasSampleData() guard.
                             if sample.length > 0 {
                                 if let Some(v_idx) = channel.voice_idx {
                                     if r.voices[v_idx].on {
@@ -227,12 +214,7 @@ impl ModuleBackend for S3MBackend {
             }
         }
 
-        // 2. Process all active voices (formula-table driven; the S3M
-        // entry sets `channel_vol` + `apply_global_vol` with div=64,
-        // matching `compute_base_volume() * channel_vol/64 * global_vol/64`.
-        // master_volume is applied centrally in output.rs via the same
-        // table — the previous duplicate per-voice multiply made our
-        // render ~2× louder than OpenMPT's reference.)
+        // 2. Process all active voices.
         process_voices(
             r.voices, r.channels, instruments, r.rate,
             r.global_volume.volume, voice_mix(r.song_data.song_type),

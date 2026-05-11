@@ -41,6 +41,21 @@ fn test_set_volume_mod() {
 }
 
 #[test]
+fn test_mod_instrument_does_not_overwrite_channel_panning() {
+    // ProTracker hard-pans channels in LRRL and never moves them.
+    // Triggering an instrument on a MOD channel must NOT overwrite
+    // the voice's panning with the sample's panning field.
+    let mut builder = MockSongBuilder::new(SongType::MOD, 1);
+    builder.instruments[1].samples[0].panning = 200; // anomalous
+    builder.add_empty_pattern(1);
+    builder.add_pattern_row(0, 0, 49, 1, 255, 0, 0);
+    let mut tester = builder.get_tester();
+    tester.tick();
+    let pan = tester.song.voices[0].panning.panning as u8;
+    assert_eq!(pan, 128, "MOD voice panning should stay at the channel default, got {}", pan);
+}
+
+#[test]
 fn test_mod_tremolo_affects_output_volume() {
     // Regression: MOD's volume path used to be hand-rolled and skipped
     // tremolo_shift, so the 0x07 Tremolo effect ran (tremolo_shift was

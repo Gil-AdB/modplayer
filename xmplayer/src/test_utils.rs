@@ -192,14 +192,7 @@ impl SongTester {
     pub fn get_channel_vibrato(&self, channel: usize) -> (u8, u8) {
         use crate::channel_state::EffectMemorySlot;
         let c = &self.song.channels[channel];
-        match self.song.song_data.song_type {
-            SongType::XM | SongType::MOD => {
-                // XM/MOD pack speed+depth into VibratoParam; unpack for inspection.
-                let packed = c.mem(EffectMemorySlot::VibratoParam);
-                (packed >> 4, packed & 0x0F)
-            }
-            _ => (c.mem(EffectMemorySlot::VibratoSpeed), c.mem(EffectMemorySlot::VibratoDepth)),
-        }
+        (c.mem(EffectMemorySlot::VibratoSpeed), c.mem(EffectMemorySlot::VibratoDepth))
     }
 
     pub fn assert_voice_on(&self, voice_idx: usize, on: bool) {

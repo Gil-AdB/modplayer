@@ -91,12 +91,9 @@ impl Pattern {
         }
     }
 
-    /// True if the current row carries a vibrato or vibrato-combo effect.
-    /// Used to gate vib-shift application: master only adds the wave's
-    /// frequency offset when the row asks for vibrato (Snd song.rs:1593),
-    /// otherwise the persisted `vibrato_state.pos` keeps biasing the
-    /// pitch on every subsequent tick (FEATSOFV.XM ch14/ch15 +19 cents
-    /// sharp on sustained held notes after a vibrato passage).
+    /// True if the row carries a vibrato or vibrato-combo effect. Gates
+    /// vib-shift application so a persisted `vibrato_state.pos` doesn't
+    /// keep biasing pitch on subsequent rows.
     pub(crate) fn has_vibrato(&self, song_type: SongType) -> bool {
         match song_type {
             SongType::XM | SongType::MOD => {

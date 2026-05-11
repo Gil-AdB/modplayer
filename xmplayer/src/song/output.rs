@@ -372,9 +372,6 @@ impl Song {
                     }
 
                     final_sample *= output_vol;
-                    if !final_sample.is_finite() {
-                        final_sample = 0.0;
-                    }
 
                     // Update per-channel visualizer
                     channel.last_samples[channel.last_samples_pos] = final_sample;
@@ -437,17 +434,7 @@ impl Song {
                     out_sample = new_low;
                 }
 
-                // Guard against NaN/Inf bleeding into downstream output.
-                // Repro: bz_pif.it produces ~3M NaN samples after ~30s
-                // play. Eventual root cause is upstream (high-c5_speed
-                // sample interpolation arithmetic exploding); this clamp
-                // at least keeps the output finite. NaN-clamp is cheap
-                // (one isnan check); bad upstream values become silence
-                // here rather than poisoning the mix.
-                let mut final_sample = (out_sample / 2.0) * voice.volume.output_volume * final_master_gain;
-                if !final_sample.is_finite() {
-                    final_sample = 0.0;
-                }
+                let final_sample = (out_sample / 2.0) * voice.volume.output_volume * final_master_gain;
                 let channel = &mut self.channels[voice.channel_idx];
 
                 channel.last_samples[channel.last_samples_pos] = final_sample;

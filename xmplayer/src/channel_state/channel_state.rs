@@ -91,13 +91,8 @@ const SIN_TABLE: [i32; 32] =
 pub struct VibratoState {
     pub speed:  i8,
     pub depth:  i16,
-    /// 256-step counter (4× the FT2 64-step logical cycle for sub-tick
-    /// resolution). Increments each tick by `speed` (which `vibrato_inner`
-    /// stores ×4) and wraps at 256 via u8 overflow. Pre-fix this was an
-    /// i8 with `pos -= 64` at 31 — that prematurely wrapped the wave from
-    /// the positive half straight into the negative half on the same
-    /// tick the increment crossed 31, producing a non-sinusoidal jagged
-    /// shape that time-averaged to a non-zero offset.
+    /// 256-step counter (4× the FT2 64-step cycle for sub-tick
+    /// resolution). Wraps via u8 overflow.
     pub pos:    u8,
     pub fine:   bool,
 }
@@ -116,7 +111,7 @@ impl VibratoState {
 
     pub(crate) fn get_frequency_shift(&mut self, wave_control: WaveControl) -> i32 {
         // pos (0..255) → FT2 logical position (0..63) by divide-by-4.
-        // Upper half (32..63) is the negative half-cycle of the wave.
+        // Upper half is the negative half-cycle.
         let logical_pos = (self.pos as u16) >> 2;
         let in_negative_half = logical_pos >= 32;
         let table_idx = (logical_pos & 31) as usize;
@@ -127,21 +122,9 @@ impl VibratoState {
                 let raw = if in_negative_half { 255 - temp } else { temp };
                 raw * self.depth as i32
             }
-            // Square: ±max scaled by depth. Pre-fix this was a bare 255
-            // regardless of depth, leaking a constant +7-period shift on
-            // any channel that had E4y waveform=2 set, even with no
-            // active 4xy.
             WaveControl::SQUARE => 255 * self.depth as i32,
         };
-        // OpenMPT XM regular vibrato (Sndmix.cpp:861, 1730):
-        //   vdelta = ModSinusTable[pos]   // ±127 peak
-        //   vibdep stored as byte*4 internally
-        //   period_delta = (sin * vibdep) / 64
-        // Peak ≈ 127 * (byte*4) / 64 ≈ 8*byte period units.
-        // Our SIN_TABLE peaks at +255 (half-cycle, sign comes from
-        // in_negative_half), depth stored raw. `>>5` gives
-        // 255 * byte / 32 ≈ 8*byte → matches OMT.
-        // Fine vibrato (S3M Uxy / IT u) is 1/4 the swing — extra >>2.
+        // Fine vibrato (S3M Uxy / IT u) gets an extra >>2 for 1/4 swing.
         let shift_amt = if self.fine { 7 } else { 5 };
         let s = delta >> shift_amt;
         if in_negative_half { -s } else { s }
@@ -455,15 +438,11 @@ pub struct Note {
     /// arpeggio formula override and any future formula-based effect must
     /// read this, not `sample.c5_speed`, so S2 changes propagate.
     pub c5_speed:        u32,
-    /// IT-linear-mode override: when nonzero, `frequency()` returns this
-    /// value directly and skips the `d_period2hz_tab` lookup. IT linear
-    /// stores `period == freq` (Hz) per OpenMPT Snd_fx.cpp:6566 — our
-    /// existing FT2-linear period table can't represent that mapping, so
-    /// we compute the freq once at trigger via OpenMPT's formula and
-    /// stash it here. Pitch slides on this path still write to `period`
-    /// using the LUT scale; the slide effects will need a per-format
-    /// path eventually but the static-trigger pitch fix is the
-    /// dominant mass of the IT regression (sweep ratio 0.04 → fix-target).
+    /// IT-linear-mode override: when nonzero, `frequency()` returns
+    /// this directly (IT linear stores period == freq Hz, which our
+    /// FT2-linear period table can't represent). Pitch slides still
+    /// write `period` additively — slide accuracy needs a per-format
+    /// multiplicative path eventually.
     pub linear_hz:       f32,
 }
 
@@ -497,13 +476,9 @@ impl Note {
         frequency_tables.periods[idx as usize]
     }
 
-    /// Closed-form S3M / IT period from full-precision c5_speed (OpenMPT
-    /// Snd_fx.cpp:6456). Bypasses the 1/16-semitone LUT so c5_speed values
-    /// far from 8363 don't accumulate quantization error. `note_offset` is
-    /// the per-format shift that maps our engine note convention onto
-    /// OpenMPT's `note - NOTE_MIN` 0-indexed convention:
-    ///   * S3M: +11   (engine note 49 = C-5 → formula note 60)
-    ///   * IT:   -1   (engine note 61 = C-5 → formula note 60)
+    /// Closed-form S3M/IT period from c5_speed (OpenMPT formula).
+    /// `note_offset` maps our note convention to the formula's 0-indexed
+    /// note: S3M +11, IT -1 (both land C-5 at formula note 60).
     pub(crate) fn note_to_period_s3m(note: u8, note_offset: i8, c5_speed: u32) -> u16 {
         const FREQ_S3M_TABLE: [u16; 12] = [1712, 1616, 1524, 1440, 1356, 1280, 1208, 1140, 1076, 1016, 960, 907];
         let n = (note as i32 + note_offset as i32).clamp(0, 11 * 12 + 11) as u32;
@@ -693,13 +668,9 @@ impl Note {
     }
 
     pub(crate) fn frequency(&self, period_shift: i16, period_offset: i32, semitone: bool, frequency_tables: &AudioTables) -> f32 {
-        // IT linear-mode override: the trigger path stashed an absolute
-        // Hz value (computed from c5_speed via OpenMPT's IT-linear
-        // formula — our period table can't represent that mapping).
-        // Skip the table lookup. Pitch slides still write to `period`
-        // and don't update linear_hz — that's a bigger fix because
-        // IT-linear uses MULTIPLICATIVE slides (LinearSlideUpTable
-        // factors), not the additive period-shifts our code applies.
+        // IT linear-mode: trigger path stashed an absolute Hz value.
+        // Pitch slides still write to `period` (additive), which is
+        // wrong for IT-linear's multiplicative slides — TODO.
         if self.linear_hz != 0.0 {
             return self.linear_hz;
         }
@@ -712,17 +683,13 @@ impl Note {
         return frequency_tables.d_period2hz_tab[period.clamp(0, 65535) as usize] as f32;
     }
 
-    /// IT linear-mode pitch: OpenMPT Snd_fx.cpp:6446. At C-5 (engine 61)
-    /// the freq is exactly c5_speed; each octave doubles, each semitone
-    /// goes via LinearSlideUpTable. Returns Hz directly (period field
-    /// is unused on this path).
+    /// IT linear-mode pitch. At C-5 freq = c5_speed; each octave doubles,
+    /// each semitone via LinearSlideUpTable. Returns Hz directly.
     pub(crate) fn it_linear_frequency(engine_note: u8, c5_speed: u32) -> f32 {
-        // OpenMPT's note0 = our_engine_note - 1 (their NOTE_MIN convention).
         let n = (engine_note as i32 - 1).max(0) as u32;
         let factor = crate::tables::LINEAR_SLIDE_UP_TABLE[((n % 12) * 16) as usize] as u64;
         let shift = n / 12;
         // freq = c5_speed * (factor << shift) / (65536 << 5)
-        // i.e.  c5_speed * 2^((shift) - 5) * (factor / 65536)
         let num = factor << shift;
         let den: u64 = 65536u64 << 5;
         ((c5_speed as u64 * num) / den) as f32

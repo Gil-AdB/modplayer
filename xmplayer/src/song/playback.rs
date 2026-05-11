@@ -285,9 +285,7 @@ impl Song {
                     }
                 }
                 self.row = self.pattern_change.row as usize;
-                // Per ProTracker/OpenMPT: a break-target row past the destination
-                // pattern's length wraps to row 0 (e.g. spacedeb.mod uses Dxy=80
-                // into a 64-row pattern).
+                // Break-target row past pattern length wraps to row 0.
                 if self.song_position < self.song_data.pattern_order.len() {
                     let pat_idx = self.song_data.pattern_order[self.song_position] as usize;
                     if pat_idx < self.song_data.patterns.len()

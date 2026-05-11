@@ -154,21 +154,22 @@ fn test_xm_vibrato_memory() {
     builder.set_pattern_row(0, 0, 0, Pattern {
         note: 49, instrument: 1, volume: 255, effect: 0x04, effect_param: 0x45,
     });
-    // Row 1: Vibrato 2,0 -> speed becomes 2, depth becomes 0 (XM unit memory)
+    // Row 1: Vibrato 2,0. FT2 uses independent nibble memory: a zero
+    // nibble keeps the prior value, so depth stays 5.
     builder.set_pattern_row(0, 1, 0, Pattern {
         note: 49, instrument: 1, volume: 255, effect: 0x04, effect_param: 0x20,
     });
-    
+
     let mut tester = builder.get_tester();
-    
+
     tester.step_row(); // Row 1
     tester.tick(); // Tick 0
-    
+
     let (speed, depth) = tester.get_channel_vibrato(0);
     assert_eq!(speed, 2);
-    assert_eq!(depth, 0); // Depth becomes 0 in XM because of unit memory (420)
-    
-    // Row 2: 400 (use last value)
+    assert_eq!(depth, 5);
+
+    // Row 2: 400 keeps both nibbles from memory.
     builder.set_pattern_row(0, 2, 0, Pattern {
         note: 49, instrument: 1, volume: 255, effect: 0x04, effect_param: 0x00,
     });
@@ -178,7 +179,7 @@ fn test_xm_vibrato_memory() {
     tester2.tick(); // Tick 0
     let (speed2, depth2) = tester2.get_channel_vibrato(0);
     assert_eq!(speed2, 2);
-    assert_eq!(depth2, 0);
+    assert_eq!(depth2, 5);
 }
 
 #[test]

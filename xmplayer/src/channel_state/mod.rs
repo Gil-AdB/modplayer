@@ -1,11 +1,8 @@
 use crate::channel_state::channel_state::{EnvelopeState, Note, Panning, PortaToNoteState, TremoloState, VibratoState, Volume, VibratoEnvelopeState, WaveControl};
 use std::sync::atomic::{AtomicI32, Ordering};
 
-/// Debug context: ord/row/tick of the currently-processing tick, set
-/// by the backend at the top of each per-channel iteration via
-/// `DUMP_CTX::set`. Read by the inline `[OUR]` dump in
-/// `update_frequency_voice` so the per-tick output is diffable
-/// against OpenMPT's `[OMT]` dump (tools/openmpt_instrumentation.patch).
+/// Debug context for the OUR_DUMP_CH-gated `[OUR]` trace; the OMT-side
+/// counterpart lives in tools/openmpt_instrumentation.patch.
 pub static DUMP_CTX_ORD: AtomicI32 = AtomicI32::new(-1);
 pub static DUMP_CTX_ROW: AtomicI32 = AtomicI32::new(-1);
 pub static DUMP_CTX_TICK: AtomicI32 = AtomicI32::new(-1);
@@ -174,32 +171,25 @@ impl Voice {
     }
 
 
-    pub fn key_off(&mut self, instruments: &Instruments, _is_note_delay: bool) -> bool {
+    pub fn key_off(&mut self, instruments: &Instruments, song_type: SongType) -> bool {
         let instrument = &instruments[self.instrument];
         self.sustained = false;
         self.volume_envelope_state.key_off(&instrument.volume_envelope);
         self.panning_envelope_state.key_off(&instrument.panning_envelope);
         self.pitch_envelope_state.key_off(&instrument.pitch_envelope);
-
-        // FT2/XM: key-off ends sustain but does NOT cut the voice —
-        // the fadeout decays `fadeout_vol` each tick until silence.
-        // Refactor regression: the pluggable-backend rewrite of
-        // channel_state added `self.on = false; self.volume.retrig(0)`
-        // for the no-envelope branch, which cut voices that master
-        // kept playing. Master cc4bff45 channel_state/mod.rs:81-100
-        // leaves the on flag set (the `self.on = false` line is
-        // commented out) and just resets envelope state — voices with
-        // a non-zero fadeout still play out their tail naturally.
-        // Repro: mview.xm ch12 around 1:20. Inst 23 has
-        // `vol_env.on=false, fadeout=128`; key-off at order 22 row 8
-        // silenced ch12 mid-phrase, and the porta-to-note at row 10
-        // had no live voice to slide from, so the entire passage was
-        // missing in our render but plays correctly in master.
-        //
-        // Edge case: if fadeout is also 0, the voice plays forever
-        // after key-off — that matches FT2 (only Note Cut / sample
-        // end can silence in that case).
         self.volume.fadeout_speed = instrument.volume_fadeout as i32;
+
+        // S3M ^^^ silences immediately (no envelopes/fadeout in S3M).
+        if song_type == SongType::S3M {
+            self.on = false;
+            return true;
+        }
+
+        // FT2: with no volume envelope, key-off zeros the voice volume.
+        // The envelope-on case lets sustain end and fadeout decay it.
+        if !instrument.volume_envelope.on {
+            self.volume.retrig(0);
+        }
         return true;
     }
 
@@ -238,15 +228,8 @@ impl Voice {
             self.frequency_shift = self.frequency * (pitch_shift_units as f32 * 0.00375);
         }
 
-        // Auto-vibrato — wave sign matches OpenMPT (Sndmix.cpp:1907,
-        // `vdelta = -ITSinusTable[pos]`). Our VIB_SINE_TAB stores -sin
-        // already, so OpenMPT's effective wave is +sin (rising at
-        // pos=64). We negate here to match. Pre-negation: drum-kit
-        // notes (depth=7 rate=25) played 10c flat against libopenmpt
-        // because the wave's first half-cycle pushed pitch down where
-        // OMT pushed it up, and the multiplicative compounding inside
-        // `frequency_shift = self.frequency * vib_shift` skewed the
-        // average DC offset accordingly.
+        // Auto-vibrato. Negated because VIB_SINE_TAB is -sin; the FT2
+        // effective wave is +sin (rising at pos=64).
         let auto_vibrato = self.vibrato_envelope_state.handle(&instrument.vibrato_envelope, self.sustained);
         if auto_vibrato != 0 {
             let vib_shift = (-(auto_vibrato as f32) / 16384.0) * 0.05946;
@@ -298,12 +281,7 @@ impl Voice {
 
     pub(crate) fn update_fadeout(&mut self) {
         if !self.sustained {
-            // OpenMPT subtracts fadeout * 2 per tick (Sndmix.cpp:1381).
-            // We were subtracting just fadeout_speed → half the rate, so
-            // fading voices stayed audible twice as long as in OpenMPT.
-            // Visible across IT/XM modules with non-default fadeout
-            // values: voices that should have faded by the next note
-            // overlapped into it, making the mix uniformly louder.
+            // FT2/OMT: fadeout subtracts speed*2 per tick.
             let step = self.volume.fadeout_speed.saturating_mul(2);
             if self.volume.fadeout_vol - step < 0 {
                 self.volume.fadeout_vol = 0;
@@ -525,32 +503,16 @@ impl ChannelState {
 
 
     pub(crate) fn update_frequency_voice(&mut self, voice: &mut Voice, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
-        // Vibrato shift is currently DISABLED here — applying it (either
-        // as period offset or as Hz delta) produces a clearly wrong
-        // rendering vs OpenMPT/master on FEATSOFV.XM around 50s
-        // (user-confirmed listening test). Investigation summary in
-        // task #57: amplitude calibration matches OpenMPT (255*depth/128
-        // ≈ 2*depth, equivalent to OMT's 127*depth/64), wave-shape and
-        // phase match per-tick, but the master mix CC against
-        // libopenmpt is *worse* with vibrato applied (~0.77) than
-        // without (~0.83). Suspect a sub-tick-level interaction with
-        // sample-position interpolation or note-trigger timing that we
-        // haven't isolated yet. Tracking as task #57.
         let vib_shift = if self.vibrato_active_this_row {
             voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform))
         } else { 0 };
         self.frequency = self.note.frequency(self.period_shift, vib_shift, semitone, frequency_tables) * self.frequency_scale + voice.frequency_shift;
         voice.set_frequency(self.frequency, rate);
-        // FEAT/S3M-REFACTOR INSTRUMENTATION mirror — pairs with OMT's
-        // [OMT] dump in tools/openmpt_instrumentation.patch. Activate
-        // via env var OUR_DUMP_CH=<channel_index>. Print fields in the
-        // same order as OMT so a diff is straight-line.
+        // Diagnostic dump — `OUR_DUMP_CH=<idx>` env var pairs with
+        // tools/openmpt_instrumentation.patch for tick-by-tick diffs.
         let ours_dump_ch_env = std::env::var("OUR_DUMP_CH").ok();
         let ours_dump_ch: i32 = ours_dump_ch_env.as_deref().and_then(|s| s.parse().ok()).unwrap_or(-1);
         if ours_dump_ch >= 0 && voice.channel_idx as i32 == ours_dump_ch && !semitone && voice.on {
-            // Only emit on the semitone=false (end-of-tick) call so we
-            // don't double-print for vibrato_inner's internal call.
-            // Skip emit when voice is off (would dump stale slot state).
             let ord = DUMP_CTX_ORD.load(Ordering::Relaxed);
             let row = DUMP_CTX_ROW.load(Ordering::Relaxed);
             let tick = DUMP_CTX_TICK.load(Ordering::Relaxed);
@@ -574,10 +536,8 @@ impl ChannelState {
         self.vibrato_inner(voice, first_tick, speed, depth, old_effects, false, rate, tables, song_type);
     }
 
-    /// Post-increment the vibrato wave position, to match FT2/OMT
-    /// semantic of "compute delta with current pos, then advance".
-    /// Called by the backend after end-of-tick update_frequency_voice
-    /// when vibrato is active on the current row AND not first_tick.
+    /// Post-increment vibrato wave pos (FT2 semantic). Called by the
+    /// backend after end-of-tick update_frequency_voice.
     pub(crate) fn advance_vibrato_pos(&mut self, voice: &mut Voice) {
         voice.vibrato_state.next_tick();
     }
@@ -590,14 +550,10 @@ impl ChannelState {
     }
 
     fn vibrato_inner(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, fine: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
-        // FT2/OMT (Snd_fx.cpp:4694): speed and depth are independent
-        // memory lanes — `if (param & 0x0F) depth = ...; if (param &
-        // 0xF0) speed = ...`. Only the non-zero nibble updates its
-        // field; the other retains its previous value. Pre-fix we
-        // packed both into one VibratoParam slot, so a row like H02
-        // (depth update only) wiped speed to 0 — observed as our
-        // ch14 vibspd=0 at order 5 row 9+ while OMT held vibspd=8.
-        let _ = song_type; // memory semantics now unified across formats
+        // FT2: speed and depth are independent memory lanes — only the
+        // non-zero nibble of param updates its respective field.
+        let _ = song_type;
+        let _ = old_effects;
         if speed != 0 { self.set_mem(EffectMemorySlot::VibratoSpeed, speed); }
         if depth != 0 { self.set_mem(EffectMemorySlot::VibratoDepth, depth); }
         let cur_speed = self.mem(EffectMemorySlot::VibratoSpeed);
@@ -605,21 +561,13 @@ impl ChannelState {
 
         if let Some(v) = voice {
             if first_tick {
-                // Speed stored ×4 for sub-tick wave resolution (matches
-                // master at song.rs:1654). Depth stored raw.
-                let _ = old_effects;
+                // Speed ×4 for sub-tick wave resolution.
                 v.vibrato_state.speed = (cur_speed as u16 * 4) as i8;
                 v.vibrato_state.depth = cur_depth as i16;
                 v.vibrato_state.fine = fine;
             }
-            // Apply shift using CURRENT pos (FT2/OMT semantic: compute
-            // delta before advancing pos). The post-increment moves to
-            // backend.rs::apply_vibrato_post_increment, which runs
-            // AFTER the end-of-tick update_frequency_voice so that call
-            // also sees the pre-increment pos. Pre-fix we called
-            // next_tick HERE (before update_frequency_voice), which put
-            // our wave one tick ahead of OMT and produced an audibly
-            // wrong vibrato. Repro: FEATSOFV.XM ch14 around 50s.
+            // Apply shift with current pos; the backend post-increments
+            // pos after end-of-tick update_frequency_voice.
             self.update_frequency_voice(v, rate, true, tables);
         }
     }
@@ -636,7 +584,7 @@ impl ChannelState {
 
         if let Some(v) = voice {
             if first_tick {
-                v.tremolo_state.speed = cur_speed as i8;
+                v.tremolo_state.speed = (cur_speed as u16 * 4) as i8;
                 v.tremolo_state.depth = cur_depth as i16;
             } else {
                 v.tremolo_state.next_tick();
@@ -850,18 +798,13 @@ impl ChannelState {
             }
         }
         if let Some(v) = voice {
-            self.update_frequency_voice(v, rate, true, tables);
+            self.update_frequency_voice(v, rate, self.glissando, tables);
         }
     }
 
     pub(crate) fn it_vol_col_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut amount: i8) {
-        // Memory stores signed amount cast to u8 so we round-trip the
-        // sign on recall. Pre-fix code stored `amount.abs()`, which
-        // meant a "C5" (slide DOWN by 5, amount=-5) memory got recalled
-        // as +5 (slide UP) on the next zero-param row. OpenMPT's
-        // VolumeSlide stores the param byte with direction encoded in
-        // the high/low nibble; we preserve direction by routing the
-        // signed i8 through u8 (cast preserves bit pattern).
+        // Memory stores signed amount as u8 (bit-pattern round-trip)
+        // to preserve direction across the param=0 recall.
         if amount == 0 {
             amount = self.mem(EffectMemorySlot::ItVolColVolSlide) as i8;
         } else {
@@ -890,16 +833,9 @@ impl ChannelState {
         let x = param >> 4;
         let y = param & 0x0F;
 
-        // IT/S3M Dxy decode (see ITTECH.TXT): the upper nibble takes
-        // precedence when both nibbles are non-zero. DFy/DxF select fine
-        // variants only when one of the two is exactly F.
-        //
-        // The `fast_volume_slides` flag (S3M ST3 v3.00 quirk; OpenMPT
-        // Load_s3m.cpp:466) controls whether non-fine slides apply on
-        // tick 0 too. We forward it to `volume_slide` by lying about
-        // first_tick (treating it as non-first-tick when the quirk is
-        // on). Fine slides explicitly fire only on first_tick and are
-        // not affected by the quirk.
+        // IT/S3M Dxy: upper nibble wins; DFy/DxF only fine when one is F.
+        // `fast_volume_slides` extends non-fine slides to tick 0 (ST3 v3.00
+        // quirk) — we forward it by spoofing first_tick.
         if x == 0x0F && y != 0 {        // DFy: Fine Down
             self.fine_volume_slide(voice, first_tick, -(y as i8));
         } else if y == 0x0F && x != 0 { // DxF: Fine Up
@@ -952,13 +888,7 @@ impl ChannelState {
     }
 
     pub(crate) fn volume_slide_main(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
-        // XM A: param != 0 stores memory; param == 0 recalls. Without
-        // recall, songs that set the slide on a trigger row (`A0F`)
-        // and continue with `A00` on subsequent rows lose the slide
-        // entirely from row 1 onward. Repro: xem_po.xm ch2 — every
-        // note retriggers fresh while OpenMPT slides each one down,
-        // making our render ~2× louder. OpenMPT does this for all
-        // formats in CSoundFile::VolumeSlide (Snd_fx.cpp:4815-4823).
+        // XM A: param != 0 stores memory; param == 0 recalls.
         let param = self.recall_or_set(EffectMemorySlot::VolSlide, param);
         if first_tick { return; }
         let x = param >> 4;

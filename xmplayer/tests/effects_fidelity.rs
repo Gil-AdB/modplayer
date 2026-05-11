@@ -120,19 +120,32 @@ fn test_vibrato_execution() {
     
     let mut tester = builder.get_tester();
     
-    // Row 0, Tick 0: Base pitch
+    // FT2 vibrato pos starts at 0 and post-increments at end of tick.
+    // sin[0]=0, so tick 0 and tick 1 see the pos=0 shift (=0). The first
+    // audible shift lands on tick 2 once pos has advanced past zero.
     tester.tick();
     tester.assert_pitch_near(0, 8363.0, 1.0);
-    
-    // Tick 1: Pitch should change
+
     tester.tick();
     let freq1 = tester.song.voices[0].frequency;
-    assert!((freq1 - 8363.0).abs() > 1.0);
-    
-    // Tick 2: Pitch should change more
+
     tester.tick();
     let freq2 = tester.song.voices[0].frequency;
     assert!((freq2 - freq1).abs() > 1.0);
+}
+
+#[test]
+fn test_xm_tremolo_speed_x4() {
+    // FT2 stores tremolo speed as (param>>4) * 4.
+    let mut builder = MockSongBuilder::new(SongType::XM, 1);
+    builder.add_empty_pattern(64);
+    builder.set_pattern_row(0, 0, 0, Pattern {
+        note: 49, instrument: 1, volume: 255, effect: 0x07, effect_param: 0x44,
+    });
+    let mut tester = builder.get_tester();
+    tester.tick();
+    assert_eq!(tester.song.voices[0].tremolo_state.speed, 16);
+    assert_eq!(tester.song.voices[0].tremolo_state.depth, 4);
 }
 
 #[test]

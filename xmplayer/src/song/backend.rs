@@ -196,16 +196,7 @@ pub(super) fn apply_flow_control_effect(
     }
 }
 
-/// Per-format rules for what shifts when a row carries an SDx / EDx
-/// note-delay effect. Each flag answers "does this event move from row
-/// tick 0 to the trigger tick (= delay value)?". Trackers disagree about
-/// the volume column; the rest is consistent.
-///
-/// **Why a table.** Any per-format quirk we discover (an OpenMPT compat
-/// flag, a Schism Tracker behavior, etc.) becomes one new const + one
-/// new field, with the call-site already reading `delay_schedule(...)`.
-/// Avoids the scattered `if note_delay_first_tick` gating where each
-/// site has to remember the format-specific quirk independently.
+/// Per-format scheduling for SDx / EDx note-delay rows.
 #[derive(Clone, Copy)]
 pub(super) struct DelaySchedule {
     /// True: vol col fires at the trigger tick (overrides retrig vol).
@@ -214,24 +205,6 @@ pub(super) struct DelaySchedule {
     pub vol_col_at_trigger: bool,
 }
 
-// All formats currently use FT2/EDx-style timing: vol col fires at the
-// trigger tick of an SDx/EDx row, overriding the retrig-loaded
-// instrument default. The new note plays at the vol col value.
-//
-// Why this and not ST3-style ("vol col at row start, F-4 plays at
-// instrument default"):
-//   In 2ND_PM.S3M order 0x23 the SDx rows are followed by porta rows
-//   that all carry the same vol col value (e.g. row 0x32 vol=12 SD2,
-//   row 0x33 vol=12 porta). With ST3 timing the new note triggers at
-//   instrument-default 64, then row 0x33's vol col immediately drops
-//   it back to 12 at the next first_tick — audible as a one-tick
-//   volume spike right at the SDx row boundary. The .xm version of the
-//   same song doesn't have this because XM uses EDx (vol col at
-//   trigger), so the new note plays at the same vol col value as the
-//   surrounding rows. We match XM here on the assumption that the
-//   author hand-tuned the song around that timing.
-//
-// Per ft2-clone src/ft2_replayer.c:2197 (XM EDx).
 const S3M_DELAY: DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
 const IT_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
 const XM_DELAY:  DelaySchedule = DelaySchedule { vol_col_at_trigger: true };
@@ -247,64 +220,40 @@ pub(super) fn delay_schedule(song_type: SongType) -> DelaySchedule {
     }
 }
 
-/// Per-format mixer parameters. Drives both the per-voice volume loop
-/// (the "Process all active voices" stanza in each backend, formerly
-/// inlined and duplicated) and the central master-gain calculation in
-/// `output.rs`. Keeping every format-specific knob in one struct means
-/// any future quirk lands as a single field with one entry per format —
-/// the same pattern as `DelaySchedule` / `RowTiming`.
+/// Per-format mixer parameters for the per-voice volume loop and the
+/// master-gain calculation in `output.rs`.
 #[derive(Clone, Copy)]
 pub(super) struct VoiceMixFormula {
-    /// XM/S3M/IT update envelopes per tick; MOD has no envelopes.
+    /// XM/S3M/IT update envelopes per tick; MOD has none.
     pub update_envelopes: bool,
-    /// Multiply by `channel.channel_volume / 64`. S3M's `Mxx` slot —
-    /// other formats don't have a channel-level volume.
+    /// Multiply by `channel.channel_volume / 64`. S3M-only (`Mxx`).
     pub channel_vol: bool,
-    /// Multiply by `voice.instrument_global_volume / 128`. IT only —
-    /// XM/S3M/MOD don't have a per-instrument global volume.
+    /// Multiply by `voice.instrument_global_volume / 128`. IT-only.
     pub instrument_global: bool,
     /// Multiply by `global_volume / global_vol_div`. MOD has no song
     /// global volume so this is gated by `apply_global_vol`.
     pub apply_global_vol: bool,
     pub global_vol_div: f32,
-    /// Mask applied to `master_volume` before computing master_gain. S3M
-    /// packs `stereo on` into bit 7 (e.g. 0xB0 = stereo + master 0x30);
-    /// for those formats we mask 0x7F. XM/MOD/IT use the byte as-is.
+    /// Mask before computing master_gain. S3M packs `stereo on` into
+    /// bit 7 (e.g. 0xB0 = stereo + master 0x30); mask 0x7F there.
     pub master_byte_mask: u8,
-    /// Post-master scaling factor. S3M needs an empirical √2 to match
-    /// libopenmpt's render (combined effect of m_nSamplePreAmp +
-    /// bypass-pre-amp /2 in Sndmix.cpp:2511 + MIXING_SCALEF).
+    /// Post-master scaling factor, empirically calibrated per format.
     pub global_scale: f32,
-    /// Per-channel frequency multiplier applied in
-    /// `ChannelState::update_frequency_voice`. Compensates for the
-    /// per-format period→Hz reference-clock difference vs OpenMPT.
-    /// MOD: 14187580/14317456 ≈ 0.99093 (Protracker PAL clock vs the
-    /// FT2 Amiga clock our d_period2hz_tab uses). Other formats: 1.0.
+    /// Per-channel frequency multiplier. MOD compensates for using the
+    /// FT2 Amiga clock instead of Protracker PAL (14187580/14317456 ≈
+    /// 0.99093, ~16 cents). Other formats: 1.0.
     pub freq_scale: f32,
 }
 
 const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: false,
     apply_global_vol: true,  global_vol_div: 64.0,
-    // Single-scalar approximation of OpenMPT's voice-count-dependent
-    // gain. OpenMPT applies a per-voice samplePreAmp (~48/256 = 0.1875
-    // for XM) plus an auto-normalization that scales sums of many
-    // active voices. Modeling either properly requires runtime voice
-    // counting; the constant scalar here lands close on dense-voice
-    // mixes and high on sparse ones. Tuned on a 13-module corpus
-    // sample (median 1.37x post-fix). Per-module residual: 0.5-4×
-    // depending on active voice density (e.g. FEATSOFV.XM 0.95×;
-    // css5_8bits.xm 3.7× — sparse-voice case).
     master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
     freq_scale: 1.0,
 };
 const MOD_MIX: VoiceMixFormula = VoiceMixFormula {
     update_envelopes: false, channel_vol: false, instrument_global: false,
     apply_global_vol: false, global_vol_div: 1.0,
-    // Pre-calibration MOD median ratio was 1.42; 1/√2 brings it to ~1.01.
-    // freq_scale fixes the 16-cent pitch sharpness from our using the
-    // XM Amiga clock (8363*1712=14317456) for MOD instead of OpenMPT's
-    // Protracker PAL clock (3546895*4=14187580). Snd_fx.cpp:6552.
     master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
     freq_scale: 14187580.0 / 14317456.0,
 };
@@ -317,16 +266,6 @@ const S3M_MIX: VoiceMixFormula = VoiceMixFormula {
 const IT_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: true,
     apply_global_vol: true,  global_vol_div: 128.0,
-    // IT calibration. Initial 4.0 was tuned on 2 sample modules and
-    // brought their median to ~1.0, but a wider 50-module sample showed
-    // most IT modules at ratio 2-3× too loud. The 2.0 setting is
-    // conservative: half of what we had, derived from the median
-    // observed across the broader corpus. Some IT modules will still
-    // diverge — IT volume scaling depends on c5_speed-driven envelope
-    // shapes, master/global volume, and the m_nSamplePreAmp default
-    // that OpenMPT applies (48/256 = 0.1875 per voice in libopenmpt
-    // mode). Per-module per-window variance is large; this scale
-    // covers the bulk.
     master_byte_mask: 0xFF,  global_scale: 3.0,
     freq_scale: 1.0,
 };
@@ -570,7 +509,7 @@ pub(super) fn cut_or_nna_existing_voice(
                     voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
                 }
                 1 => { /* Continue */ }
-                2 => { voices[prev_voice_idx].key_off(instruments, false); } // Note Off
+                2 => { voices[prev_voice_idx].key_off(instruments, song_type); } // Note Off
                 3 => { voices[prev_voice_idx].sustained = false; } // Fade
                 _ => {
                     voices[prev_voice_idx].on = false;
@@ -793,10 +732,7 @@ pub(super) fn apply_extended(
         ExtendedCmdKind::VibratoWaveform => {
             if first_tick {
                 channel.vibrato_waveform = y & 3;
-                // XM/MOD use bit 2 of E4y as a "no-retrig on next note" flag.
-                // S3M/IT don't define bit 2 — leave retrig at the default
-                // `true`. (OpenMPT Snd_fx.cpp:5208/5213 — for S3M the param
-                // is masked to & 0x03; bit 2 has no meaning.)
+                // XM/MOD: bit 2 = no-retrig flag. S3M/IT mask to & 3.
                 if matches!(song_type, SongType::XM | SongType::MOD) {
                     channel.vibrato_retrig = (y & 4) == 0;
                 }
@@ -868,11 +804,7 @@ pub(super) fn apply_extended(
             }
         }
         ExtendedCmdKind::SetFinetuneS3m => {
-            // S3M / IT S2x: set channel c5_speed from S3M_FINETUNE_TABLE and
-            // recompute the live period via the formula. OpenMPT also keeps
-            // a derived nFineTune for the LUT path; we don't (formula is
-            // authoritative once c5_speed is non-zero). Per OpenMPT
-            // Snd_fx.cpp:5189-5206 (S3M_TYPE branch).
+            // S3M / IT S2x: set channel c5_speed and recompute the period.
             if first_tick {
                 channel.note.c5_speed = S3M_FINETUNE_TABLE[(y as usize) & 0xF] as u32;
                 if channel.note.original_note != 0 {
@@ -897,24 +829,9 @@ pub(super) fn apply_extended(
 
 }
 
-// =================================================================
-// Main effect-column dispatch table.
-// =================================================================
-//
-// Each format previously inlined ~15-20 match arms for the "main"
-// effect column (everything that isn't flow control or the E/S
-// extended subcommand). Most arms across formats called the same
-// channel methods - the only thing that varied was the effect code.
-//
-// `EffectKind` collapses every format's per-effect intent into a
-// single enum. Per-format `[EffectKind; 32]` tables map raw effect
-// bytes into the enum, and `apply_effect` is the shared dispatcher.
-// Each backend's main match collapses to a single table lookup +
-// dispatch call.
-//
-// Per-format quirks (e.g. XM uses `volume_slide_main`, IT/S3M use
-// `it_volume_slide`; XM panning is 0..255, IT panning is param*4)
-// are folded into apply_effect via `match ctx.song_type` branches.
+// Main effect-column dispatch. Each format has a `[EffectKind; 32]`
+// table mapping raw effect bytes into a shared enum; `apply_effect`
+// dispatches off the enum with `match song_type` for per-format quirks.
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum EffectKind {
@@ -976,11 +893,7 @@ pub(super) enum EffectKind {
 
 const EK: EffectKind = EffectKind::None; // shorthand for table padding
 
-/// S3M S2x finetune lookup. Each entry is the c5_speed to assign to the
-/// channel; index 8 = 8363 (default unity). Lifted bit-exact from OpenMPT
-/// Tables.cpp:340 (S3MFineTuneTable). The geometric formula behind the
-/// table is `8363 * 2^((i-8) / (12*8))` — eight 1/8-semitone steps either
-/// side of unity.
+/// S3M S2x finetune → c5_speed. Geometric: 8363 * 2^((i-8) / 96).
 pub(super) const S3M_FINETUNE_TABLE: [u16; 16] = [
     7895, 7941, 7985, 8046, 8107, 8169, 8232, 8280,
     8363, 8413, 8463, 8529, 8581, 8651, 8723, 8757,
@@ -1114,12 +1027,8 @@ pub(super) fn apply_effect(
             let has_memory = matches!(ctx.song_type, SongType::S3M | SongType::IT);
             if pattern.effect_param != 0 || has_memory {
                 channel.arpeggio(ctx.tick, pattern.get_x(), pattern.get_y(), has_memory);
-                // S3M/IT amiga override: the FT2-style `period_shift = -(x*64)`
-                // set above is exact in linear mode (LUT is 64 units/semitone)
-                // but ~33 cents flat per step in amiga mode (FT2 quirk that
-                // XM songs depend on; OpenMPT's S3M/IT path uses the formula
-                // for true semitones). Recompute the shift from the c5_speed
-                // formula so arp steps land on correct semitones.
+                // S3M/IT amiga: recompute period_shift via the c5_speed
+                // formula so arp steps land on exact semitones.
                 let arpeggio_via_formula = matches!(ctx.song_type, SongType::S3M | SongType::IT)
                     && ctx.use_amiga;
                 if arpeggio_via_formula
@@ -1277,7 +1186,7 @@ pub(super) fn apply_effect(
         EffectKind::KeyOffAtTick => {
             if ctx.tick == pattern.effect_param as u32 {
                 if let Some(v) = voice.as_deref_mut() {
-                    v.key_off(ctx.instruments, false);
+                    v.key_off(ctx.instruments, ctx.song_type);
                 }
             }
         }
@@ -1285,9 +1194,18 @@ pub(super) fn apply_effect(
             if ctx.first_tick {
                 if let Some(v) = voice.as_deref_mut() {
                     let inst = &ctx.instruments[v.instrument];
-                    v.volume_envelope_state.set_position(&inst.volume_envelope, pattern.effect_param);
-                    v.panning_envelope_state.set_position(&inst.panning_envelope, pattern.effect_param);
-                    v.pitch_envelope_state.set_position(&inst.pitch_envelope, pattern.effect_param);
+                    let is_xm = matches!(ctx.song_type, SongType::XM | SongType::MOD);
+                    let set_vol = if is_xm { inst.volume_envelope.on } else { true };
+                    if set_vol {
+                        v.volume_envelope_state.set_position(&inst.volume_envelope, pattern.effect_param);
+                    }
+                    // FT2 logic bug: pan-env (and pitch) position gates on
+                    // vol-env's sustain flag, not its own.
+                    let set_pan = if is_xm { inst.volume_envelope.sustain } else { true };
+                    if set_pan {
+                        v.panning_envelope_state.set_position(&inst.panning_envelope, pattern.effect_param);
+                        v.pitch_envelope_state.set_position(&inst.pitch_envelope, pattern.effect_param);
+                    }
                 }
             }
         }
@@ -1342,5 +1260,6 @@ pub(super) fn set_channel_note(
 ) {
     let real_note = (mapped_note as i16 + sample_relative_note as i16).clamp(1, 120) as u8;
     channel.note.set_note(real_note, sample_finetune, mapped_note, frequency_tables);
+    channel.period_shift = 0;
     channel.update_frequency_voice(voice, rate, false, frequency_tables);
 }
