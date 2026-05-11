@@ -1163,7 +1163,7 @@ pub(super) fn apply_effect(
             channel.channel_volume_slide(ctx.first_tick, pattern.effect_param);
         }
         EffectKind::PanningSlide => {
-            channel.panning_slide(voice.as_deref_mut(), ctx.note_delay_first_tick, pattern.effect_param, ctx.song_type);
+            channel.panning_slide(voice.as_deref_mut(), ctx.first_tick, pattern.effect_param, ctx.song_type);
         }
 
         EffectKind::Retrig => {
@@ -1242,7 +1242,7 @@ fn apply_vol_slide(
             channel.volume_slide_main(voice, ctx.first_tick, param);
         }
         _ => {
-            channel.it_volume_slide(voice, ctx.note_delay_first_tick, param, ctx.fast_volume_slides);
+            channel.it_volume_slide(voice, ctx.first_tick, param, ctx.fast_volume_slides);
         }
     }
 }

@@ -192,8 +192,8 @@ impl ModuleBackend for ItBackend {
                 0..=64 => { channel.set_volume(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume); }
                 65..=74 => { channel.it_vol_col_fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, (pattern.volume - 65) as i8); }
                 75..=84 => { channel.it_vol_col_fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -((pattern.volume - 75) as i8)); }
-                85..=94 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, (pattern.volume - 85) as i8); }
-                95..=104 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -((pattern.volume - 95) as i8)); }
+                85..=94 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), first_tick, (pattern.volume - 85) as i8); }
+                95..=104 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), first_tick, -((pattern.volume - 95) as i8)); }
                 105..=114 => { channel.porta_up(r.song_data.song_type, first_tick, (pattern.volume - 105) << 2); }
                 115..=124 => { channel.porta_down(r.song_data.song_type, first_tick, (pattern.volume - 115) << 2); }
                 128..=192 => { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(((pattern.volume - 128) << 2) as i32); } }
