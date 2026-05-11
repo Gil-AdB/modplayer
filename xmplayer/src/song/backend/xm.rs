@@ -102,6 +102,7 @@ impl ModuleBackend for XmBackend {
                                 let sample = &instrument.samples[final_sample_idx];
                                 set_channel_note(channel, voice, sample.relative_note, sample.finetune, trigger_note_value, r.rate, r.frequency_tables);
                                 voice.last_played_note = trigger_note_value;
+                                channel.last_played_note = trigger_note_value;
                                 channel.voice_idx = Some(voice_idx);
                             }
                         }
@@ -121,6 +122,35 @@ impl ModuleBackend for XmBackend {
                         r.voices[v_idx].volume.output_volume = 0.0;
                     }
                 }
+                // FT2 instrument-byte-without-note: resetVolumes +
+                // triggerInstrument. Refresh sample default vol + panning
+                // and rewind envelopes on the live voice.
+                NoteAction::None if pattern.instrument != 0 && first_tick => {
+                    let inst_idx = channel.last_instrument;
+                    if inst_idx != 0 {
+                        let instrument = &instruments[inst_idx];
+                        let lookup_note = channel.last_played_note;
+                        if lookup_note >= 1 && (lookup_note as usize - 1) < instrument.sample_indexes.len() {
+                            let it_mapping = instrument.sample_indexes[lookup_note as usize - 1];
+                            let sample_idx = it_mapping.1 as usize;
+                            if sample_idx > 0 && (sample_idx - 1) < instrument.samples.len() {
+                                let sample = &instrument.samples[sample_idx - 1];
+                                if let Some(v_idx) = channel.voice_idx {
+                                    let voice = &mut r.voices[v_idx];
+                                    if voice.on && voice.channel_idx == i {
+                                        voice.volume.retrig(sample.volume as i32);
+                                        voice.panning.panning = r.song_data.initial_channel_panning[i];
+                                        voice.volume_envelope_state.reset(0, &instrument.volume_envelope);
+                                        voice.panning_envelope_state.reset(0, &instrument.panning_envelope);
+                                        voice.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
+                                        voice.volume.fadeout_vol = 65536;
+                                        voice.volume.fadeout_speed = instrument.volume_fadeout as i32;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
 
@@ -137,11 +167,13 @@ impl ModuleBackend for XmBackend {
                 0x70..=0x7f => { channel.volume_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() as i8); }
                 0x80..=0x8f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, -(pattern.get_volume_param() as i8)); }
                 0x90..=0x9f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() as i8); }
-                0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
-                0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
+                // FT2 vol col: A = set vibrato speed, B = set depth + apply.
+                0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
+                0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
                 0xc0..=0xcf => { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(((pattern.get_volume_param() as i32) * 17).min(255)); } }
-                0xd0..=0xdf => { channel.panning_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() << 4, r.song_data.song_type); }
-                0xe0..=0xef => { channel.panning_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), r.song_data.song_type); }
+                // FT2 vol col: D = pan-slide left (lo nibble), E = pan-slide right (hi nibble).
+                0xd0..=0xdf => { channel.panning_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), r.song_data.song_type); }
+                0xe0..=0xef => { channel.panning_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() << 4, r.song_data.song_type); }
                 0xf0..=0xfe => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param(), r.compatible_g, r.rate, r.frequency_tables); }
                 _ => {}
             }

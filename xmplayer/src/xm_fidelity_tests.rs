@@ -424,6 +424,102 @@ mod tests {
     }
 
     #[test]
+    fn test_xm_vol_col_vibrato_arms_speed_vs_depth() {
+        // FT2 vol col: 0xA0-AF sets vibrato speed (tick-zero handler);
+        // 0xB0-BF sets vibrato depth and applies vibrato (tick-nonzero).
+        // Refactor previously had these swapped — A wrote depth, B wrote speed.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(4);
+        // Row 0: trigger note; vol col 0xA4 = set vibrato speed = 4.
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 0xA4, effect: 0, effect_param: 0,
+        });
+        let mut tester = builder.get_tester();
+        tester.tick();
+        // Speed is stored ×4 internally for sub-tick resolution.
+        assert_eq!(tester.song.voices[0].vibrato_state.speed, 16,
+            "vol col 0xA4 should set vibrato speed to 4 (stored as 16)");
+
+        // Row 1: vol col 0xB6 = vibrato with depth=6.
+        let mut builder2 = MockSongBuilder::new(SongType::XM, 1);
+        builder2.add_empty_pattern(4);
+        builder2.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 0xA4, effect: 0, effect_param: 0,
+        });
+        builder2.set_pattern_row(0, 1, 0, Pattern {
+            note: 0, instrument: 0, volume: 0xB6, effect: 0, effect_param: 0,
+        });
+        let mut tester2 = builder2.get_tester();
+        tester2.step_to_row(1);
+        tester2.tick();
+        assert_eq!(tester2.song.voices[0].vibrato_state.depth, 6,
+            "vol col 0xB6 should set vibrato depth to 6");
+    }
+
+    #[test]
+    fn test_xm_vol_col_pan_slide_direction() {
+        // FT2: vol col 0xD = pan-slide LEFT (pan decreases), 0xE = pan-slide RIGHT.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(4);
+        // Row 0: trigger with pan=128 (center).
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 0xC8, effect: 0, effect_param: 0,
+        });
+        // Row 1: vol col 0xD2 = pan slide LEFT by 2 per tick.
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 0, instrument: 0, volume: 0xD2, effect: 0, effect_param: 0,
+        });
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        let pan_start = tester.song.voices[0].panning.panning;
+        // Slide fires on non-zero ticks; after a few ticks, pan should be lower.
+        for _ in 0..4 { tester.tick(); }
+        let pan_after_left = tester.song.voices[0].panning.panning;
+        assert!(pan_after_left < pan_start,
+            "vol col 0xD2 should slide pan LEFT (decrease), pan_start={} pan_after={}",
+            pan_start, pan_after_left);
+    }
+
+    #[test]
+    fn test_xm_instrument_only_row_refreshes_envelopes_and_volume() {
+        // FT2: an XM row with an instrument byte but no note triggers
+        // resetVolumes + triggerInstrument — sample default volume is
+        // re-applied and envelope state rewinds to frame 0.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.instruments[1].volume_envelope.on = true;
+        builder.instruments[1].volume_envelope.points[0].frame = 0;
+        builder.instruments[1].volume_envelope.points[0].value = 64;
+        builder.instruments[1].volume_envelope.points[1].frame = 40;
+        builder.instruments[1].volume_envelope.points[1].value = 32;
+        builder.instruments[1].volume_envelope.size = 2;
+        builder.add_empty_pattern(3);
+        // Row 0: trigger; sample default vol is 64.
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 255, effect: 0, effect_param: 0,
+        });
+        // Row 1: vol col forces vol down to 4 (so we can observe refresh).
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 0, instrument: 0, volume: 0x10 + 4, effect: 0, effect_param: 0,
+        });
+        // Row 2: instrument-only refresh — should reset vol back to 64.
+        builder.set_pattern_row(0, 2, 0, Pattern {
+            note: 0, instrument: 1, volume: 255, effect: 0, effect_param: 0,
+        });
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        tester.tick();
+        assert_eq!(tester.song.voices[0].volume.volume, 4,
+            "row 1 should set vol to 4");
+        tester.step_to_row(2);
+        tester.tick();
+        assert_eq!(tester.song.voices[0].volume.volume, 64,
+            "instrument-only row should reset sample default vol");
+        assert!(tester.song.voices[0].volume_envelope_state.frame < 3,
+            "instrument-only row should rewind env, got frame {}",
+            tester.song.voices[0].volume_envelope_state.frame);
+    }
+
+    #[test]
     fn test_xm_vol_col_vol_slide_skips_tick_zero() {
         // FT2 vol col vol slides (0x60-0x7F) are tick-non-zero handlers —
         // they don't fire on the first tick of the row. mview.xm ord=16
