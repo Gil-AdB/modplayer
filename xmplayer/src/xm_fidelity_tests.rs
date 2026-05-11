@@ -424,6 +424,38 @@ mod tests {
     }
 
     #[test]
+    fn test_xm_vol_col_vol_slide_skips_tick_zero() {
+        // FT2 vol col vol slides (0x60-0x7F) are tick-non-zero handlers —
+        // they don't fire on the first tick of the row. mview.xm ord=16
+        // ch7 hit this: a sustained 1.42x loudness offset accumulated
+        // because we were sliding on tick 0 as well.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(4);
+        // Row 0: trigger note at volume 32.
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 0x10 + 32, effect: 0, effect_param: 0,
+        });
+        // Row 1: vol slide up by 2 in vol column (0x72). With speed 6
+        // and tick-zero skipped, vol grows by 2 × 5 = +10 across the row.
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 0, instrument: 0, volume: 0x72, effect: 0, effect_param: 0,
+        });
+
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        // Tick 0 of row 1: slide must NOT have fired.
+        tester.tick();
+        let v_tick0 = tester.song.voices[0].volume.volume;
+        assert_eq!(v_tick0, 32,
+            "vol col vol slide must not fire on tick 0 of the row, got {}", v_tick0);
+        // Subsequent ticks slide by 2 each.
+        tester.tick();
+        assert_eq!(tester.song.voices[0].volume.volume, 34);
+        tester.tick();
+        assert_eq!(tester.song.voices[0].volume.volume, 36);
+    }
+
+    #[test]
     fn test_xm_note_delay_instrument_only_retriggers_last_note() {
         // FT2: an EDx delayed row with note=0 retriggers using the
         // channel's last played note.
