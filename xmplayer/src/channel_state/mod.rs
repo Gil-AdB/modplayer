@@ -927,10 +927,23 @@ impl ChannelState {
 
         let right = (actual_param >> 4) as i32;
         let left = (actual_param & 0xf) as i32;
-        let (r_shift, l_shift) = match song_type {
-            SongType::XM | SongType::MOD => (right, left),
-            _ => (right << 2, left << 2),
-        };
+        let is_xm = matches!(song_type, SongType::XM | SongType::MOD);
+        let (r_shift, l_shift) = if is_xm { (right, left) } else { (right << 2, left << 2) };
+
+        // FT2 (XM/MOD): no fine variant — every-tick slide, hi nibble wins
+        // when both are non-zero. IT/S3M PFx / PxF are fine slides (tick 0 only).
+        if is_xm {
+            if !first_tick {
+                if let Some(v) = voice {
+                    if right != 0 {
+                        v.panning.set_panning(v.panning.panning as i32 + r_shift);
+                    } else if left != 0 {
+                        v.panning.set_panning(v.panning.panning as i32 - l_shift);
+                    }
+                }
+            }
+            return;
+        }
 
         if first_tick {
             if right == 0xf && left != 0 {

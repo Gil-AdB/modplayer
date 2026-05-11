@@ -56,12 +56,14 @@ impl ModuleBackend for XmBackend {
             if trigger_note_value != 0 {
                 if pattern.is_porta_to_note(r.song_data.song_type) {
                     if first_tick {
-                        let inst_idx = channel.last_instrument;
-                        if inst_idx != 0 && (trigger_note_value as usize - 1) < instruments[inst_idx].sample_indexes.len() {
-                            let it_mapping = instruments[inst_idx].sample_indexes[trigger_note_value as usize - 1];
-                            let sample_idx = it_mapping.1 as usize;
-                            if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
-                                let sample = &instruments[inst_idx].samples[sample_idx - 1];
+                        // FT2 preparePortamento: target period uses the
+                        // CURRENTLY PLAYING voice's relative_note + finetune
+                        // (captured at the last trigger), not the new
+                        // instrument byte's sample.
+                        if let Some(v_idx) = channel.voice_idx {
+                            let voice = &r.voices[v_idx];
+                            if voice.instrument < instruments.len() && voice.sample < instruments[voice.instrument].samples.len() {
+                                let sample = &instruments[voice.instrument].samples[voice.sample];
                                 let real_note = (trigger_note_value as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                                 channel.porta_to_note.target_note.period = channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables);
                             }

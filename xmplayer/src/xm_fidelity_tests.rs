@@ -424,6 +424,64 @@ mod tests {
     }
 
     #[test]
+    fn test_xm_porta_to_note_uses_playing_instrument_finetune() {
+        // FT2 preparePortamento: target period uses the channel-state
+        // relative_note / finetune captured at the last trigger — NOT the
+        // new instrument byte's sample. Refactor previously read from
+        // channel.last_instrument.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.instruments[1].samples[0].finetune = 0;
+        // Add a second instrument with a different finetune.
+        let mut inst2 = builder.instruments[1].clone();
+        inst2.samples[0].finetune = 64;
+        builder.instruments.push(inst2);
+        builder.add_empty_pattern(4);
+        // Row 0: trigger A-4 with instrument 1 (finetune 0).
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 255, effect: 0x00, effect_param: 0x00,
+        });
+        // Row 1: portamento to A#4 with instrument 2 (finetune 64).
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 50, instrument: 2, volume: 255, effect: 0x03, effect_param: 0xFF,
+        });
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        tester.tick();
+        // Target period should reflect inst-1's finetune (0), not inst-2's (64).
+        // The exact value comes from note_to_period — verify it differs from
+        // what inst-2 would produce.
+        let target_with_inst1_finetune = tester.song.channels[0].porta_to_note.target_note.period;
+        // What inst-2's finetune would produce:
+        let target_with_inst2_finetune = tester.song.channels[0].note.note_to_period(50, 64, tester.song.frequency_tables);
+        assert_ne!(target_with_inst1_finetune, target_with_inst2_finetune,
+            "porta target must use the playing voice's finetune, not the new instrument's");
+    }
+
+    #[test]
+    fn test_xm_tremor_count_reset_on_trigger() {
+        // FT2: a fresh note trigger zeroes the channel's tremor counter so
+        // a subsequent Txy starts in a known state, not mid-cycle.
+        let mut builder = MockSongBuilder::new(SongType::XM, 1);
+        builder.add_empty_pattern(3);
+        // Row 0: trigger + tremor 0x42 (on 4 ticks, off 2 ticks). 5 ticks
+        // are processed by step_row, leaving tremor_count > 0.
+        builder.set_pattern_row(0, 0, 0, Pattern {
+            note: 49, instrument: 1, volume: 255, effect: 0x1D, effect_param: 0x42,
+        });
+        // Row 1: fresh note trigger; tremor_count must reset.
+        builder.set_pattern_row(0, 1, 0, Pattern {
+            note: 50, instrument: 1, volume: 255, effect: 0x00, effect_param: 0x00,
+        });
+        let mut tester = builder.get_tester();
+        tester.step_to_row(1);
+        // The trigger fires at row 1 tick 0; tremor_count should be cleared.
+        tester.tick();
+        assert_eq!(tester.song.channels[0].tremor_count, 0,
+            "tremor_count must reset on note trigger, got {}",
+            tester.song.channels[0].tremor_count);
+    }
+
+    #[test]
     fn test_xm_vol_col_vibrato_arms_speed_vs_depth() {
         // FT2 vol col: 0xA0-AF sets vibrato speed (tick-zero handler);
         // 0xB0-BF sets vibrato depth and applies vibrato (tick-nonzero).

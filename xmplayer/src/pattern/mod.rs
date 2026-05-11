@@ -106,8 +106,9 @@ impl Pattern {
             }
             SongType::IT => {
                 // H = vibrato, K = vibrato + vol slide. U is fine vibrato
-                // (effect 0x15 in IT).
+                // (effect 0x15 in IT). Vol col 203-212 = vibrato depth.
                 self.effect == 0x08 || self.effect == 0x0b || self.effect == 0x15
+                    || (self.volume >= 203 && self.volume <= 212)
             }
             _ => self.effect == 0x04 || self.effect == 0x06,
         }

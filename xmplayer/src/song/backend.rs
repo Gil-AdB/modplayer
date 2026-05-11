@@ -595,20 +595,20 @@ pub(super) const XM_E_TABLE: [ExtendedCmdKind; 16] = {
 pub(super) const MOD_E_TABLE: [ExtendedCmdKind; 16] = {
     use ExtendedCmdKind::*;
     [
-        None,             // E0
+        None,             // E0  set filter (Amiga LED) - not implemented
         FinePortaUp,      // E1
         FinePortaDown,    // E2
-        None,             // E3
-        None,             // E4
-        None,             // E5
-        PatternLoop,      // E6  (was a TODO stub — now wired via the table)
-        None,             // E7
-        None,             // E8
+        Glissando,        // E3
+        VibratoWaveform,  // E4
+        SetFinetune,      // E5
+        PatternLoop,      // E6
+        TremoloWaveform,  // E7
+        None,             // E8  (Sync — unused)
         NoteRetrig,       // E9
         FineVolSlideUp,   // EA
         FineVolSlideDown, // EB
         NoteCutAtTick,    // EC
-        None,             // ED  note delay
+        None,             // ED  note delay (handled in trigger path)
         PatternDelay,     // EE
         None,             // EF
     ]
@@ -1261,5 +1261,6 @@ pub(super) fn set_channel_note(
     let real_note = (mapped_note as i16 + sample_relative_note as i16).clamp(1, 120) as u8;
     channel.note.set_note(real_note, sample_finetune, mapped_note, frequency_tables);
     channel.period_shift = 0;
+    channel.tremor_count = 0;
     channel.update_frequency_voice(voice, rate, false, frequency_tables);
 }
