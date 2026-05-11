@@ -78,6 +78,11 @@ mod tests {
         // XM Kxy fires key-off when tick == y (XM spec: "Key off the note
         // at tick xx"). Confirmed against the apply_effect dispatch's
         // KeyOffAtTick arm: `if ctx.tick == pattern.effect_param as u32`.
+        // FT2 semantics: key-off ENDS SUSTAIN (envelope advances past
+        // sustain point, fadeout starts ramping `fadeout_vol` down) but
+        // does NOT cut the voice immediately — repro mview.xm ch12.
+        // Mock instrument has volume_fadeout=0 so the voice stays on
+        // indefinitely; we observe key-off via `sustained == false`.
         let mut builder = MockSongBuilder::new(SongType::XM, 1);
         builder.add_empty_pattern(1);
         // K04 -> Key Off when tick == 4. Default speed is 6 so we have
@@ -88,33 +93,35 @@ mod tests {
 
         for _ in 0..4 {
             tester.tick();
-            assert!(tester.song.voices[0].on, "voice should still be on before tick 4 fires Kxx");
+            assert!(tester.song.voices[0].sustained, "voice should still be sustained before tick 4 fires Kxx");
         }
         // Now we've processed ticks 0..3 and we're about to process tick 4.
         tester.tick();
-        assert!(!tester.song.voices[0].on, "K04 should fire at tick 4");
+        assert!(!tester.song.voices[0].sustained, "K04 should end sustain at tick 4");
     }
 
     #[test]
     fn test_xm_key_off_no_envelope() {
-        // For an instrument without a volume envelope, Voice::key_off sets
-        // voice.on = false immediately (no fade-out animation needed).
-        // Note: fadeout_vol is left at its current value because voice.on=false
-        // already silences playback - no further mute is required.
+        // Key-off with no volume envelope: voice does NOT cut
+        // immediately — fadeout (instrument.volume_fadeout) ramps the
+        // voice volume down per tick (Voice::update_fadeout, OpenMPT
+        // Sndmix.cpp:1381 equivalent). With mock fadeout=0 the voice
+        // plays forever after key-off — FT2-accurate behavior.
         let mut builder = MockSongBuilder::new(SongType::XM, 1);
         builder.add_empty_pattern(1);
         builder.add_pattern_row(0, 0, 48, 1, 255, 0x14, 0x03); // K03
 
         let mut tester = builder.get_tester();
 
-        // Ticks 0..2 process before K03 fires.
         for _ in 0..3 {
             tester.tick();
-            assert!(tester.song.voices[0].on);
+            assert!(tester.song.voices[0].sustained);
         }
-        // Tick 3 triggers Key Off (no envelope -> immediate cut).
+        // Tick 3 triggers Key Off — sustain ends, voice remains on
+        // because fadeout=0 means no decay.
         tester.tick();
-        assert!(!tester.song.voices[0].on, "K03 should cut the voice at tick 3");
+        assert!(!tester.song.voices[0].sustained, "K03 should end sustain at tick 3");
+        assert!(tester.song.voices[0].on, "voice stays on; fadeout=0 means no decay");
     }
 
     #[test]

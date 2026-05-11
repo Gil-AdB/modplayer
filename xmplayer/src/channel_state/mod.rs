@@ -181,10 +181,24 @@ impl Voice {
         self.panning_envelope_state.key_off(&instrument.panning_envelope);
         self.pitch_envelope_state.key_off(&instrument.pitch_envelope);
 
-        if !instrument.volume_envelope.on {
-            self.on = false;
-            self.volume.retrig(0);
-        }
+        // FT2/XM: key-off ends sustain but does NOT cut the voice —
+        // the fadeout decays `fadeout_vol` each tick until silence.
+        // Refactor regression: the pluggable-backend rewrite of
+        // channel_state added `self.on = false; self.volume.retrig(0)`
+        // for the no-envelope branch, which cut voices that master
+        // kept playing. Master cc4bff45 channel_state/mod.rs:81-100
+        // leaves the on flag set (the `self.on = false` line is
+        // commented out) and just resets envelope state — voices with
+        // a non-zero fadeout still play out their tail naturally.
+        // Repro: mview.xm ch12 around 1:20. Inst 23 has
+        // `vol_env.on=false, fadeout=128`; key-off at order 22 row 8
+        // silenced ch12 mid-phrase, and the porta-to-note at row 10
+        // had no live voice to slide from, so the entire passage was
+        // missing in our render but plays correctly in master.
+        //
+        // Edge case: if fadeout is also 0, the voice plays forever
+        // after key-off — that matches FT2 (only Note Cut / sample
+        // end can silence in that case).
         self.volume.fadeout_speed = instrument.volume_fadeout as i32;
         return true;
     }
