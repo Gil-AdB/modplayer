@@ -296,6 +296,10 @@ impl Voice {
     /// sample_position reset, no fadeout reset of `sustained`), but the
     /// instrument number causes the voice to re-read its sample's default
     /// volume and rewind its envelope phases — matching ST3/FT2/IT.
+    ///
+    /// FT2 `triggerInstrument` also resets `fadeoutVol` to full; without it,
+    /// a key-off that landed on the previous voice keeps the fadeout running
+    /// (we'd play silent through a porta-revived instrument).
     pub(crate) fn porta_retrig_for_instrument(&mut self, instruments: &Instruments) {
         let instrument = &instruments[self.instrument];
         let sample_vol = if self.sample < instrument.samples.len() {
@@ -304,6 +308,7 @@ impl Voice {
             64
         };
         self.volume.retrig(sample_vol);
+        self.volume.fadeout_vol = 65536;
         self.volume_envelope_state.reset(0, &instrument.volume_envelope);
         self.panning_envelope_state.reset(0, &instrument.panning_envelope);
         self.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
