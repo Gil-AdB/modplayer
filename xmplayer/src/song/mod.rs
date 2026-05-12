@@ -510,6 +510,14 @@ pub struct Song {
     pub frequency_tables:           &'static AudioTables,
     pub is_fast_forwarding:         bool,
     pub is_calculating_duration:    bool,
+    /// Per-row visited bitset for loop detection at playback time. Same
+    /// shape as the one `compute_total_duration` uses internally:
+    /// `visited_rows[song_position * 512 + row]`. When `next_tick` is about
+    /// to enter a row that's already in the set, it returns false so the
+    /// playlist advances to the next track. Bypassed in fast-forward /
+    /// duration-calc modes so seeking and the duration-pre-pass don't
+    /// trip it.
+    pub visited_rows:               Vec<bool>,
     pub triple_buffer_writer:       TripleBufferWriter<PlayData>,
     pub master_samples:             [f32; 8192],
     pub master_samples_pos:         usize,
@@ -614,6 +622,12 @@ impl Song {
             frequency_tables,
             is_fast_forwarding: false,
             is_calculating_duration: false,
+            // 1024 orders × 512 rows = 512 KB of `bool`s. Same shape as
+            // compute_total_duration's local bitset, so the same loop
+            // the duration pre-pass detected gets detected at playback
+            // time. A packed bitset would be 64 KB but adds complexity
+            // we don't need for one allocation per song.
+            visited_rows: vec![false; 1024 * 512],
             triple_buffer_writer,
             master_samples: [0.0; 8192],
             master_samples_pos: 0,

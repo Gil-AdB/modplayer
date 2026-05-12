@@ -69,6 +69,9 @@ impl Song {
         self.total_samples = 0;
         self.last_fps_sample = 0;
         self.last_display_update_sample = 0;
+        // Clear the loop-detection bitset; otherwise a PlaybackCmd::Restart
+        // would immediately terminate since every row was already visited.
+        for v in self.visited_rows.iter_mut() { *v = false; }
 
         self.tick_state = TickState {
             state: BufferState::Start,
@@ -216,6 +219,19 @@ impl Song {
     pub fn get_next_tick(&mut self, buf: &mut impl BufferAdapter, rx: &mut Receiver<PlaybackCmd>) -> CallbackState {
         buf.clear();
         self.bpm.update(self.bpm.bpm, self.rate);
+        // Stuck-row fallback. Visited-row detection in next_tick only
+        // fires on a row advance — if the song freezes on a single row
+        // (zero-speed Fxx, infinite pattern delay, etc.) `total_samples`
+        // keeps growing but no new row is entered, so the row check never
+        // sees a duplicate. Cap actual playback at 1.5× the predicted
+        // single-loop duration with a 30s floor for songs whose duration
+        // hasn't been computed yet. Bypass while seeking / duration-calc.
+        if !self.is_fast_forwarding && !self.is_calculating_duration {
+            let predicted_samples = (self.total_duration_ms / 1000.0 * self.rate) as u64;
+            let cap = (predicted_samples.saturating_mul(3) / 2)
+                .max((30.0 * self.rate) as u64);
+            if self.total_samples > cap { return CallbackState::Complete; }
+        }
         loop { // loop1
             match self.tick_state.state {
                 BufferState::Start => {
@@ -303,6 +319,19 @@ impl Song {
             if self.song_position >= self.song_data.song_length as usize { return false; }
             self.tick = 0;
             self.pattern_change.reset();
+
+            // Loop detection. We just entered a new row at tick 0. If this
+            // (song_position, row) was already played in this run, the song
+            // has looped — terminate so the playlist advances. The
+            // bypassed paths (FF / duration-calc) have their own visited
+            // tracking and must run the full loop.
+            if !self.is_fast_forwarding && !self.is_calculating_duration {
+                let idx = self.song_position * 512 + self.row;
+                if idx < self.visited_rows.len() {
+                    if self.visited_rows[idx] { return false; }
+                    self.visited_rows[idx] = true;
+                }
+            }
             // Paused-mode "play one row" UX: decrement on each row advance
             // and re-pause when the budget runs out. Placed here (after the
             // pattern-delay early-return above) so a delayed row counts as
