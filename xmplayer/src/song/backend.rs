@@ -578,8 +578,14 @@ pub(super) fn mute_silent_voices(voices: &mut [Voice], channels: &mut [ChannelSt
     for (v_idx, voice) in voices.iter().enumerate() {
         if !voice.on { continue; }
         let is_host_voice = channels[voice.channel_idx].voice_idx == Some(v_idx);
-        let cut = (!voice.sustained
-            && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < SILENCE_FLOOR))
+        // Host voice: cut only when the fadeout has fully completed. Don't
+        // cut on a momentarily-low output_volume — that ends a voice the
+        // pattern still references (mview.xm ch11/ch12 ~80s: porta+instrument
+        // rows revive a previously key-off'd voice; cutting on the
+        // SILENCE_FLOOR pass loses the voice before the revive fires).
+        // Stranded non-host voices (NNA leftovers) can be reclaimed once
+        // their audible contribution drops below the floor.
+        let cut = (!voice.sustained && voice.volume.fadeout_vol == 0)
             || (!is_host_voice && voice.volume.output_volume < SILENCE_FLOOR);
         if cut { to_cut.push(v_idx); }
     }
