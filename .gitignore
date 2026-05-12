@@ -52,3 +52,4 @@ corpus/it/
 corpus/mod/
 corpus/stm/
 !corpus/README.md
+scripts/__pycache__/
