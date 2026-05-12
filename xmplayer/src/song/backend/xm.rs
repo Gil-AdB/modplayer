@@ -3,7 +3,7 @@ use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
     init_channel_iter, init_voice_basics, mute_silent_voices, process_voices,
-    set_channel_note, voice_mix, EffectCtx, ModuleBackend, SongPlaybackResources,
+    set_channel_note, validate_voice_pool, voice_mix, EffectCtx, ModuleBackend, SongPlaybackResources,
     XM_EFFECT_TABLE, XM_E_TABLE,
 };
 
@@ -128,6 +128,7 @@ impl ModuleBackend for XmBackend {
                             r.voices[v_idx].on = false;
                             r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
                             r.voices[v_idx].volume.output_volume = 0.0;
+                            channel.voice_idx = None;
                         }
                     }
                 }
@@ -242,5 +243,6 @@ impl ModuleBackend for XmBackend {
         );
 
         mute_silent_voices(r.voices, r.channels);
+        validate_voice_pool(r.voices, r.channels);
     }
 }

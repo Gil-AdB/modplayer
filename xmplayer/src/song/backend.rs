@@ -456,6 +456,25 @@ pub(super) fn dispatch_main_and_extended(
 
 /// Pick a voice slot for a new note: prefer the first idle voice, otherwise
 /// steal the quietest one. Used by every backend's note-trigger block.
+/// Cut `voices[v_idx]` and invalidate the owning channel's `voice_idx` if it
+/// pointed here. Use this for every "voice.on = false" path so the voice-pool
+/// invariant (host channel ↔ voice ownership) is maintained.
+pub(super) fn cut_voice(
+    voices: &mut [Voice],
+    channels: &mut [ChannelState],
+    v_idx: usize,
+    reason: crate::channel_state::VoiceCutReason,
+) {
+    let voice = &mut voices[v_idx];
+    if !voice.on { return; }
+    let ci = voice.channel_idx;
+    voice.on = false;
+    voice.cut_reason = Some(reason);
+    if ci < channels.len() && channels[ci].voice_idx == Some(v_idx) {
+        channels[ci].voice_idx = None;
+    }
+}
+
 pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
     for (vi, v) in voices.iter().enumerate() {
         if !v.on { return vi; }
@@ -469,6 +488,36 @@ pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
         }
     }
     idx
+}
+
+/// Per-tick voice-pool invariant check. A channel's `voice_idx` may legitimately
+/// point at a quiescent slot (`voice.on == false`) that's been silenced or
+/// reassigned — the next trigger on that channel will overwrite it. The bug
+/// state we want to surface is when a channel's pointer references an *active*
+/// voice currently owned by a *different* channel: that means the other
+/// channel reused the slot without invalidating the original pointer, and the
+/// stale pointer will silently corrupt audio (the original NoteAction::Off
+/// regression on mview ch8 was exactly this).
+///
+/// Debug builds panic with the channel indices + slot number; release builds
+/// log once per occurrence so corpus rendering doesn't get gated on it.
+pub(super) fn validate_voice_pool(voices: &[Voice], channels: &[ChannelState]) {
+    for (ci, ch) in channels.iter().enumerate() {
+        let Some(vi) = ch.voice_idx else { continue };
+        if vi >= voices.len() { continue; }
+        let v = &voices[vi];
+        if v.on && v.channel_idx != ci {
+            let msg = format!(
+                "voice-pool invariant violated: channel {} → voice_idx=Some({}), \
+                 but voice {} is active and owned by channel {}",
+                ci, vi, vi, v.channel_idx,
+            );
+            #[cfg(debug_assertions)]
+            panic!("{}", msg);
+            #[cfg(not(debug_assertions))]
+            eprintln!("[voice-pool] {}", msg);
+        }
+    }
 }
 
 /// Set the context fields a fresh voice needs before `Voice::trigger_note`
@@ -523,20 +572,19 @@ pub(super) fn cut_or_nna_existing_voice(
 /// End-of-tick mute pass: zero out a voice's output and mark it inactive
 /// when it has finished fading or has dropped below the audibility floor.
 /// Repeated identically in all four backends after their volume formula.
-pub(super) fn mute_silent_voices(voices: &mut [Voice], channels: &[ChannelState]) {
+pub(super) fn mute_silent_voices(voices: &mut [Voice], channels: &mut [ChannelState]) {
     const SILENCE_FLOOR: f32 = 0.00001;
-    for (v_idx, voice) in voices.iter_mut().enumerate() {
+    let mut to_cut: Vec<usize> = Vec::new();
+    for (v_idx, voice) in voices.iter().enumerate() {
         if !voice.on { continue; }
         let is_host_voice = channels[voice.channel_idx].voice_idx == Some(v_idx);
-        if !voice.sustained
-            && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < SILENCE_FLOOR)
-        {
-            voice.on = false;
-            voice.cut_reason = Some(crate::channel_state::VoiceCutReason::Faded);
-        } else if !is_host_voice && voice.volume.output_volume < SILENCE_FLOOR {
-            voice.on = false;
-            voice.cut_reason = Some(crate::channel_state::VoiceCutReason::Faded);
-        }
+        let cut = (!voice.sustained
+            && (voice.volume.fadeout_vol == 0 || voice.volume.output_volume < SILENCE_FLOOR))
+            || (!is_host_voice && voice.volume.output_volume < SILENCE_FLOOR);
+        if cut { to_cut.push(v_idx); }
+    }
+    for v_idx in to_cut {
+        cut_voice(voices, channels, v_idx, crate::channel_state::VoiceCutReason::Faded);
     }
 }
 
@@ -784,6 +832,7 @@ pub(super) fn apply_extended(
                     v.on = false;
                     v.cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
                 }
+                channel.voice_idx = None;
             }
         }
         ExtendedCmdKind::PatternDelay => {

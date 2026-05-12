@@ -2,7 +2,7 @@ use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
-    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices,
+    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices, validate_voice_pool,
     set_channel_note, voice_mix, EffectCtx, ModuleBackend, RowTiming,
     SongPlaybackResources, S3M_EFFECT_TABLE, S3M_S_TABLE,
 };
@@ -48,6 +48,7 @@ impl ModuleBackend for S3MBackend {
                             r.voices[v_idx].on = false;
                             r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
                             r.voices[v_idx].volume.output_volume = 0.0;
+                            channel.voice_idx = None;
                         }
                     }
                 }
@@ -225,5 +226,6 @@ impl ModuleBackend for S3MBackend {
         );
 
         mute_silent_voices(r.voices, r.channels);
+        validate_voice_pool(r.voices, r.channels);
     }
 }

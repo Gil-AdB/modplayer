@@ -273,7 +273,7 @@ impl Song {
         let master_gain = (raw_master as f32 / 128.0) * (self.mixing_volume as f32 / 128.0);
         let final_master_gain = master_gain * mix.global_scale;
 
-        for voice in &mut self.voices {
+        for (voice_idx, voice) in self.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
 
             // Mixer instrumentation: stamp the global sample-frame position
@@ -396,6 +396,9 @@ impl Song {
                 if voice.sample_position as u32 >= sample.length {
                     voice.on = false;
                     voice.cut_reason = Some(crate::channel_state::VoiceCutReason::SampleEnd);
+                    if self.channels[voice.channel_idx].voice_idx == Some(voice_idx) {
+                        self.channels[voice.channel_idx].voice_idx = None;
+                    }
                     break;
                 }
 
@@ -459,6 +462,9 @@ impl Song {
                             voice.on = false;
                             voice.cut_reason = Some(crate::channel_state::VoiceCutReason::SampleEnd);
                             voice.volume.set_volume(0);
+                            if self.channels[voice.channel_idx].voice_idx == Some(voice_idx) {
+                                self.channels[voice.channel_idx].voice_idx = None;
+                            }
                             break;
                         }
                         LoopType::ForwardLoop => {

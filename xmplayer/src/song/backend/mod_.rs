@@ -2,7 +2,7 @@ use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
-    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices,
+    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices, validate_voice_pool,
     set_channel_note, voice_mix, EffectCtx, ModuleBackend, SongPlaybackResources,
     MOD_EFFECT_TABLE, MOD_E_TABLE,
 };
@@ -179,5 +179,6 @@ impl ModuleBackend for ModBackend {
         );
 
         mute_silent_voices(r.voices, r.channels);
+        validate_voice_pool(r.voices, r.channels);
     }
 }
