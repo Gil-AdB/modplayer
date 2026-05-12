@@ -3,10 +3,10 @@ use crate::channel_state::Voice;
 use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
-    bind_voice_for_channel, dispatch_main_and_extended, init_channel_iter,
-    init_voice_basics, mute_silent_voices, process_voices, set_channel_note, validate_voice_pool,
-    voice_mix, EffectCtx, ModuleBackend, SongPlaybackResources,
-    IT_EFFECT_TABLE, IT_S_TABLE,
+    bind_voice_for_channel, dispatch_main_and_extended, dispatch_vol_col,
+    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices,
+    set_channel_note, validate_voice_pool, voice_mix, EffectCtx, ModuleBackend,
+    SongPlaybackResources, IT_EFFECT_TABLE, IT_S_TABLE, IT_VOL_COL,
 };
 
 pub struct ItBackend {}
@@ -194,33 +194,6 @@ impl ModuleBackend for ItBackend {
 
             let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
-            // Volume Column
-            match pattern.volume {
-                0..=64 => { channel.set_volume(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume); }
-                65..=74 => { channel.it_vol_col_fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, (pattern.volume - 65) as i8); }
-                75..=84 => { channel.it_vol_col_fine_volume_slide(voice_ref.as_deref_mut(), note_delay_first_tick, -((pattern.volume - 75) as i8)); }
-                85..=94 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), first_tick, (pattern.volume - 85) as i8); }
-                95..=104 => { channel.it_vol_col_volume_slide(voice_ref.as_deref_mut(), first_tick, -((pattern.volume - 95) as i8)); }
-                105..=114 => { channel.porta_up(r.song_data.song_type, first_tick, (pattern.volume - 105) << 2); }
-                115..=124 => { channel.porta_down(r.song_data.song_type, first_tick, (pattern.volume - 115) << 2); }
-                128..=192 => { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(((pattern.volume - 128) << 2) as i32); } }
-                193..=202 => { channel.it_vol_col_porta_to_note(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume - 193, r.compatible_g, r.rate, r.frequency_tables); }
-                203..=212 => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.volume - 203, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
-                _ => {}
-            }
-
-            // Effect Column. Flow control (A/B/C/T) goes through the
-            // shared helper to stay in sync with the duration-calc path.
-            if apply_flow_control_effect(
-                pattern, r.song_data.song_type, first_tick,
-                r.pattern_change, r.speed, r.bpm, r.rate,
-            ) {
-                if let Some(v) = voice_ref.as_deref_mut() {
-                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
-                }
-                continue;
-            }
-
             let mut ctx = EffectCtx {
                 pattern_change: r.pattern_change,
                 global_volume: r.global_volume,
@@ -238,6 +211,21 @@ impl ModuleBackend for ItBackend {
                 use_amiga: r.song_data.use_amiga,
                 fast_volume_slides: r.song_data.fast_volume_slides,
             };
+
+            // Volume column: data-driven via IT_VOL_COL table (see backend.rs).
+            dispatch_vol_col(IT_VOL_COL, pattern.volume, channel, voice_ref.as_deref_mut(), &ctx);
+
+            // Effect Column. Flow control (A/B/C/T) goes through the
+            // shared helper to stay in sync with the duration-calc path.
+            if apply_flow_control_effect(
+                pattern, r.song_data.song_type, first_tick,
+                ctx.pattern_change, r.speed, r.bpm, r.rate,
+            ) {
+                if let Some(v) = voice_ref.as_deref_mut() {
+                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                }
+                continue;
+            }
             dispatch_main_and_extended(
                 pattern, channel, voice_ref.as_deref_mut(),
                 &mut ctx, &IT_EFFECT_TABLE, &IT_S_TABLE,

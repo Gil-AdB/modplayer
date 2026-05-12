@@ -2,9 +2,9 @@ use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
-    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices,
-    set_channel_note, validate_voice_pool, voice_mix, EffectCtx, ModuleBackend, SongPlaybackResources,
-    XM_EFFECT_TABLE, XM_E_TABLE,
+    dispatch_vol_col, init_channel_iter, init_voice_basics, mute_silent_voices,
+    process_voices, set_channel_note, validate_voice_pool, voice_mix, EffectCtx,
+    ModuleBackend, SongPlaybackResources, XM_EFFECT_TABLE, XM_E_TABLE, XM_VOL_COL,
 };
 
 pub struct XmBackend {}
@@ -170,41 +170,6 @@ impl ModuleBackend for XmBackend {
 
             let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
-            // Volume Column
-            match pattern.volume {
-                0x10..=0x50 => { channel.set_volume(voice_ref.as_deref_mut(), note_delay_first_tick, pattern.volume - 0x10); }
-                0x60..=0x6f => { channel.volume_slide(voice_ref.as_deref_mut(), first_tick, -(pattern.get_volume_param() as i8)); }
-                0x70..=0x7f => { channel.volume_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() as i8); }
-                0x80..=0x8f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, -(pattern.get_volume_param() as i8)); }
-                0x90..=0x9f => { channel.fine_volume_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() as i8); }
-                // FT2 vol col: A = set vibrato speed, B = set depth + apply.
-                0xa0..=0xaf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), 0, r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
-                0xb0..=0xbf => { channel.vibrato(voice_ref.as_deref_mut(), first_tick, 0, pattern.get_volume_param(), r.old_effects, r.rate, r.frequency_tables, r.song_data.song_type); }
-                0xc0..=0xcf => { if let Some(v) = voice_ref.as_deref_mut() { v.panning.set_panning(((pattern.get_volume_param() as i32) * 17).min(255)); } }
-                // FT2 vol col: D = pan-slide left (lo nibble), E = pan-slide right (hi nibble).
-                0xd0..=0xdf => { channel.panning_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param(), r.song_data.song_type); }
-                0xe0..=0xef => { channel.panning_slide(voice_ref.as_deref_mut(), first_tick, pattern.get_volume_param() << 4, r.song_data.song_type); }
-                0xf0..=0xfe => { channel.porta_to_note(r.song_data.song_type, voice_ref.as_deref_mut(), note_delay_first_tick, pattern.get_volume_param(), r.compatible_g, r.rate, r.frequency_tables); }
-                _ => {}
-            }
-
-            // Effect Column. Flow-control effects (B/D/F) go through the
-            // shared helper so the duration-calc fast path uses the same
-            // implementation; we drop them from this match entirely.
-            if apply_flow_control_effect(
-                pattern, r.song_data.song_type, first_tick,
-                r.pattern_change, r.speed, r.bpm, r.rate,
-            ) {
-                channel.period_shift = 0;
-                if let Some(v) = voice_ref.as_deref_mut() {
-                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
-                }
-                continue;
-            }
-
-            // Main effect dispatch via XM_EFFECT_TABLE -> EffectKind. The
-            // shared dispatch_main_and_extended also handles the Exy
-            // follow-up through XM_E_TABLE when EffectKind is Extended.
             let mut ctx = EffectCtx {
                 pattern_change: r.pattern_change,
                 global_volume: r.global_volume,
@@ -222,6 +187,29 @@ impl ModuleBackend for XmBackend {
                 use_amiga: r.song_data.use_amiga,
                 fast_volume_slides: r.song_data.fast_volume_slides,
             };
+
+            // Volume column: data-driven via XM_VOL_COL table (see backend.rs).
+            dispatch_vol_col(XM_VOL_COL, pattern.volume, channel, voice_ref.as_deref_mut(), &ctx);
+
+            // Effect Column. Flow-control effects (B/D/F) go through the
+            // shared helper so the duration-calc fast path uses the same
+            // implementation; we drop them from this match entirely.
+            // (Reborrow pattern_change through ctx — it owns the mutable
+            // borrow of r.pattern_change for the rest of this iteration.)
+            if apply_flow_control_effect(
+                pattern, r.song_data.song_type, first_tick,
+                ctx.pattern_change, r.speed, r.bpm, r.rate,
+            ) {
+                channel.period_shift = 0;
+                if let Some(v) = voice_ref.as_deref_mut() {
+                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                }
+                continue;
+            }
+
+            // Main effect dispatch via XM_EFFECT_TABLE -> EffectKind. The
+            // shared dispatch_main_and_extended also handles the Exy
+            // follow-up through XM_E_TABLE when EffectKind is Extended.
             dispatch_main_and_extended(
                 pattern, channel, voice_ref.as_deref_mut(),
                 &mut ctx, &XM_EFFECT_TABLE, &XM_E_TABLE,

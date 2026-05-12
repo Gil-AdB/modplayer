@@ -1302,6 +1302,160 @@ fn apply_vol_slide(
     }
 }
 
+// --- Table-driven vol-col dispatch ---------------------------------------
+//
+// Each format's volume-column layout is a sorted list of (byte_range →
+// action) rows that read like the FT2 / IT spec sheet. `dispatch_vol_col`
+// is the one engine: find the matching row, compute the magnitude
+// (`byte - row.start`), and route it to the right channel method.
+// Adding a new vol-col mapping is a single `VolColEntry` row.
+
+#[derive(Copy, Clone, Debug)]
+pub(super) enum Sign { Up, Down }
+
+#[derive(Copy, Clone, Debug)]
+pub(super) enum VolColAction {
+    /// `mag` is the new volume (0..=64). Tick gate: note_delay_first_tick.
+    SetVolume,
+    /// `mag` is the signed step magnitude (signed by `sign`).
+    /// `fine` selects fine-vs-running; `with_memory` selects the IT
+    /// memory-bearing variant. Tick gate is encoded by the four
+    /// combinations:
+    ///   running, no memory  (XM 0x60/0x70)    → first_tick
+    ///   running, with memory (IT 85-94/95-104) → first_tick
+    ///   fine, no memory     (XM 0x80/0x90)    → first_tick
+    ///   fine, with memory   (IT 65-74/75-84)  → note_delay_first_tick
+    VolSlide { sign: Sign, fine: bool, with_memory: bool },
+    /// `(mag << shift)` → `porta_up`. IT vol-col 105-114 uses shift=2.
+    PortaUp { shift: u8 },
+    /// `(mag << shift)` → `porta_down`. IT vol-col 115-124 uses shift=2.
+    PortaDown { shift: u8 },
+    /// New panning = `mag * scale` clamped to 0..=255. No tick gate (the
+    /// inline match also fires every tick; semantically idempotent).
+    /// XM 0xc0-0xcf uses scale=17 (0..15 → 0..255). IT 128-192 uses scale=4.
+    SetPanning { scale: u8 },
+    /// XM vol-col D (low nibble) or E (high nibble) → `panning_slide`.
+    PanningSlide { hi_nibble: bool },
+    /// XM A (set speed: depth=0) / XM B + IT 203-212 (set depth: speed=0).
+    Vibrato { set_speed: bool },
+    /// Tone porta. `with_memory=true` routes to `it_vol_col_porta_to_note`.
+    PortaToNote { with_memory: bool },
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(super) struct VolColEntry {
+    pub start: u8,                // inclusive
+    pub end: u8,                  // inclusive
+    pub action: VolColAction,
+}
+
+/// One row per byte-range. Walked in order; first match wins. Bytes that
+/// don't fall in any row (including `0xFF` "no volume" sentinel) are
+/// silently ignored — same as the previous inline `_ => {}` arm.
+pub(super) fn dispatch_vol_col(
+    table: &[VolColEntry],
+    raw_byte: u8,
+    channel: &mut ChannelState,
+    mut voice: Option<&mut crate::channel_state::Voice>,
+    ctx: &EffectCtx<'_>,
+) {
+    for entry in table {
+        if raw_byte < entry.start || raw_byte > entry.end { continue; }
+        let mag = raw_byte - entry.start;
+        match entry.action {
+            VolColAction::SetVolume => {
+                channel.set_volume(voice.as_deref_mut(), ctx.note_delay_first_tick, mag);
+            }
+            VolColAction::VolSlide { sign, fine, with_memory } => {
+                let signed = match sign {
+                    Sign::Up => mag as i8,
+                    Sign::Down => -(mag as i8),
+                };
+                match (fine, with_memory) {
+                    (false, false) => channel.volume_slide(voice.as_deref_mut(), ctx.first_tick, signed),
+                    (true,  false) => channel.fine_volume_slide(voice.as_deref_mut(), ctx.first_tick, signed),
+                    (false, true)  => channel.it_vol_col_volume_slide(voice.as_deref_mut(), ctx.first_tick, signed),
+                    (true,  true)  => channel.it_vol_col_fine_volume_slide(voice.as_deref_mut(), ctx.note_delay_first_tick, signed),
+                }
+            }
+            VolColAction::PortaUp { shift } => {
+                channel.porta_up(ctx.song_type, ctx.first_tick, mag << shift);
+            }
+            VolColAction::PortaDown { shift } => {
+                channel.porta_down(ctx.song_type, ctx.first_tick, mag << shift);
+            }
+            VolColAction::SetPanning { scale } => {
+                if let Some(v) = voice.as_deref_mut() {
+                    v.panning.set_panning(((mag as i32) * (scale as i32)).min(255));
+                }
+            }
+            VolColAction::PanningSlide { hi_nibble } => {
+                let p = if hi_nibble { mag << 4 } else { mag };
+                channel.panning_slide(voice.as_deref_mut(), ctx.first_tick, p, ctx.song_type);
+            }
+            VolColAction::Vibrato { set_speed } => {
+                let (s, d) = if set_speed { (mag, 0) } else { (0, mag) };
+                channel.vibrato(
+                    voice.as_deref_mut(), ctx.first_tick,
+                    s, d, ctx.old_effects, ctx.rate, ctx.frequency_tables, ctx.song_type,
+                );
+            }
+            VolColAction::PortaToNote { with_memory } => {
+                if with_memory {
+                    channel.it_vol_col_porta_to_note(
+                        voice.as_deref_mut(), ctx.note_delay_first_tick,
+                        mag, ctx.compatible_g, ctx.rate, ctx.frequency_tables,
+                    );
+                } else {
+                    channel.porta_to_note(
+                        ctx.song_type, voice.as_deref_mut(), ctx.note_delay_first_tick,
+                        mag, ctx.compatible_g, ctx.rate, ctx.frequency_tables,
+                    );
+                }
+            }
+        }
+        return;
+    }
+}
+
+/// XM volume-column layout. Reads like the FT2 spec sheet:
+/// `0x10..0x50` set volume, `0x60..0x6f` vol-slide down (running), etc.
+pub(super) const XM_VOL_COL: &[VolColEntry] = &[
+    VolColEntry { start: 0x10, end: 0x50, action: VolColAction::SetVolume },
+    VolColEntry { start: 0x60, end: 0x6f, action: VolColAction::VolSlide { sign: Sign::Down, fine: false, with_memory: false } },
+    VolColEntry { start: 0x70, end: 0x7f, action: VolColAction::VolSlide { sign: Sign::Up,   fine: false, with_memory: false } },
+    VolColEntry { start: 0x80, end: 0x8f, action: VolColAction::VolSlide { sign: Sign::Down, fine: true,  with_memory: false } },
+    VolColEntry { start: 0x90, end: 0x9f, action: VolColAction::VolSlide { sign: Sign::Up,   fine: true,  with_memory: false } },
+    // FT2 vol-col: A = set vibrato speed, B = set depth + apply.
+    VolColEntry { start: 0xa0, end: 0xaf, action: VolColAction::Vibrato { set_speed: true } },
+    VolColEntry { start: 0xb0, end: 0xbf, action: VolColAction::Vibrato { set_speed: false } },
+    VolColEntry { start: 0xc0, end: 0xcf, action: VolColAction::SetPanning { scale: 17 } },
+    // FT2 vol-col: D = pan-slide left (lo nibble), E = pan-slide right (hi nibble).
+    VolColEntry { start: 0xd0, end: 0xdf, action: VolColAction::PanningSlide { hi_nibble: false } },
+    VolColEntry { start: 0xe0, end: 0xef, action: VolColAction::PanningSlide { hi_nibble: true  } },
+    VolColEntry { start: 0xf0, end: 0xfe, action: VolColAction::PortaToNote { with_memory: false } },
+];
+
+/// IT volume-column layout (decimal range encoding; ranges of 10 except
+/// the 0..64 set-volume head and the 128..192 set-panning span).
+pub(super) const IT_VOL_COL: &[VolColEntry] = &[
+    VolColEntry { start: 0,   end: 64,  action: VolColAction::SetVolume },
+    VolColEntry { start: 65,  end: 74,  action: VolColAction::VolSlide { sign: Sign::Up,   fine: true,  with_memory: true } },
+    VolColEntry { start: 75,  end: 84,  action: VolColAction::VolSlide { sign: Sign::Down, fine: true,  with_memory: true } },
+    VolColEntry { start: 85,  end: 94,  action: VolColAction::VolSlide { sign: Sign::Up,   fine: false, with_memory: true } },
+    VolColEntry { start: 95,  end: 104, action: VolColAction::VolSlide { sign: Sign::Down, fine: false, with_memory: true } },
+    VolColEntry { start: 105, end: 114, action: VolColAction::PortaUp   { shift: 2 } },
+    VolColEntry { start: 115, end: 124, action: VolColAction::PortaDown { shift: 2 } },
+    VolColEntry { start: 128, end: 192, action: VolColAction::SetPanning { scale: 4 } },
+    VolColEntry { start: 193, end: 202, action: VolColAction::PortaToNote { with_memory: true } },
+    VolColEntry { start: 203, end: 212, action: VolColAction::Vibrato { set_speed: false } },
+];
+
+/// S3M volume-column: just plain set-volume in 0..=64.
+pub(super) const S3M_VOL_COL: &[VolColEntry] = &[
+    VolColEntry { start: 0, end: 64, action: VolColAction::SetVolume },
+];
+
 /// Compute real_note (mapped_note + sample.relative_note clamped) and push
 /// it into the channel + voice frequency state. Common across IT/XM/S3M/MOD.
 pub(super) fn set_channel_note(

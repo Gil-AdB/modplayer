@@ -2,9 +2,10 @@ use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
     bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
-    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices, validate_voice_pool,
-    set_channel_note, voice_mix, EffectCtx, ModuleBackend, RowTiming,
-    SongPlaybackResources, S3M_EFFECT_TABLE, S3M_S_TABLE,
+    dispatch_vol_col, init_channel_iter, init_voice_basics, mute_silent_voices,
+    process_voices, set_channel_note, validate_voice_pool, voice_mix, EffectCtx,
+    ModuleBackend, RowTiming, SongPlaybackResources, S3M_EFFECT_TABLE, S3M_S_TABLE,
+    S3M_VOL_COL,
 };
 
 pub struct S3MBackend {}
@@ -162,33 +163,14 @@ impl ModuleBackend for S3MBackend {
 
             let mut voice_ref = bind_voice_for_channel(r.voices, channel, i);
 
-            // Volume Column (S3M volume range: 0-63, 255 = no volume present).
-            // The tick at which it fires is decided by the per-format
-            // DelaySchedule (see backend.rs::delay_schedule). For S3M the
-            // current rule is "fire at trigger tick" — change one const
-            // there to flip the per-format quirk without touching this
-            // call site or the other backends.
-            if *r.tick == timing.vol_col_tick {
-                match pattern.volume {
-                    0..=64 => {
-                        channel.set_volume(voice_ref.as_deref_mut(), true, pattern.volume);
-                    }
-                    _ => {}
-                }
-            }
-
-            // Effect Column. Flow control (A/B/C/T) goes through the
-            // shared helper to stay in sync with the duration-calc path.
-            if apply_flow_control_effect(
-                pattern, r.song_data.song_type, first_tick,
-                r.pattern_change, r.speed, r.bpm, r.rate,
-            ) {
-                if let Some(v) = voice_ref.as_deref_mut() {
-                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
-                }
-                continue;
-            }
-
+            // For S3M, RowTiming::for_row sets vol_col_tick = trigger_tick
+            // (delay_schedule(S3M).vol_col_at_trigger == true). The shared
+            // dispatch_vol_col gates SetVolume on `note_delay_first_tick`,
+            // which is true on exactly the same tick — so we override
+            // ctx.note_delay_first_tick here to match the S3M-specific
+            // schedule even when it disagrees with init_channel_iter's
+            // default.
+            let s3m_vol_col_fires = *r.tick == timing.vol_col_tick;
             let mut ctx = EffectCtx {
                 pattern_change: r.pattern_change,
                 global_volume: r.global_volume,
@@ -198,7 +180,7 @@ impl ModuleBackend for S3MBackend {
                 row: *r.row,
                 first_tick,
                 first_row_tick: first_tick,
-                note_delay_first_tick,
+                note_delay_first_tick: s3m_vol_col_fires,
                 song_type: r.song_data.song_type,
                 rate: r.rate,
                 old_effects: r.old_effects,
@@ -206,6 +188,25 @@ impl ModuleBackend for S3MBackend {
                 use_amiga: r.song_data.use_amiga,
                 fast_volume_slides: r.song_data.fast_volume_slides,
             };
+
+            // Volume column: data-driven via S3M_VOL_COL (just SetVolume in 0..=64).
+            dispatch_vol_col(S3M_VOL_COL, pattern.volume, channel, voice_ref.as_deref_mut(), &ctx);
+            // Restore for the main effect path, which expects note_delay_first_tick
+            // as init_channel_iter computed it (the two values coincide for S3M
+            // today, but keep them separate so the abstraction stays honest).
+            ctx.note_delay_first_tick = note_delay_first_tick;
+
+            // Effect Column. Flow control (A/B/C/T) goes through the
+            // shared helper to stay in sync with the duration-calc path.
+            if apply_flow_control_effect(
+                pattern, r.song_data.song_type, first_tick,
+                ctx.pattern_change, r.speed, r.bpm, r.rate,
+            ) {
+                if let Some(v) = voice_ref.as_deref_mut() {
+                    channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
+                }
+                continue;
+            }
             dispatch_main_and_extended(
                 pattern, channel, voice_ref.as_deref_mut(),
                 &mut ctx, &S3M_EFFECT_TABLE, &S3M_S_TABLE,

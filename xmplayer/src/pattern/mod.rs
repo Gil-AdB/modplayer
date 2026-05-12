@@ -130,10 +130,6 @@ impl Pattern {
     pub(crate) fn get_y(&self) -> u8 {
         self.effect_param & 0xf
     }
-
-    pub(crate) fn get_volume_param(&self) -> u8 {
-        self.volume & 0xf
-    }
 }
 
 //impl fmt::Debug for Pattern {
