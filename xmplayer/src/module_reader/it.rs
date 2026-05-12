@@ -437,6 +437,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         Ok(SongData {
             id: id.trim().to_string(),
             name: name.trim().to_string(),
+            file_name: String::new(),
             song_type: crate::module_reader::SongType::IT,
             tracker_name: "Impulse Tracker".to_string(),
             song_length: pattern_order.len() as u16,

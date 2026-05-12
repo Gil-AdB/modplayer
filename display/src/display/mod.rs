@@ -101,18 +101,29 @@ impl Display {
 
         // 1. Header (FIXED WIDTH TO ENSURE ALIGNMENT)
         let name_trimmed = Self::fixed_width(&play_data.name, 20);
+        // Show the file name on top of the embedded song title; many
+        // modules either lack an internal name or share generic ones
+        // ("untitled"), and the user needs the path to find a stuck file
+        // in a long playlist. Capped at 24 chars to keep the header
+        // single-line at typical 120-char widths.
+        let file_trimmed = if play_data.file_name.is_empty() {
+            String::new()
+        } else {
+            format!("[{}] ", Self::fixed_width(&play_data.file_name, 24))
+        };
         let cur_sec = (play_data.current_duration_ms / 1000.0) as u32;
         let cur_ms = (play_data.current_duration_ms % 1000.0) as u32;
         let tot_sec = (play_data.total_duration_ms / 1000.0) as u32;
         let tot_ms = (play_data.total_duration_ms % 1000.0) as u32;
-        let header_str = format!("'{}' time: {:02}:{:02}.{:03}/{:02}:{:02}.{:03} tick: {:3} pos: {:3X}/{:<3X} row: {:3X}/{:<3X} bpm: {:3} spd: {:2} voices: {:2}/{:<2} FPS: {:4.1} f: {:?} GVol: ", 
-            name_trimmed, 
+        let header_str = format!("{}'{}' time: {:02}:{:02}.{:03}/{:02}:{:02}.{:03} tick: {:3} pos: {:3X}/{:<3X} row: {:3X}/{:<3X} bpm: {:3} spd: {:2} voices: {:2}/{:<2} FPS: {:4.1} f: {:?} GVol: ",
+            file_trimmed,
+            name_trimmed,
             cur_sec / 60, cur_sec % 60, cur_ms,
             tot_sec / 60, tot_sec % 60, tot_ms,
             play_data.tick,
-            play_data.song_position, play_data.song_length.saturating_sub(1), 
-            play_data.row, play_data.pattern_len.saturating_sub(1), 
-            play_data.bpm, play_data.speed, 
+            play_data.song_position, play_data.song_length.saturating_sub(1),
+            play_data.row, play_data.pattern_len.saturating_sub(1),
+            play_data.bpm, play_data.speed,
             play_data.dump.active_voices, play_data.dump.active_channels,
             play_data.display_fps, play_data.filter
         );

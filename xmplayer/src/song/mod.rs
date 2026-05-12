@@ -307,6 +307,10 @@ impl std::fmt::Display for FilterType {
 #[derive(Clone, Serialize)]
 pub struct PlayData {
     pub name:                               String,
+    /// File name (no directory). Empty for raw-bytes loads. The UI
+    /// shows this next to the internal `name` so playlists with
+    /// untitled or generically-named modules can be told apart.
+    pub file_name:                          String,
     pub tick_duration_in_frames:            usize,
     pub tick_duration_in_ms:                f32,
     pub total_duration_ms:                  f32,
@@ -339,6 +343,7 @@ impl Default for PlayData {
     fn default() -> Self {
         Self{
             name: "".to_string(),
+            file_name: "".to_string(),
             tick_duration_in_frames: 0,
             tick_duration_in_ms: 0.0,
             total_duration_ms: 0.0,
@@ -479,6 +484,7 @@ pub enum UserData {
 
 pub struct Song {
     pub name:                       String,
+    pub file_name:                  String,
     pub song_position:              usize,
     pub row:                        usize,
     pub tick:                       u32,
@@ -578,6 +584,7 @@ impl Song {
 
         let mut result = Self {
             name: song_data.name.clone(),
+            file_name: song_data.file_name.clone(),
             song_position: 0,
             row: 0,
             tick: 0,

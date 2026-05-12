@@ -33,6 +33,7 @@ impl Song {
         let mut play_data = self.triple_buffer_writer.acquire_buffer();
 
         play_data.name                      = self.name.clone();
+        play_data.file_name                 = self.file_name.clone();
         play_data.total_duration_ms         = self.total_duration_ms;
         play_data.current_duration_ms       = (self.total_samples as f32 / self.rate) * 1000.0;
         play_data.global_volume             = self.global_volume.volume;

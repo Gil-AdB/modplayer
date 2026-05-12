@@ -108,6 +108,7 @@
         Ok(SongData {
             id: tracker_name,
             name: name.trim().to_string(),
+            file_name: String::new(),
             song_type: SongType::STM,
             tracker_name: "Unknown".to_string(),
             song_length: song_length as u16,

@@ -145,9 +145,12 @@ fn run_playlist(items: Vec<PathBuf>) {
 
     while idx < items.len() {
         let path = items[idx].to_string_lossy().to_string();
+        // Surface the path to stderr so a stuck song can be identified
+        // in scrollback even after the UI has redrawn over the header.
+        eprintln!("[{}/{}] loading: {}", idx + 1, items.len(), path);
         let (mut song_data, consumer) = match SongState::new(&path) {
             Ok(s) => s,
-            Err(e) => { dbg!(e); idx += 1; continue; }
+            Err(e) => { eprintln!("  load failed: {:?}", e); idx += 1; continue; }
         };
 
         let exit = run_one(&mut song_data, consumer, &settings);

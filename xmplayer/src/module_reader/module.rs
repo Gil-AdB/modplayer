@@ -92,6 +92,7 @@
         Ok(SongData {
             id: id_str.trim().to_string(),
             name: name.trim().to_string(),
+            file_name: String::new(),
             song_type: SongType::MOD,
             tracker_name: "Unknown".to_string(),
             song_length: song_length as u16,

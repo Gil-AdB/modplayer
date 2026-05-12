@@ -100,6 +100,7 @@ impl MockSongBuilder {
         SongData {
             id: "MOCK".to_string(),
             name: "Mock Song".to_string(),
+            file_name: String::new(),
             song_type: self.song_type,
             tracker_name: "MockTracker".to_string(),
             song_length: self.order.len() as u16,

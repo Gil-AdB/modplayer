@@ -88,6 +88,11 @@ impl Patterns {
 pub struct SongData {
     pub                     id:                 String,
     pub                     name:               String,
+    /// Path/filename the module was loaded from. Populated by
+    /// `SongState::new(path)`; remains empty when loading from raw bytes
+    /// via `SongState::new_from_data`. Surfaced in the player header so
+    /// stuck-in-an-infinite-loop modules can be identified by file name.
+    pub                     file_name:          String,
     pub                     song_type:          SongType,
     pub                     tracker_name:       String,
     pub                     song_length:        u16,
@@ -122,6 +127,7 @@ impl Default for SongData {
         Self {
             id: "".to_string(),
             name: "".to_string(),
+            file_name: "".to_string(),
             song_type: SongType::XM,
             tracker_name: "".to_string(),
             song_length: 0,

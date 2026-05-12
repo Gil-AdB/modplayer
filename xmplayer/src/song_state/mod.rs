@@ -103,7 +103,14 @@ impl SongState {
     }
 
     pub fn new(path: &str) -> SimpleResult<(SongHandle, AudioConsumer)> {
-        let song_data = read_module(path)?;
+        let mut song_data = read_module(path)?;
+        // Strip directory; keep only the file name. Stays empty for
+        // raw-bytes loads via `new_from_data`.
+        song_data.file_name = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path)
+            .to_string();
 
         let triple_buffer = TripleBuffer::<PlayData>::new_with_signal();
         let (triple_buffer_reader, triple_buffer_writer) = triple_buffer.split();

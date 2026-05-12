@@ -174,6 +174,7 @@
         Ok(SongData {
             id: String::from_utf8_lossy(id.as_ref()).trim().to_string(),
             name: name.trim().to_string(),
+            file_name: String::new(),
             song_type: SongType::S3M,
             tracker_name: "Unknown".to_string(),
             song_length: pattern_order.len() as u16,

@@ -292,6 +292,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     Ok(SongData {
         id: id.trim().to_string(),
         name: name.trim().to_string(),
+        file_name: String::new(),
         song_type: SongType::XM,
         tracker_name: tracker_name.trim().to_string(),
         song_length,

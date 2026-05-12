@@ -62,3 +62,4 @@ corpus/mod/
 corpus/stm/
 !corpus/README.md
 scripts/__pycache__/
+/mview.xm
