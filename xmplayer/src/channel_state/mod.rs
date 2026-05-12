@@ -350,6 +350,115 @@ impl Voice {
 /// stores its raw byte parameter in `ChannelState::effect_memory[slot]`.
 /// Two effects can share a slot (e.g. S3M shares E and F porta memory) and
 /// pre-multiplication is done at the use-site, not at storage time.
+
+// --- Data-driven slide spec ---------------------------------------------
+//
+// XM/MOD/S3M/IT slides share a uniform shape:
+//   1) optional memory recall (param==0 means "use the last non-zero")
+//   2) decode the byte into an (i32 step, gating tick)
+//   3) apply the step to a clamped numeric field
+// The decoders below capture the per-format quirk (XM-A vs IT-D vs panning P),
+// and `apply_slide` is the one engine that walks the spec. Add a new slide
+// effect by adding one `SlideSpec` row in the dispatcher — no new handler.
+
+/// Numeric field a slide writes to, with its built-in 0..=N clamp.
+#[derive(Copy, Clone, Debug)]
+pub enum SlideField {
+    /// `voice.volume.volume`, 0..=64. XM A / IT D / vol-col vol-slide.
+    VoiceVolume,
+    /// `voice.panning.panning`, 0..=255. XM P (vol-col) / IT P / S3M P.
+    VoicePanning,
+}
+
+/// Tick on which a decoded step actually fires.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SlideTiming {
+    /// Fine slides (S3M/IT DFy/DxF, XM `E[AB]`).
+    FirstTickOnly,
+    /// Running slides (XM A after tick 0, S3M/IT D without fast_volume_slides).
+    AfterFirstTick,
+    /// Running slides under ST3 `fast_volume_slides` (tick-0 included).
+    EveryTick,
+    /// No-op for this row.
+    Never,
+}
+
+/// How to turn the raw `u8` param into a signed step + timing.
+#[derive(Copy, Clone, Debug)]
+pub enum SlideDecode {
+    /// XM `Axy`: hi nibble = up, low = down, hi wins on conflict.
+    /// Running slide → fires after the first tick.
+    XmPacked,
+    /// IT/S3M `Dxy` / `Pxy`: F-nibble triggers a fine sub-variant.
+    /// `scale` is the byte-magnitude multiplier (1 for vol slides on a
+    /// 0..=64 field, 4 for panning slides on a 0..=255 field).
+    /// `fast_volume_slides` (ST3 v3.00 quirk) promotes running slides to
+    /// every-tick.
+    ItPacked { scale: u8, fast: bool },
+    /// Direct signed step. Caller has already decoded direction/magnitude
+    /// (XM vol-col 0x60..0x9f / IT vol-col `Cx`..`Fx`). The raw byte passed
+    /// to `apply_slide` is the *bit-pattern* of the i8 step, so the
+    /// memory recall round-trips cleanly. `fine` selects the timing slot.
+    SignedDirect { fine: bool },
+}
+
+/// One slide effect, materialized as a row in the dispatcher.
+#[derive(Copy, Clone, Debug)]
+pub struct SlideSpec {
+    pub field: SlideField,
+    pub decode: SlideDecode,
+    /// `None` skips the recall-or-set; otherwise the raw param is funneled
+    /// through this slot before decoding.
+    pub memory: Option<EffectMemorySlot>,
+}
+
+/// Decode an effect-byte into a signed step magnitude + tick gating, per
+/// the format-specific rules captured by `SlideDecode`. Pure function — no
+/// channel state involved, easy to unit-test.
+pub fn decode_slide(param: u8, decode: SlideDecode) -> (i32, SlideTiming) {
+    match decode {
+        SlideDecode::XmPacked => {
+            // XM A: hi-nibble up, low-nibble down, hi wins. Running slide.
+            let hi = (param >> 4) as i32;
+            let lo = (param & 0x0F) as i32;
+            let step = if hi != 0 { hi } else if lo != 0 { -lo } else { 0 };
+            (step, SlideTiming::AfterFirstTick)
+        }
+        SlideDecode::ItPacked { scale, fast } => {
+            // IT/S3M D (vol) and P (pan) share this decode.
+            //   DFy / PFy → fine down by y (first tick)
+            //   DxF / PxF → fine up by x (first tick)
+            //   Dx0 / Px0 → running up by x
+            //   D0y / P0y → running down by y
+            //   Dxy (both nonzero, neither F) → ST3/IT pick hi
+            // `fast_volume_slides` promotes running slides to every-tick.
+            let hi = (param >> 4) as i32;
+            let lo = (param & 0x0F) as i32;
+            let s = scale as i32;
+            let running = if fast { SlideTiming::EveryTick } else { SlideTiming::AfterFirstTick };
+            if hi == 0x0F && lo != 0 {
+                (-lo * s, SlideTiming::FirstTickOnly)
+            } else if lo == 0x0F && hi != 0 {
+                (hi * s, SlideTiming::FirstTickOnly)
+            } else if hi != 0 && lo == 0 {
+                (hi * s, running)
+            } else if hi == 0 && lo != 0 {
+                (-lo * s, running)
+            } else if hi != 0 {
+                (hi * s, running)
+            } else {
+                (0, SlideTiming::Never)
+            }
+        }
+        SlideDecode::SignedDirect { fine } => {
+            // Param byte is the bit-pattern of an i8 step (caller cast).
+            let step = (param as i8) as i32;
+            let timing = if fine { SlideTiming::FirstTickOnly } else { SlideTiming::AfterFirstTick };
+            (step, timing)
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 #[repr(usize)]
 pub enum EffectMemorySlot {
@@ -769,6 +878,43 @@ impl ChannelState {
         }
     }
 
+    /// Data-driven slide engine. Walks the spec to:
+    ///   * recall-or-set the memory slot (if any),
+    ///   * decode the byte into a signed step + timing,
+    ///   * apply the step (clamped) on the right tick.
+    /// One method drives every XM/MOD/S3M/IT volume / panning slide — see
+    /// the `SlideSpec` doc above for the per-format quirks captured.
+    pub(crate) fn apply_slide(
+        &mut self,
+        voice: Option<&mut Voice>,
+        first_tick: bool,
+        raw_param: u8,
+        spec: SlideSpec,
+    ) {
+        let param = match spec.memory {
+            Some(slot) => self.recall_or_set(slot, raw_param),
+            None => raw_param,
+        };
+        let (step, timing) = decode_slide(param, spec.decode);
+        let fires = match timing {
+            SlideTiming::FirstTickOnly => first_tick,
+            SlideTiming::AfterFirstTick => !first_tick,
+            SlideTiming::EveryTick => true,
+            SlideTiming::Never => false,
+        };
+        if !fires || step == 0 { return; }
+        if let Some(v) = voice {
+            match spec.field {
+                SlideField::VoiceVolume => {
+                    v.volume.set_volume(v.volume.volume as i32 + step);
+                }
+                SlideField::VoicePanning => {
+                    v.panning.set_panning(v.panning.panning as i32 + step);
+                }
+            }
+        }
+    }
+
     pub(crate) fn fine_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, amount: i8) {
         if first_tick {
             if let Some(v) = voice {
@@ -807,24 +953,24 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn it_vol_col_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut amount: i8) {
-        // Memory stores signed amount as u8 (bit-pattern round-trip)
-        // to preserve direction across the param=0 recall.
-        if amount == 0 {
-            amount = self.mem(EffectMemorySlot::ItVolColVolSlide) as i8;
-        } else {
-            self.set_mem(EffectMemorySlot::ItVolColVolSlide, amount as u8);
-        }
-        self.volume_slide(voice, first_tick, amount);
+    pub(crate) fn it_vol_col_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, amount: i8) {
+        // IT vol-col Cx/Dx (running). Sign is encoded by the caller; the
+        // memory slot round-trips the i8 bit-pattern through u8 so
+        // param==0 cleanly recalls the last signed step.
+        self.apply_slide(voice, first_tick, amount as u8, SlideSpec {
+            field: SlideField::VoiceVolume,
+            decode: SlideDecode::SignedDirect { fine: false },
+            memory: Some(EffectMemorySlot::ItVolColVolSlide),
+        });
     }
 
-    pub(crate) fn it_vol_col_fine_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, mut amount: i8) {
-        if amount == 0 {
-            amount = self.mem(EffectMemorySlot::ItVolColFineVolSlide) as i8;
-        } else {
-            self.set_mem(EffectMemorySlot::ItVolColFineVolSlide, amount as u8);
-        }
-        self.fine_volume_slide(voice, first_tick, amount);
+    pub(crate) fn it_vol_col_fine_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, amount: i8) {
+        // IT vol-col Ax/Bx (fine).
+        self.apply_slide(voice, first_tick, amount as u8, SlideSpec {
+            field: SlideField::VoiceVolume,
+            decode: SlideDecode::SignedDirect { fine: true },
+            memory: Some(EffectMemorySlot::ItVolColFineVolSlide),
+        });
     }
 
     pub(crate) fn it_vol_col_porta_to_note(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, compatible_g: bool, rate: f32, tables: &AudioTables) {
@@ -833,25 +979,14 @@ impl ChannelState {
     }
 
     pub(crate) fn it_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8, fast_volume_slides: bool) {
-        let param = self.recall_or_set(EffectMemorySlot::ItVolSlide, param);
-
-        let x = param >> 4;
-        let y = param & 0x0F;
-
-        // IT/S3M Dxy: upper nibble wins; DFy/DxF only fine when one is F.
-        // `fast_volume_slides` extends non-fine slides to tick 0 (ST3 v3.00
-        // quirk) — we forward it by spoofing first_tick.
-        if x == 0x0F && y != 0 {        // DFy: Fine Down
-            self.fine_volume_slide(voice, first_tick, -(y as i8));
-        } else if y == 0x0F && x != 0 { // DxF: Fine Up
-            self.fine_volume_slide(voice, first_tick, x as i8);
-        } else if x != 0 && y == 0 {    // Dx0: Up by x
-            self.volume_slide(voice, first_tick && !fast_volume_slides, x as i8);
-        } else if x == 0 && y != 0 {    // D0y: Down by y
-            self.volume_slide(voice, first_tick && !fast_volume_slides, -(y as i8));
-        } else if x != 0 {              // Dxy with both non-zero: low nibble ignored, slide up
-            self.volume_slide(voice, first_tick && !fast_volume_slides, x as i8);
-        }
+        // IT D / S3M D. ItPacked handles the DFy/DxF fine vs Dx0/D0y running
+        // split inline; `fast_volume_slides` (ST3 v3.00) promotes running
+        // slides to every-tick.
+        self.apply_slide(voice, first_tick, param, SlideSpec {
+            field: SlideField::VoiceVolume,
+            decode: SlideDecode::ItPacked { scale: 1, fast: fast_volume_slides },
+            memory: Some(EffectMemorySlot::ItVolSlide),
+        });
     }
 
     pub(crate) fn it_retrig(&mut self, voice: Option<&mut Voice>, instruments: &Instruments, tick: u32, param: u8) {
@@ -894,16 +1029,11 @@ impl ChannelState {
 
     pub(crate) fn volume_slide_main(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8) {
         // XM A: param != 0 stores memory; param == 0 recalls.
-        let param = self.recall_or_set(EffectMemorySlot::VolSlide, param);
-        if first_tick { return; }
-        let x = param >> 4;
-        let y = param & 0x0F;
-
-        if x != 0 {
-            self.volume_slide(voice, first_tick, x as i8);
-        } else if y != 0 {
-            self.volume_slide(voice, first_tick, -(y as i8));
-        }
+        self.apply_slide(voice, first_tick, param, SlideSpec {
+            field: SlideField::VoiceVolume,
+            decode: SlideDecode::XmPacked,
+            memory: Some(EffectMemorySlot::VolSlide),
+        });
     }
 
     pub(crate) fn channel_volume_slide(&mut self, first_tick: bool, param: u8) {
@@ -928,46 +1058,66 @@ impl ChannelState {
     }
 
     pub(crate) fn panning_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8, song_type: SongType) {
-        let actual_param = self.recall_or_set(EffectMemorySlot::PanningSlide, param);
-
-        let right = (actual_param >> 4) as i32;
-        let left = (actual_param & 0xf) as i32;
-        let is_xm = matches!(song_type, SongType::XM | SongType::MOD);
-        let (r_shift, l_shift) = if is_xm { (right, left) } else { (right << 2, left << 2) };
-
-        // FT2 (XM/MOD): no fine variant — every-tick slide, hi nibble wins
-        // when both are non-zero. IT/S3M PFx / PxF are fine slides (tick 0 only).
-        if is_xm {
-            if !first_tick {
-                if let Some(v) = voice {
-                    if right != 0 {
-                        v.panning.set_panning(v.panning.panning as i32 + r_shift);
-                    } else if left != 0 {
-                        v.panning.set_panning(v.panning.panning as i32 - l_shift);
-                    }
-                }
-            }
-            return;
-        }
-
-        if first_tick {
-            if right == 0xf && left != 0 {
-                if let Some(v) = voice {
-                    v.panning.set_panning(v.panning.panning as i32 - l_shift);
-                }
-            } else if left == 0xf && right != 0 {
-                if let Some(v) = voice {
-                    v.panning.set_panning(v.panning.panning as i32 + r_shift);
-                }
-            }
+        // XM/MOD P: no fine variant (XmPacked, scale=1 on a 0..=255 field).
+        // IT/S3M P: PFx / PxF fine, else running, byte magnitude ×4.
+        let decode = if matches!(song_type, SongType::XM | SongType::MOD) {
+            SlideDecode::XmPacked
         } else {
-            if let Some(v) = voice {
-                if right != 0 && right != 0xf && left == 0 {
-                    v.panning.set_panning(v.panning.panning as i32 + r_shift);
-                } else if left != 0 && left != 0xf && right == 0 {
-                    v.panning.set_panning(v.panning.panning as i32 - l_shift);
-                }
-            }
-        }
+            SlideDecode::ItPacked { scale: 4, fast: false }
+        };
+        self.apply_slide(voice, first_tick, param, SlideSpec {
+            field: SlideField::VoicePanning,
+            decode,
+            memory: Some(EffectMemorySlot::PanningSlide),
+        });
+    }
+}
+
+#[cfg(test)]
+mod slide_decode_tests {
+    use super::{decode_slide, SlideDecode, SlideTiming};
+
+    #[test]
+    fn xm_packed_hi_nibble_wins_after_first_tick() {
+        // Axy: hi up, lo down, hi wins on conflict, never on tick 0.
+        assert_eq!(decode_slide(0x30, SlideDecode::XmPacked), (3, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_slide(0x05, SlideDecode::XmPacked), (-5, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_slide(0x23, SlideDecode::XmPacked), (2, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_slide(0x00, SlideDecode::XmPacked), (0, SlideTiming::AfterFirstTick));
+    }
+
+    #[test]
+    fn it_packed_fine_via_f_nibble() {
+        let d = SlideDecode::ItPacked { scale: 1, fast: false };
+        assert_eq!(decode_slide(0xF3, d), (-3, SlideTiming::FirstTickOnly));   // DFy
+        assert_eq!(decode_slide(0x3F, d), (3, SlideTiming::FirstTickOnly));    // DxF
+        assert_eq!(decode_slide(0x30, d), (3, SlideTiming::AfterFirstTick));   // Dx0
+        assert_eq!(decode_slide(0x05, d), (-5, SlideTiming::AfterFirstTick));  // D0y
+    }
+
+    #[test]
+    fn it_packed_fast_promotes_running_to_every_tick() {
+        let d = SlideDecode::ItPacked { scale: 1, fast: true };
+        assert_eq!(decode_slide(0x30, d), (3, SlideTiming::EveryTick));
+        assert_eq!(decode_slide(0xF3, d), (-3, SlideTiming::FirstTickOnly)); // fine still tick-0
+    }
+
+    #[test]
+    fn it_packed_panning_scale4() {
+        let d = SlideDecode::ItPacked { scale: 4, fast: false };
+        // Pxy = right/left in 0..15 units, scale ×4 so panning shifts 0..60.
+        assert_eq!(decode_slide(0x30, d), (12, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_slide(0x05, d), (-20, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_slide(0xF3, d), (-12, SlideTiming::FirstTickOnly));
+    }
+
+    #[test]
+    fn signed_direct_passes_param_through_as_i8() {
+        let normal = SlideDecode::SignedDirect { fine: false };
+        assert_eq!(decode_slide(0x07, normal), (7, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_slide(0xFD, normal), (-3, SlideTiming::AfterFirstTick));
+        let fine = SlideDecode::SignedDirect { fine: true };
+        assert_eq!(decode_slide(0x05, fine), (5, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_slide(0xFE, fine), (-2, SlideTiming::FirstTickOnly));
     }
 }
