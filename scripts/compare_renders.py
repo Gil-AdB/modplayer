@@ -105,6 +105,15 @@ def main():
                    help="Cross-correlation below this counts as a divergence")
     p.add_argument("--audible-rms", type=float, default=0.003,
                    help="Skip windows where neither render is audible")
+    p.add_argument("--sustained-deficit-low", type=float, default=0.92,
+                   help="Per-window RMS ratio threshold for the sustained-deficit check. "
+                        "Tighter than --rms-low because a single missing voice in a busy "
+                        "mix only drops full-mix RMS by 5-10%%.")
+    p.add_argument("--sustained-deficit-high", type=float, default=1.08,
+                   help="Upper threshold for sustained-deficit check.")
+    p.add_argument("--sustained-deficit-window-count", type=int, default=10,
+                   help="Number of consecutive windows outside the tight band before "
+                        "flagging as a sustained deficit (likely missing voice).")
     args = p.parse_args()
 
     rate_o, mono_o = load(args.ours)
@@ -150,7 +159,46 @@ def main():
 
     divergences.sort(key=lambda x: -x[0])
     print(f"Compared {len(starts)} windows of {args.window}s; "
-          f"{len(divergences)} flagged.\n")
+          f"{len(divergences)} flagged.")
+
+    # Sustained-deficit check: a missing voice in a busy mix is a small per-window
+    # RMS deficit (5-10%) that's well within --rms-low/high. Scan for stretches of
+    # consecutive windows where ratio is persistently outside the tight band.
+    ratios = []
+    for s in starts:
+        e = s + win_samples
+        st = compare_window(rate, mono_o[s:e], mono_r[s:e])
+        if max(st["rms_o"], st["rms_r"]) < args.audible_rms:
+            ratios.append(None)
+            continue
+        ratios.append(st["ratio"] if np.isfinite(st["ratio"]) else None)
+
+    deficits = []  # (t_start, t_end, n_windows, mean_ratio)
+    run_start, run_count, run_sum = None, 0, 0.0
+    for i, r_ in enumerate(ratios):
+        outside = (r_ is not None and
+                   (r_ < args.sustained_deficit_low or r_ > args.sustained_deficit_high))
+        if outside:
+            if run_start is None:
+                run_start = i
+                run_count, run_sum = 0, 0.0
+            run_count += 1
+            run_sum += r_
+        else:
+            if run_start is not None and run_count >= args.sustained_deficit_window_count:
+                deficits.append((run_start * args.window,
+                                 (run_start + run_count) * args.window,
+                                 run_count, run_sum / run_count))
+            run_start, run_count, run_sum = None, 0, 0.0
+    if run_start is not None and run_count >= args.sustained_deficit_window_count:
+        deficits.append((run_start * args.window,
+                         (run_start + run_count) * args.window,
+                         run_count, run_sum / run_count))
+    if deficits:
+        print(f"\nSustained-RMS-deficit regions (likely missing voice):")
+        for t0, t1, n, m in deficits:
+            print(f"  [{t0:6.1f}s, {t1:6.1f}s]  {n:3d} windows  mean ratio={m:.3f}")
+    print()
 
     for score, t, reasons, st in divergences[: args.top]:
         print(f"[t={t:7.2f}s score={score:5.1f}] {', '.join(reasons)}  "

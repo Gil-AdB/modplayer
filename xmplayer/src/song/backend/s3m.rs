@@ -35,16 +35,20 @@ impl ModuleBackend for S3MBackend {
             NoteAction::Off => {
                 if *r.tick == timing.trigger_tick {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].key_off(instruments, r.song_data.song_type);
+                        if r.voices[v_idx].channel_idx == i {
+                            r.voices[v_idx].key_off(instruments, r.song_data.song_type);
+                        }
                     }
                 }
             }
             NoteAction::Cut => {
                 if *r.tick == timing.trigger_tick {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].on = false;
-                        r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
-                        r.voices[v_idx].volume.output_volume = 0.0;
+                        if r.voices[v_idx].channel_idx == i {
+                            r.voices[v_idx].on = false;
+                            r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+                            r.voices[v_idx].volume.output_volume = 0.0;
+                        }
                     }
                 }
             }

@@ -114,14 +114,21 @@ impl ModuleBackend for XmBackend {
             match action {
                 NoteAction::Off if note_delay_first_tick => {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].key_off(instruments, r.song_data.song_type);
+                        // channel.voice_idx can become stale if a later trigger
+                        // re-used the slot for a different channel. Gate on
+                        // current ownership before keying-off.
+                        if r.voices[v_idx].channel_idx == i {
+                            r.voices[v_idx].key_off(instruments, r.song_data.song_type);
+                        }
                     }
                 }
                 NoteAction::Cut if note_delay_first_tick => {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].on = false;
-                        r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
-                        r.voices[v_idx].volume.output_volume = 0.0;
+                        if r.voices[v_idx].channel_idx == i {
+                            r.voices[v_idx].on = false;
+                            r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+                            r.voices[v_idx].volume.output_volume = 0.0;
+                        }
                     }
                 }
                 // FT2 instrument-byte-without-note: resetVolumes +

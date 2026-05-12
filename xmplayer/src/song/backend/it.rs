@@ -156,25 +156,31 @@ impl ModuleBackend for ItBackend {
             NoteAction::Off => {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].key_off(instruments, r.song_data.song_type);
+                        if r.voices[v_idx].channel_idx == i {
+                            r.voices[v_idx].key_off(instruments, r.song_data.song_type);
+                        }
                     }
                 }
             }
             NoteAction::Cut => {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].on = false;
-                        r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
-                        r.voices[v_idx].volume.output_volume = 0.0;
+                        if r.voices[v_idx].channel_idx == i {
+                            r.voices[v_idx].on = false;
+                            r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+                            r.voices[v_idx].volume.output_volume = 0.0;
+                        }
                     }
                 }
             }
             NoteAction::Fade => {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
-                        r.voices[v_idx].sustained = false;
-                        let instrument_nna = &instruments[r.voices[v_idx].instrument];
-                        r.voices[v_idx].volume.fadeout_speed = (instrument_nna.volume_fadeout as i32) << 6;
+                        if r.voices[v_idx].channel_idx == i {
+                            r.voices[v_idx].sustained = false;
+                            let instrument_nna = &instruments[r.voices[v_idx].instrument];
+                            r.voices[v_idx].volume.fadeout_speed = (instrument_nna.volume_fadeout as i32) << 6;
+                        }
                     }
                 }
             }
