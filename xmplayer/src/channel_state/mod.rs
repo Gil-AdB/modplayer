@@ -368,6 +368,8 @@ pub enum SlideField {
     VoiceVolume,
     /// `voice.panning.panning`, 0..=255. XM P (vol-col) / IT P / S3M P.
     VoicePanning,
+    /// `channel.channel_volume`, 0..=64. IT/S3M M command.
+    ChannelVolume,
 }
 
 /// Tick on which a decoded step actually fires.
@@ -400,6 +402,11 @@ pub enum SlideDecode {
     /// to `apply_slide` is the *bit-pattern* of the i8 step, so the
     /// memory recall round-trips cleanly. `fine` selects the timing slot.
     SignedDirect { fine: bool },
+    /// IT/S3M `Mxy` channel volume slide — like `ItPacked` but with the
+    /// F-nibble polarity swapped (MFy is fine *up*, MxF is fine *down*),
+    /// and parameters where one nibble is F and the other is 0 (`M_F0`,
+    /// `M_0F`) are no-ops rather than running slides.
+    MStyle { scale: u8 },
 }
 
 /// One slide effect, materialized as a row in the dispatcher.
@@ -458,6 +465,25 @@ pub struct PortaSpec {
     pub clamp: PortaClamp,
 }
 
+// --- Data-driven LFO memory layout --------------------------------------
+//
+// Vibrato/tremolo come in two memory flavours:
+//   * Split (FT2 / IT / S3M): speed and depth live in independent slots,
+//     and a 0 nibble *preserves* that slot's previous value. Crucial for
+//     XM vol-col 0xa0/0xb0 (set-speed / set-depth on their own row) and
+//     for IT vol-col 203-212 (set-depth).
+//   * Packed (XM/MOD tremolo): both nibbles share one slot via
+//     `recall_or_set` (param=0 recalls).
+//
+// The two-fn pattern below captures that quirk in data; the call site
+// chooses the layout per format and gets `(cur_speed, cur_depth)` back.
+
+#[derive(Copy, Clone, Debug)]
+pub enum LfoMemory {
+    Split { speed: EffectMemorySlot, depth: EffectMemorySlot },
+    Packed(EffectMemorySlot),
+}
+
 /// Decode an effect-byte into a signed step magnitude + tick gating, per
 /// the format-specific rules captured by `SlideDecode`. Pure function — no
 /// channel state involved, easy to unit-test.
@@ -501,6 +527,28 @@ pub fn decode_slide(param: u8, decode: SlideDecode) -> (i32, SlideTiming) {
             let step = (param as i8) as i32;
             let timing = if fine { SlideTiming::FirstTickOnly } else { SlideTiming::AfterFirstTick };
             (step, timing)
+        }
+        SlideDecode::MStyle { scale } => {
+            // IT/S3M Mxy:
+            //   MFy (hi=F, lo!=0,!=F) → fine UP   by lo (first tick)
+            //   MxF (hi!=0,!=F, lo=F) → fine DOWN by hi (first tick)
+            //   Mx0 (hi!=0,!=F, lo=0) → run  UP   by hi (after first tick)
+            //   M0y (hi=0, lo!=0,!=F) → run  DOWN by lo (after first tick)
+            //   anything else (incl. MF0 / M0F / MFF) is a no-op.
+            let hi = (param >> 4) as i32;
+            let lo = (param & 0x0F) as i32;
+            let s = scale as i32;
+            if hi == 0xF && lo != 0 && lo != 0xF {
+                (lo * s, SlideTiming::FirstTickOnly)
+            } else if lo == 0xF && hi != 0 && hi != 0xF {
+                (-hi * s, SlideTiming::FirstTickOnly)
+            } else if hi != 0 && hi != 0xF && lo == 0 {
+                (hi * s, SlideTiming::AfterFirstTick)
+            } else if hi == 0 && lo != 0 && lo != 0xF {
+                (-lo * s, SlideTiming::AfterFirstTick)
+            } else {
+                (0, SlideTiming::Never)
+            }
         }
     }
 }
@@ -715,6 +763,23 @@ impl ChannelState {
         }
     }
 
+    /// Update the LFO memory slots for an `Hxy` / `Rxy` style parameter
+    /// and return the *current* (speed, depth) after the recall. See
+    /// `LfoMemory` for the per-format quirk this captures.
+    pub(crate) fn recall_lfo(&mut self, speed_in: u8, depth_in: u8, mem: LfoMemory) -> (u8, u8) {
+        match mem {
+            LfoMemory::Split { speed, depth } => {
+                if speed_in != 0 { self.set_mem(speed, speed_in); }
+                if depth_in != 0 { self.set_mem(depth, depth_in); }
+                (self.mem(speed), self.mem(depth))
+            }
+            LfoMemory::Packed(slot) => {
+                let packed = self.recall_or_set(slot, (speed_in << 4) | depth_in);
+                (packed >> 4, packed & 0x0F)
+            }
+        }
+    }
+
     pub(crate) fn vibrato(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
         self.vibrato_inner(voice, first_tick, speed, depth, old_effects, false, rate, tables, song_type);
     }
@@ -733,14 +798,16 @@ impl ChannelState {
     }
 
     fn vibrato_inner(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, old_effects: bool, fine: bool, rate: f32, tables: &AudioTables, song_type: SongType) {
-        // FT2: speed and depth are independent memory lanes — only the
-        // non-zero nibble of param updates its respective field.
         let _ = song_type;
         let _ = old_effects;
-        if speed != 0 { self.set_mem(EffectMemorySlot::VibratoSpeed, speed); }
-        if depth != 0 { self.set_mem(EffectMemorySlot::VibratoDepth, depth); }
-        let cur_speed = self.mem(EffectMemorySlot::VibratoSpeed);
-        let cur_depth = self.mem(EffectMemorySlot::VibratoDepth);
+        // Vibrato uses split memory for *all* formats (FT2 quirk): the
+        // XM vol-col `Axy` / `Bxy` rows set speed and depth on separate
+        // rows by leaving one nibble at 0, and packed memory would clobber
+        // the silent nibble.
+        let (cur_speed, cur_depth) = self.recall_lfo(speed, depth, LfoMemory::Split {
+            speed: EffectMemorySlot::VibratoSpeed,
+            depth: EffectMemorySlot::VibratoDepth,
+        });
 
         if let Some(v) = voice {
             if first_tick {
@@ -756,14 +823,18 @@ impl ChannelState {
     }
 
     pub(crate) fn tremolo(&mut self, voice: Option<&mut Voice>, first_tick: bool, speed: u8, depth: u8, song_type: SongType) {
-        let (cur_speed, cur_depth) = if song_type == SongType::XM || song_type == SongType::MOD {
-            let packed = self.recall_or_set(EffectMemorySlot::TremoloParam, (speed << 4) | depth);
-            (packed >> 4, packed & 0x0F)
+        // XM/MOD `7xy` packs both nibbles into one memory slot. IT/S3M
+        // `Rxy` keeps them independent (matches their independent-nibble
+        // memory model for vibrato/panbrello).
+        let mem = if matches!(song_type, SongType::XM | SongType::MOD) {
+            LfoMemory::Packed(EffectMemorySlot::TremoloParam)
         } else {
-            if speed != 0 { self.set_mem(EffectMemorySlot::TremoloSpeed, speed); }
-            if depth != 0 { self.set_mem(EffectMemorySlot::TremoloDepth, depth); }
-            (self.mem(EffectMemorySlot::TremoloSpeed), self.mem(EffectMemorySlot::TremoloDepth))
+            LfoMemory::Split {
+                speed: EffectMemorySlot::TremoloSpeed,
+                depth: EffectMemorySlot::TremoloDepth,
+            }
         };
+        let (cur_speed, cur_depth) = self.recall_lfo(speed, depth, mem);
 
         if let Some(v) = voice {
             if first_tick {
@@ -940,14 +1011,20 @@ impl ChannelState {
             SlideTiming::Never => false,
         };
         if !fires || step == 0 { return; }
-        if let Some(v) = voice {
-            match spec.field {
-                SlideField::VoiceVolume => {
+        match spec.field {
+            SlideField::VoiceVolume => {
+                if let Some(v) = voice {
                     v.volume.set_volume(v.volume.volume as i32 + step);
                 }
-                SlideField::VoicePanning => {
+            }
+            SlideField::VoicePanning => {
+                if let Some(v) = voice {
                     v.panning.set_panning(v.panning.panning as i32 + step);
                 }
+            }
+            SlideField::ChannelVolume => {
+                let new = (self.channel_volume as i32 + step).clamp(0, 64);
+                self.channel_volume = new as u8;
             }
         }
     }
@@ -1107,24 +1184,13 @@ impl ChannelState {
     }
 
     pub(crate) fn channel_volume_slide(&mut self, first_tick: bool, param: u8) {
-        if first_tick {
-            // Fine slides handled in first tick if needed
-            let up = (param >> 4) as i32;
-            let down = (param & 0xf) as i32;
-            if up == 0xf && down != 0 {
-                self.channel_volume = (self.channel_volume as i32 + down).min(64) as u8;
-            } else if down == 0xf && up != 0 {
-                self.channel_volume = (self.channel_volume as i32 - up).max(0) as u8;
-            }
-        } else {
-            let up = (param >> 4) as i32;
-            let down = (param & 0xf) as i32;
-            if up != 0x0 && up != 0xf && down == 0 {
-                self.channel_volume = (self.channel_volume as i32 + up).min(64) as u8;
-            } else if down != 0x0 && down != 0xf && up == 0 {
-                self.channel_volume = (self.channel_volume as i32 - down).max(0) as u8;
-            }
-        }
+        // IT/S3M Mxy: like D but with swapped F-nibble polarity, no memory,
+        // writes to channel.channel_volume.
+        self.apply_slide(None, first_tick, param, SlideSpec {
+            field: SlideField::ChannelVolume,
+            decode: SlideDecode::MStyle { scale: 1 },
+            memory: None,
+        });
     }
 
     pub(crate) fn panning_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, param: u8, song_type: SongType) {
@@ -1189,6 +1255,24 @@ mod slide_decode_tests {
         let fine = SlideDecode::SignedDirect { fine: true };
         assert_eq!(decode_slide(0x05, fine), (5, SlideTiming::FirstTickOnly));
         assert_eq!(decode_slide(0xFE, fine), (-2, SlideTiming::FirstTickOnly));
+    }
+
+    #[test]
+    fn m_style_swaps_f_nibble_polarity_vs_d() {
+        let m = SlideDecode::MStyle { scale: 1 };
+        // MFy (hi=F, lo!=0,!=F) → fine UP by lo
+        assert_eq!(decode_slide(0xF3, m), (3, SlideTiming::FirstTickOnly));
+        // MxF (lo=F, hi!=0,!=F) → fine DOWN by hi
+        assert_eq!(decode_slide(0x3F, m), (-3, SlideTiming::FirstTickOnly));
+        // Mx0 → running up by hi
+        assert_eq!(decode_slide(0x50, m), (5, SlideTiming::AfterFirstTick));
+        // M0y → running down by lo
+        assert_eq!(decode_slide(0x05, m), (-5, SlideTiming::AfterFirstTick));
+        // Edge no-ops: M_F0, M_0F, M_FF
+        assert_eq!(decode_slide(0xF0, m), (0, SlideTiming::Never));
+        assert_eq!(decode_slide(0x0F, m), (0, SlideTiming::Never));
+        assert_eq!(decode_slide(0xFF, m), (0, SlideTiming::Never));
+        assert_eq!(decode_slide(0x00, m), (0, SlideTiming::Never));
     }
 }
 
