@@ -412,6 +412,52 @@ pub struct SlideSpec {
     pub memory: Option<EffectMemorySlot>,
 }
 
+// --- Data-driven porta spec ---------------------------------------------
+//
+// Porta-up/down has the same recall → decode → apply → clamp shape as the
+// slide family, but on `channel.note.period` instead of a volume/panning
+// field. The extra wrinkle is IT/S3M's magic-nibble encoding (xF0+ extra
+// fine, xE0–xEF fine, else normal) and S3M's shared memory between E and F.
+
+/// Sign of the period delta (Up shrinks period = raises pitch).
+#[derive(Copy, Clone, Debug)]
+pub enum PortaDir { Up, Down }
+
+/// Memory layout per format.
+#[derive(Copy, Clone, Debug)]
+pub enum PortaMemory {
+    /// XM/MOD 1xx/2xx + E1x/E2x: dedicated slot per effect.
+    Separate(EffectMemorySlot),
+    /// S3M E/F: a write hits both slots; reads come from `primary`.
+    Shared { primary: EffectMemorySlot, secondary: EffectMemorySlot },
+}
+
+/// How to turn the recalled byte into a magnitude + timing.
+#[derive(Copy, Clone, Debug)]
+pub enum PortaDecode {
+    /// XM/MOD 1xx/2xx: `param << 2`, runs after the first tick.
+    XmNormal,
+    /// XM/MOD E1x/E2x: `param << 2`, runs on the first tick only.
+    XmFine,
+    /// IT/S3M E/F magic-nibble encoding:
+    ///   xF0..xFF → extra-fine (param & 0xF, ×1, first tick)
+    ///   xE0..xEF → fine       (param & 0xF, ×4, first tick)
+    ///   else     → normal     (param, ×4, after first tick)
+    ItMagicNibble,
+}
+
+/// Period clamp range (FT2 vs ST3/IT use different floors and ceilings).
+#[derive(Copy, Clone, Debug)]
+pub enum PortaClamp { Xm, It }
+
+#[derive(Copy, Clone, Debug)]
+pub struct PortaSpec {
+    pub direction: PortaDir,
+    pub memory: PortaMemory,
+    pub decode: PortaDecode,
+    pub clamp: PortaClamp,
+}
+
 /// Decode an effect-byte into a signed step magnitude + tick gating, per
 /// the format-specific rules captured by `SlideDecode`. Pure function — no
 /// channel state involved, easy to unit-test.
@@ -455,6 +501,29 @@ pub fn decode_slide(param: u8, decode: SlideDecode) -> (i32, SlideTiming) {
             let step = (param as i8) as i32;
             let timing = if fine { SlideTiming::FirstTickOnly } else { SlideTiming::AfterFirstTick };
             (step, timing)
+        }
+    }
+}
+
+/// Decode a porta byte into an unsigned magnitude + tick gate. Sign is
+/// applied later via `PortaDir`; this function is direction-agnostic and
+/// pure, so the magic-nibble decode for IT/S3M can be unit-tested in
+/// isolation.
+pub fn decode_porta(param: u8, decode: PortaDecode) -> (u16, SlideTiming) {
+    match decode {
+        PortaDecode::XmNormal => ((param as u16) << 2, SlideTiming::AfterFirstTick),
+        PortaDecode::XmFine   => ((param as u16) << 2, SlideTiming::FirstTickOnly),
+        PortaDecode::ItMagicNibble => {
+            if param >= 0xF0 {
+                // Extra-fine: low nibble, ×1, first-tick only.
+                ((param & 0x0F) as u16, SlideTiming::FirstTickOnly)
+            } else if param >= 0xE0 {
+                // Fine: low nibble, ×4, first-tick only.
+                (((param & 0x0F) as u16) << 2, SlideTiming::FirstTickOnly)
+            } else {
+                // Normal: whole byte, ×4, after first tick.
+                ((param as u16) << 2, SlideTiming::AfterFirstTick)
+            }
         }
     }
 }
@@ -730,47 +799,30 @@ impl ChannelState {
     }
 
     pub(crate) fn porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        let actual_amount = match song_type {
-            SongType::IT  => self.recall_or_set(EffectMemorySlot::ItPortaUp, amount),
-            SongType::S3M => self.recall_or_set_shared(
-                EffectMemorySlot::ItPortaUp, EffectMemorySlot::ItPortaDown, amount,
-            ),
-            _ => amount,
+        let spec = match song_type {
+            SongType::IT => PortaSpec {
+                direction: PortaDir::Up,
+                memory: PortaMemory::Separate(EffectMemorySlot::ItPortaUp),
+                decode: PortaDecode::ItMagicNibble,
+                clamp: PortaClamp::It,
+            },
+            SongType::S3M => PortaSpec {
+                direction: PortaDir::Up,
+                memory: PortaMemory::Shared {
+                    primary: EffectMemorySlot::ItPortaUp,
+                    secondary: EffectMemorySlot::ItPortaDown,
+                },
+                decode: PortaDecode::ItMagicNibble,
+                clamp: PortaClamp::It,
+            },
+            _ => PortaSpec {
+                direction: PortaDir::Up,
+                memory: PortaMemory::Separate(EffectMemorySlot::PortaUp),
+                decode: PortaDecode::XmNormal,
+                clamp: PortaClamp::Xm,
+            },
         };
-
-        if song_type == SongType::IT || (song_type == SongType::S3M && actual_amount >= 0xE0) {
-            if actual_amount >= 0xF0 { // Extra Fine
-                if first_tick {
-                    let val = (actual_amount & 0x0F) as u16;
-                    self.note.period = self.note.period.saturating_sub(val);
-                }
-            } else if actual_amount >= 0xE0 { // Fine
-                if first_tick {
-                    let val = ((actual_amount & 0x0F) as u16) << 2;
-                    self.note.period = self.note.period.saturating_sub(val);
-                }
-            } else { // Normal
-                if !first_tick {
-                    let val = (actual_amount as u16) << 2;
-                    self.note.period = self.note.period.saturating_sub(val);
-                }
-            }
-        } else {
-            // XM/MOD: store the raw byte; scale by 4 at the apply site.
-            if first_tick {
-                if actual_amount != 0 {
-                    self.set_mem(EffectMemorySlot::PortaUp, actual_amount);
-                }
-            } else {
-                let val = (self.mem(EffectMemorySlot::PortaUp) as u16) * 4;
-                self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(val)).0;
-            }
-        }
-
-        let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
-        if (self.note.period as i16) < min_period {
-            self.note.period = min_period as u16;
-        }
+        self.apply_porta(first_tick, amount, spec);
     }
 
     /// S3M Ixy / similar: alternate the channel between audible (x ticks)
@@ -806,60 +858,45 @@ impl ChannelState {
     }
 
     pub(crate) fn porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        let actual_amount = match song_type {
-            SongType::IT  => self.recall_or_set(EffectMemorySlot::ItPortaDown, amount),
-            SongType::S3M => self.recall_or_set_shared(
-                EffectMemorySlot::ItPortaDown, EffectMemorySlot::ItPortaUp, amount,
-            ),
-            _ => amount,
+        let spec = match song_type {
+            SongType::IT => PortaSpec {
+                direction: PortaDir::Down,
+                memory: PortaMemory::Separate(EffectMemorySlot::ItPortaDown),
+                decode: PortaDecode::ItMagicNibble,
+                clamp: PortaClamp::It,
+            },
+            SongType::S3M => PortaSpec {
+                direction: PortaDir::Down,
+                memory: PortaMemory::Shared {
+                    primary: EffectMemorySlot::ItPortaDown,
+                    secondary: EffectMemorySlot::ItPortaUp,
+                },
+                decode: PortaDecode::ItMagicNibble,
+                clamp: PortaClamp::It,
+            },
+            _ => PortaSpec {
+                direction: PortaDir::Down,
+                memory: PortaMemory::Separate(EffectMemorySlot::PortaDown),
+                decode: PortaDecode::XmNormal,
+                clamp: PortaClamp::Xm,
+            },
         };
-
-        if song_type == SongType::IT || (song_type == SongType::S3M && actual_amount >= 0xE0) {
-            if actual_amount >= 0xF0 { // Extra Fine
-                if first_tick {
-                    let val = (actual_amount & 0x0F) as u16;
-                    self.note.period = self.note.period.saturating_add(val);
-                }
-            } else if actual_amount >= 0xE0 { // Fine
-                if first_tick {
-                    let val = ((actual_amount & 0x0F) as u16) << 2;
-                    self.note.period = self.note.period.saturating_add(val);
-                }
-            } else { // Normal
-                if !first_tick {
-                    let val = (actual_amount as u16) << 2;
-                    self.note.period = self.note.period.saturating_add(val);
-                }
-            }
-        } else {
-            if first_tick {
-                if actual_amount != 0 {
-                    self.set_mem(EffectMemorySlot::PortaDown, actual_amount);
-                }
-            } else {
-                let val = (self.mem(EffectMemorySlot::PortaDown) as u16) * 4;
-                self.note.period += val;
-            }
-        }
-
-        let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
-        if self.note.period > max_period {
-            self.note.period = max_period;
-        }
+        self.apply_porta(first_tick, amount, spec);
     }
 
     pub(crate) fn fine_porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        if first_tick {
-            if amount != 0 {
-                self.set_mem(EffectMemorySlot::FinePortaUp, amount);
-            }
-            let val = (self.mem(EffectMemorySlot::FinePortaUp) as u16) * 4;
-            self.note.period = (std::num::Wrapping(self.note.period) - std::num::Wrapping(val)).0;
-            let min_period = if song_type == SongType::S3M || song_type == SongType::IT { 113 } else { 1 };
-            if (self.note.period as i16) < min_period {
-                self.note.period = min_period as u16;
-            }
-        }
+        // XM/MOD E1x. (IT/S3M handle fine via the magic nibble inside porta_up.)
+        let clamp = if matches!(song_type, SongType::S3M | SongType::IT) {
+            PortaClamp::It
+        } else {
+            PortaClamp::Xm
+        };
+        self.apply_porta(first_tick, amount, PortaSpec {
+            direction: PortaDir::Up,
+            memory: PortaMemory::Separate(EffectMemorySlot::FinePortaUp),
+            decode: PortaDecode::XmFine,
+            clamp,
+        });
     }
 
     pub(crate) fn set_volume(&mut self, voice: Option<&mut Voice>, first_tick: bool, vol: u8) {
@@ -915,6 +952,38 @@ impl ChannelState {
         }
     }
 
+    /// Data-driven porta engine. Walks a `PortaSpec` to:
+    ///   * recall-or-set memory (separate or S3M-shared),
+    ///   * decode the byte into (magnitude, timing),
+    ///   * gate on the right tick,
+    ///   * apply the signed delta to `note.period`, clamped per format.
+    pub(crate) fn apply_porta(&mut self, first_tick: bool, raw_param: u8, spec: PortaSpec) {
+        let param = match spec.memory {
+            PortaMemory::Separate(slot) => self.recall_or_set(slot, raw_param),
+            PortaMemory::Shared { primary, secondary } => {
+                self.recall_or_set_shared(primary, secondary, raw_param)
+            }
+        };
+        let (mag, timing) = decode_porta(param, spec.decode);
+        let fires = match timing {
+            SlideTiming::FirstTickOnly => first_tick,
+            SlideTiming::AfterFirstTick => !first_tick,
+            SlideTiming::EveryTick => true,
+            SlideTiming::Never => false,
+        };
+        if !fires || mag == 0 { return; }
+        let signed = match spec.direction {
+            PortaDir::Up   => -(mag as i32),
+            PortaDir::Down =>  mag as i32,
+        };
+        let (min_p, max_p) = match spec.clamp {
+            PortaClamp::Xm => (1i32, 31999i32),
+            PortaClamp::It => (113i32, 27392i32),
+        };
+        let new = (self.note.period as i32 + signed).clamp(min_p, max_p);
+        self.note.period = new as u16;
+    }
+
     pub(crate) fn fine_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, amount: i8) {
         if first_tick {
             if let Some(v) = voice {
@@ -924,17 +993,18 @@ impl ChannelState {
     }
 
     pub(crate) fn fine_porta_down(&mut self, song_type: SongType, first_tick: bool, amount: u8) {
-        if first_tick {
-            if amount != 0 {
-                self.set_mem(EffectMemorySlot::FinePortaDown, amount);
-            }
-            let val = (self.mem(EffectMemorySlot::FinePortaDown) as u16) * 4;
-            self.note.period += val;
-            let max_period = if song_type == SongType::S3M || song_type == SongType::IT { 27392 } else { 31999 };
-            if self.note.period > max_period {
-                self.note.period = max_period;
-            }
-        }
+        // XM/MOD E2x.
+        let clamp = if matches!(song_type, SongType::S3M | SongType::IT) {
+            PortaClamp::It
+        } else {
+            PortaClamp::Xm
+        };
+        self.apply_porta(first_tick, amount, PortaSpec {
+            direction: PortaDir::Down,
+            memory: PortaMemory::Separate(EffectMemorySlot::FinePortaDown),
+            decode: PortaDecode::XmFine,
+            clamp,
+        });
     }
 
     pub(crate) fn porta_to_note(&mut self, _song_type: SongType, voice: Option<&mut Voice>, first_tick: bool, speed: u8, _compatible_g: bool, rate: f32, tables: &AudioTables) {
@@ -1119,5 +1189,46 @@ mod slide_decode_tests {
         let fine = SlideDecode::SignedDirect { fine: true };
         assert_eq!(decode_slide(0x05, fine), (5, SlideTiming::FirstTickOnly));
         assert_eq!(decode_slide(0xFE, fine), (-2, SlideTiming::FirstTickOnly));
+    }
+}
+
+#[cfg(test)]
+mod porta_decode_tests {
+    use super::{decode_porta, PortaDecode, SlideTiming};
+
+    #[test]
+    fn xm_normal_scales_by_4_runs_after_first_tick() {
+        assert_eq!(decode_porta(0x05, PortaDecode::XmNormal), (20, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_porta(0xFF, PortaDecode::XmNormal), (0x3FC, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_porta(0x00, PortaDecode::XmNormal), (0, SlideTiming::AfterFirstTick));
+    }
+
+    #[test]
+    fn xm_fine_scales_by_4_runs_on_first_tick() {
+        assert_eq!(decode_porta(0x03, PortaDecode::XmFine), (12, SlideTiming::FirstTickOnly));
+    }
+
+    #[test]
+    fn it_magic_nibble_extra_fine_above_f0() {
+        // xF0..xFF → extra-fine, low nibble ×1, first tick.
+        assert_eq!(decode_porta(0xF0, PortaDecode::ItMagicNibble), (0, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_porta(0xF7, PortaDecode::ItMagicNibble), (7, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_porta(0xFF, PortaDecode::ItMagicNibble), (15, SlideTiming::FirstTickOnly));
+    }
+
+    #[test]
+    fn it_magic_nibble_fine_e0_to_ef() {
+        // xE0..xEF → fine, low nibble ×4, first tick.
+        assert_eq!(decode_porta(0xE0, PortaDecode::ItMagicNibble), (0, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_porta(0xE3, PortaDecode::ItMagicNibble), (12, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_porta(0xEF, PortaDecode::ItMagicNibble), (60, SlideTiming::FirstTickOnly));
+    }
+
+    #[test]
+    fn it_magic_nibble_normal_below_e0() {
+        // 0x00..0xDF → normal, whole byte ×4, after first tick.
+        assert_eq!(decode_porta(0x01, PortaDecode::ItMagicNibble), (4, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_porta(0x80, PortaDecode::ItMagicNibble), (512, SlideTiming::AfterFirstTick));
+        assert_eq!(decode_porta(0xDF, PortaDecode::ItMagicNibble), (0xDF * 4, SlideTiming::AfterFirstTick));
     }
 }
