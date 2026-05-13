@@ -47,8 +47,13 @@ impl Pattern {
     }
     
     fn get_note(&self) -> String {
-        if self.note == 97 {"OFF". to_string() } else if self.note == 0 { "   ".to_string() } else {
-            format!("{}{}", Pattern::NOTES[((self.note - 1) % 12) as usize], (((self.note - 1) / 12) + '0' as u8) as char)
+        match self.note {
+            0 => "   ".to_string(),
+            97 | 254 => "OFF".to_string(),
+            121 | 255 => "CUT".to_string(),
+            122 | 253 => "FAD".to_string(),
+            n if n <= 120 => format!("{}{}", Pattern::NOTES[((n - 1) % 12) as usize], (((n - 1) / 12) + b'0') as char),
+            _ => "???".to_string(),
         }
     }
 
@@ -56,14 +61,29 @@ impl Pattern {
     ///
     /// Engine-space encoding (set by the parsers in `module_reader::*`):
     ///   * `1..=120`  trigger that note (range capped at 96 for XM/MOD)
-    ///   * `97`       Note Off
-    ///   * `121`      Note Cut
-    ///   * `122`      Note Fade (IT only)
+    ///   * `97`       Note Off — XM/MOD/STM only; for IT/S3M this is a real
+    ///                C#-7 trigger and Off lives at 254 (matching IT raw)
+    ///   * `121`      Note Cut — XM only; IT/S3M Cut is at 255
+    ///   * `122`      Note Fade — IT-XM-style; IT Fade also accepted at 253
+    ///   * `253-255`  IT/S3M Fade/Off/Cut (raw IT byte values)
     ///   * `0`        empty / nothing
     pub fn note_action(&self, song_type: SongType) -> NoteAction {
+        let it_like = matches!(song_type, SongType::IT | SongType::S3M);
         match self.note {
             0 => NoteAction::None,
-            97 => NoteAction::Off,
+            // IT raw off/cut/fade markers passed through by the IT parser
+            // — note 254 (Off) MUST stay distinct from engine 97 because
+            // engine 97 is a real trigger in IT (file note 96 = C#-7).
+            253 => NoteAction::Fade,
+            254 => NoteAction::Off,
+            255 => NoteAction::Cut,
+            // XM/MOD-style remapped sentinels.
+            // 97 is Off only for non-IT — IT/S3M parsers can produce
+            // engine 97 from a real note byte 96.
+            97 if !it_like => NoteAction::Off,
+            // 121 and 122 are above the IT range (IT real notes peak at
+            // engine 120 = B-9), so they're safe sentinels for either
+            // format and stay where existing tests expect them.
             121 => NoteAction::Cut,
             122 => NoteAction::Fade,
             n => {

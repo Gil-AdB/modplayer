@@ -142,8 +142,13 @@ pub fn dump_tick(song: &Song) -> TickDump {
             panning_envelope_pos: voice.panning_envelope_state.frame,
             effect: pattern.effect,
             effect_param: pattern.effect_param,
-            note_str: if voice.last_played_note == 0 { "   ".to_string() } else if voice.last_played_note == 97 { "OFF".to_string() } else {
-                format!("{}{}", ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"][((voice.last_played_note - 1) % 12) as usize], (((voice.last_played_note - 1) / 12) + '0' as u8) as char)
+            note_str: match voice.last_played_note {
+                0 => "   ".to_string(),
+                97 | 254 => "OFF".to_string(),
+                121 | 255 => "CUT".to_string(),
+                122 | 253 => "FAD".to_string(),
+                n if n <= 120 => format!("{}{}", ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"][((n - 1) % 12) as usize], (((n - 1) / 12) + b'0') as char),
+                _ => "???".to_string(),
             },
             channel_volume: song.channels[voice.channel_idx].channel_volume,
             relative_note: song.song_data.instruments[voice.instrument].samples[voice.sample].relative_note,

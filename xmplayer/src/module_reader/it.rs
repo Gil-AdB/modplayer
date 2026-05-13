@@ -47,10 +47,20 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                     if mask & 1 != 0 {
                         let note = file.read_u8()?;
                         last_note[channel_idx as usize] = match note {
-                            0..=119 => note + 1, // Map 0-119 (C-0 to B-9) to 1-120
-                            254     => 97,       // IT Note Off -> Engine Note Off
-                            255     => 121,      // IT Note Cut -> Engine Note Cut
-                            253     => 122,      // IT Note Fade -> Engine Note Fade
+                            // Map raw IT 0..119 (C-0 to B-9) to engine 1..120.
+                            // Keep IT's off/cut/fade markers (253-255) raw so
+                            // they don't collide with engine note 97, which is
+                            // a real IT trigger (C#-7 = file note 96).
+                            // `note_action` knows to decode 253/254/255 as
+                            // fade/off/cut for IT.
+                            // (Previously remapped 254→97 etc., which made
+                            // 1_channel_moog.it's row-5 note 96 silently
+                            // turn into a Note Off — voice never triggered,
+                            // missing 522 Hz fundamental of inst-1 C-8.)
+                            0..=119 => note + 1,
+                            254     => 254,
+                            255     => 255,
+                            253     => 253,
                             _       => 0,
                         };
                     }
