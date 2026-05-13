@@ -116,20 +116,35 @@ pub enum VoiceCutReason {
     Faded,
 }
 
+/// IT-compatible 2-pole resonant low-pass filter (direct-form IIR biquad).
+///
+/// `y[n] = a0 * x[n] + b0 * y[n-1] + b1 * y[n-2]`
+///
+/// Coefficients are computed in [[update_filter]] using the same recurrence
+/// libopenmpt uses for `kITFilterBehaviour` (`Snd_flt.cpp:SetupChannelFilter`).
+/// The earlier engine used a Chamberlin state-variable filter, which under
+/// the same `cutoff`/`resonance` byte produced very different (and at low
+/// cutoffs unstable) responses — `1_channel_moog.it` was the smoking gun:
+/// resonance feedback built up monotonically over 25 s instead of tracking
+/// the song's filter sweeps.
 #[derive(Clone, Copy, Debug)]
 pub struct ResonantFilter {
-    pub a: f32,
-    pub b: f32,
-    pub c: f32,
+    /// Input (feed-forward) coefficient.
+    pub a0: f32,
+    /// y[n-1] feedback coefficient.
+    pub b0: f32,
+    /// y[n-2] feedback coefficient.
+    pub b1: f32,
+    /// `[y[n-1], y[n-2]]`.
     pub history: [f32; 2],
 }
 
 impl ResonantFilter {
     pub(crate) fn new() -> Self {
         Self {
-            a: 1.0,
-            b: 0.0,
-            c: 0.0,
+            a0: 1.0,
+            b0: 0.0,
+            b1: 0.0,
             history: [0.0; 2],
         }
     }
@@ -240,27 +255,35 @@ impl Voice {
     }
 
     pub(crate) fn update_filter(&mut self, rate: f32, cutoff: u8) {
+        // IT semantics: filtering is only ever applied if cutoff is not full
+        // or resonance is set. Matches `kITFilterBehaviour` in libopenmpt.
         if cutoff >= 127 && self.filter_resonance == 0 {
-            self.filter_state.a = 1.0;
-            self.filter_state.b = 0.0;
-            self.filter_state.c = 0.0;
+            self.filter_state.a0 = 1.0;
+            self.filter_state.b0 = 0.0;
+            self.filter_state.b1 = 0.0;
             return;
         }
 
-        // IT cutoff scale mapping: 0..127 -> roughly 100Hz .. 15kHz
-        // Using a logarithmic scale
-        let cutoff_freq = 100.0 * (150.0f32).powf(cutoff as f32 / 127.0);
-        
-        // SVF p coefficient: 2 * sin(pi * f / rate)
-        let p = 2.0 * (std::f32::consts::PI * cutoff_freq / rate).sin();
-        
-        // SVF r coefficient (damping): 2.0 * 10^(-resonance_db / 20)
-        // IT resonance 0..127 maps to roughly 0..24dB
-        let resonance_db = (self.filter_resonance as f32 / 127.0) * 24.0;
-        let r = 2.0 * 10.0f32.powf(-resonance_db / 20.0);
+        // IT cutoff byte → Hz: 110 * 2^(0.25 + cutoff/24) → ~130 Hz .. ~10.67 kHz.
+        // (libopenmpt's `CutOffToFrequency`, IT branch; envModifier = 0
+        // here because the envelope was already folded into `cutoff` upstream
+        // in `update_envelopes`.)
+        let computed_cutoff = cutoff as f32 * 256.0; // (envModifier + 256) with mod=0
+        let mut fc = 110.0 * 2.0f32.powf(0.25 + computed_cutoff / (24.0 * 512.0));
+        fc = fc.clamp(120.0, 20_000.0).min(rate * 0.5);
+        let fc_omega = fc * 2.0 * std::f32::consts::PI;
 
-        self.filter_state.a = p.min(1.99); // Stability limit
-        self.filter_state.b = r;
+        // 2 * damping factor — IT resonance 0..127 in 0.1875 dB steps.
+        let dmpfac = 10.0f32.powf(-(self.filter_resonance as f32) * (24.0 / 128.0) / 20.0);
+
+        // IT-compatible coefficient recurrence (Snd_flt.cpp:127-143).
+        let r = rate / fc_omega;
+        let d = dmpfac * r + dmpfac - 1.0;
+        let e = r * r;
+        let denom = 1.0 + d + e;
+        self.filter_state.a0 = 1.0 / denom;
+        self.filter_state.b0 = (d + e + e) / denom;
+        self.filter_state.b1 = -e / denom;
     }
 
 
