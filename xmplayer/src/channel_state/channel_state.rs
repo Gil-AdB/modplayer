@@ -668,11 +668,23 @@ impl Note {
     }
 
     pub(crate) fn frequency(&self, period_shift: i16, period_offset: i32, semitone: bool, frequency_tables: &AudioTables) -> f32 {
-        // IT linear-mode: trigger path stashed an absolute Hz value.
-        // Pitch slides still write to `period` (additive), which is
-        // wrong for IT-linear's multiplicative slides — TODO.
+        // IT linear-mode: trigger path and (separately) E/F porta keep
+        // `self.linear_hz` as the source of truth. Arpeggio (Jxx) and
+        // vibrato (Hxx) write into `period_shift` / `period_offset`
+        // respectively (in 64-units-per-semitone convention shared
+        // with XM/Amiga), so we must fold them in multiplicatively
+        // here too. Same shape as the porta fix in apply_porta —
+        // freq_mod = 2^(-(shift+offset) / 768), where 768 = 64 × 12.
+        // Without this, every IT-linear arpeggio and vibrato is a
+        // silent no-op (orbiter.it's lone Hxx and any future Jxx
+        // module would otherwise sound like static-pitch notes).
         if self.linear_hz != 0.0 {
-            return self.linear_hz;
+            let mut total: i32 = period_shift as i32 + period_offset;
+            if semitone {
+                total = ((total + 32) / 64) * 64;
+            }
+            if total == 0 { return self.linear_hz; }
+            return self.linear_hz * (-(total as f32) / 768.0).exp2();
         }
         let mut period = self.period as i32 + period_shift as i32 + period_offset;
 
