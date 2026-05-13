@@ -229,9 +229,25 @@ impl Voice {
         let mut final_cutoff = self.filter_cutoff as i32;
         if instrument.is_filter_envelope {
             let envelope_filter = self.pitch_envelope_state.handle(&instrument.pitch_envelope, self.sustained, 32, false);
-            // IT filter envelopes are centered around 32 (range 0..64)
-            // They add/subtract from the current cutoff.
-            final_cutoff += (envelope_filter as i32 - 32 * 256) / 256;
+            // libopenmpt Sndmix.cpp:2349 — IT filter envelope is
+            // *multiplicative* on cutoff:
+            //   computedCutoff = cutoff * (envModifier + 256) / 256
+            // where envModifier is the envelope value mapped to -256..+256
+            // (raw IT pitch/filter env value -32..+32 scaled by 8).
+            //
+            // The previous additive form (`final += (env - 8192) / 256`,
+            // ±32 around the base) gave a much narrower swing than IT
+            // expected. For inst 3 in 1_channel_moog.it with base cutoff
+            // 69 this meant our cutoff swept [37..101] when libopenmpt
+            // swept [0..127] — we never closed the filter all the way at
+            // the envelope's negative peak, leaving the high-mid Moog
+            // harmonics unattenuated.
+            //
+            // env value range coming back from `handle()` is 0..16384
+            // (= 0..64 * 256, center 8192 = the +32 OMT offset). Map to
+            // envMod -256..+256 by dividing by 32.
+            let env_mod = (envelope_filter as i32 - 8192) / 32;
+            final_cutoff = (self.filter_cutoff as i32 * (env_mod + 256)) / 256;
         } else {
             let envelope_pitch = self.pitch_envelope_state.handle(&instrument.pitch_envelope, self.sustained, 32, false);
             // Pitch envelopes are centered around 32.
