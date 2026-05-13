@@ -65,7 +65,13 @@ impl<'a> ITDecompressor<'a> {
                     continue;
                 }
             } else {
-                return Err(SimpleError::new("Invalid bit width in IT decompression"));
+                // bit_width > 9 means the previous `bit_width = (val & 0xFF) + 1`
+                // assignment produced an out-of-spec width — libopenmpt's
+                // reference (ITCompression.cpp, Mode C) silently terminates
+                // the block here and zero-fills the remainder. Returning
+                // an Err would reject otherwise-loadable IT files; break
+                // matches reference behavior.
+                break;
             }
 
             let mut final_val = val as i32;
@@ -117,7 +123,9 @@ impl<'a> ITDecompressor<'a> {
                     continue;
                 }
             } else {
-                 return Err(SimpleError::new("Invalid bit width in IT decompression"));
+                // See the 8-bit decoder above — out-of-spec width signals
+                // early end-of-block in libopenmpt, not a hard error.
+                break;
             }
 
             let mut final_val = val as i32;

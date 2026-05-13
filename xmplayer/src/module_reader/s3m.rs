@@ -92,6 +92,16 @@
         }
 
         let global_volume = file.read_u8()?;
+        // ST3 v3.00 (cwtv 0x1300, "the buggy ST3") wrote `0` to the
+        // global_volume slot on some modules even though playback was meant
+        // to be at full volume. libopenmpt's S3M loader treats gv=0 from
+        // pre-v3.20 cwtv as "default to max" (Load_s3m.cpp). Without this,
+        // mview-era modules like overdriv.s3m render pure silence.
+        let global_volume = if global_volume == 0 && cwtv < 0x1320 {
+            64
+        } else {
+            global_volume
+        };
         let speed = file.read_u8()?;
         let bpm = file.read_u8()?;
         let master_volume = file.read_u8()?;
