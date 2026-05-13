@@ -1103,6 +1103,21 @@ impl ChannelState {
         };
         let new = (self.note.period as i32 + signed).clamp(min_p, max_p);
         self.note.period = new as u16;
+        // IT linear pitch: the active pitch lives in `note.linear_hz`,
+        // not in `period`. Mirror OMT's `DoFreqSlide` linear branch:
+        // every fine step is 1/(64×12) of an octave so the per-tick
+        // multiplier is 2^(-signed / 768). `signed` is already in
+        // OMT's "amount" units (decode_porta ×4'd the pattern param
+        // for normal/fine, ×1 for extra-fine), so the same formula
+        // covers all three cases. Without this, IT's E/F slides were
+        // a no-op in linear-pitch mode (orbiter.it ch3 was sample-
+        // locked at the trigger freq, looping audibly).
+        if self.note.linear_hz != 0.0 {
+            let factor = (-signed as f32 / 768.0).exp2();
+            self.note.linear_hz *= factor;
+            // Match OMT's saturation: freq ≥ ~1 Hz, no negative.
+            if self.note.linear_hz < 1.0 { self.note.linear_hz = 1.0; }
+        }
     }
 
     pub(crate) fn fine_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, amount: i8) {
