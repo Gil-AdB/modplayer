@@ -353,8 +353,13 @@ fn mainloop(song_data: &SongState, channel_count: usize) -> LoopExit {
     loop {
         // Natural song-end → advance to next playlist item.
         if song_data.is_stopped() { return LoopExit::SongEnded; }
-        // let input = tokio::time::timeout(Duration::from_secs(1), getter.getch()).await;
-        if crossterm::event::poll(Duration::from_millis(10)).is_ok() {
+        // `event::poll` returns Ok(true) when an event is ready and Ok(false)
+        // on timeout. The previous `.is_ok()` check entered the `read()` arm
+        // on *both* — and `read()` blocks indefinitely waiting for input.
+        // That meant a song-end with no key press left the mainloop stuck
+        // here forever; the next is_stopped check never ran. Match on
+        // `Ok(true)` so timeouts loop back and re-check is_stopped.
+        if matches!(crossterm::event::poll(Duration::from_millis(10)), Ok(true)) {
             // It's guaranteed that the `read()` won't block when the `poll()`
             // function returns `true`
             match crossterm::event::read() {
