@@ -360,10 +360,10 @@ impl Song {
                 for j in 0..4 {
                     let mut final_sample = out_samples[j];
 
-                    // IT-compatible 2-pole IIR resonant filter:
-                    //   y[n] = a0 * x[n] + b0 * y[n-1] + b1 * y[n-2]
-                    // Skip only when fully open (cutoff=127 and resonance=0).
-                    if voice.filter_cutoff < 127 || voice.filter_resonance > 0 {
+                    // IT-compatible 2-pole IIR resonant filter — gate lives in
+                    // update_filter, which writes pass-through coefficients
+                    // when the IT bypass conditions hold.
+                    {
                         let y1 = voice.filter_state.history[0];
                         let y2 = voice.filter_state.history[1];
                         let out = voice.filter_state.a0 * final_sample
@@ -429,7 +429,7 @@ impl Song {
                 };
 
                 // IT-compatible 2-pole IIR resonant filter (see fast-path above).
-                if voice.filter_cutoff < 127 || voice.filter_resonance > 0 {
+                {
                     let y1 = voice.filter_state.history[0];
                     let y2 = voice.filter_state.history[1];
                     let out = voice.filter_state.a0 * out_sample

@@ -255,8 +255,13 @@ impl Voice {
     }
 
     pub(crate) fn update_filter(&mut self, rate: f32, cutoff: u8) {
-        // IT semantics: filtering is only ever applied if cutoff is not full
-        // or resonance is set. Matches `kITFilterBehaviour` in libopenmpt.
+        // Bypass when filter is effectively a no-op (cutoff at maximum and
+        // no resonance boost). libopenmpt also runs the filter for IT even
+        // at cutoff=127 (kITFilterBehaviour), but mirroring that requires
+        // tracking envModifier separately so `computedCutoff >= 254` can
+        // actually bypass — without that, "always run" attenuates IT modules
+        // that rely on the cutoff=127=off semantics. Deferred until we have
+        // a proper envModifier model.
         if cutoff >= 127 && self.filter_resonance == 0 {
             self.filter_state.a0 = 1.0;
             self.filter_state.b0 = 0.0;
