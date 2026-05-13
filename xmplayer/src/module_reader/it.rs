@@ -269,13 +269,13 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
 
             let mut envelopes = vec![];
             for _ in 0..3 {
-                let flags = file.read_u8()?;
+                let it_flags = file.read_u8()?;
                 let size = file.read_u8()?;
                 let loop_start_point = file.read_u8()?;
                 let loop_end_point = file.read_u8()?;
                 let sustain_start_point = file.read_u8()?;
                 let _sustain_end_point = file.read_u8()?;
-                
+
                 let mut points = [EnvelopePoint::new(); 25];
                 for i in 0..25 {
                     let value = file.read_i8()?;
@@ -284,7 +284,22 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                         points[i] = EnvelopePoint { frame, value: value as u16 };
                     }
                 }
-                
+
+                // IT envelope flag bits differ from XM:
+                //   IT  bit 0 = enable, bit 1 = loop, bit 2 = sustain loop,
+                //       bit 3 = carry, bit 7 = filter (pitch env only).
+                //   XM  bit 0 = enable, bit 1 = sustain (point),
+                //       bit 2 = loop, bit 3 = (unused historically).
+                // `Envelope::create` is built for XM bit layout
+                // (`has_loop = bit 2`, `has_sustain_loop = bit 3`). Without
+                // this remap an IT envelope with `flags = 0x05`
+                // (enable + sustain-loop) gets misread as enable + normal-
+                // loop pointing at the sustain-loop endpoints, which on a
+                // module like chimerical_tidbits.it locks every voice's
+                // volume to point 0 (value=0) forever.
+                let flags = (it_flags & 0x01) | ((it_flags & 0x06) << 1)
+                    | (it_flags & 0x80);
+
                 envelopes.push(Envelope::create(
                     points,
                     size,

@@ -1,4 +1,4 @@
-use crate::{SimpleResult, SimpleError};
+use crate::SimpleResult;
 use std::io::{Read, Cursor};
 
 pub(crate) struct ITDecompressor<'a> {
