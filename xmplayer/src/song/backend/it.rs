@@ -74,16 +74,29 @@ impl ModuleBackend for ItBackend {
                             let sample_idx = it_mapping.1 as usize;
                             if sample_idx > 0 && (sample_idx - 1) < instruments[inst_idx].samples.len() {
                                 let sample = &instruments[inst_idx].samples[sample_idx - 1];
+                                let mapped = (it_mapping.0 + 1) as u8;
                                 channel.porta_to_note.target_note.period = if sample.c5_speed != 0 {
                                     // IT: mapped 1-indexed; offset -1. Don't apply
                                     // sample.relative_note — IT's loader bakes the
                                     // c5_speed offset into it.
-                                    let mapped = (it_mapping.0 + 1) as u8;
                                     crate::channel_state::channel_state::Note::note_to_period_s3m(mapped, -1, sample.c5_speed)
                                 } else {
                                     let real_note = (it_mapping.0 as i16 + sample.relative_note as i16).clamp(1, 120) as u8;
                                     channel.note.note_to_period(real_note, sample.finetune, r.frequency_tables)
                                 };
+                                // IT-linear path also needs an absolute Hz
+                                // target so `PortaToNoteState::next_tick`
+                                // can slide `linear_hz` instead of the
+                                // unused period. Mirrors the trigger
+                                // path's use of `it_linear_frequency`
+                                // a few lines below — same mapped note +
+                                // sample c5_speed.
+                                if !r.song_data.use_amiga && sample.c5_speed != 0 {
+                                    channel.porta_to_note.target_note.linear_hz =
+                                        crate::channel_state::channel_state::Note::it_linear_frequency(mapped, sample.c5_speed);
+                                } else {
+                                    channel.porta_to_note.target_note.linear_hz = 0.0;
+                                }
                             }
                         }
                     }

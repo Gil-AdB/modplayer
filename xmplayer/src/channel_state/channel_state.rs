@@ -42,8 +42,36 @@ impl PortaToNoteState {
     }
 
     pub(crate) fn next_tick(&mut self, current_note: &mut Note) {
-        if self.speed == 0 || self.target_note.period == 0 { return; }
+        if self.speed == 0 { return; }
 
+        // IT linear-pitch path: current_note.linear_hz is the source of
+        // truth (period is inert). Slide linear_hz multiplicatively
+        // toward target_note.linear_hz using the same 2^(±speed/768)
+        // factor as apply_porta in linear mode (commit 9a15ce1).
+        // `self.speed` was set to `pattern_param * 4` at trigger time
+        // (porta_to_note in mod.rs), which is the OMT "amount" unit;
+        // dividing by 768 = 64 fine steps × 12 semitones/octave gives
+        // octaves of pitch shift per tick.
+        //
+        // Without this, orbiter.it ch6's `GAF` (param=0xAF=175) slid
+        // period instead of hz, and the actual playback pitch never
+        // budged from the trigger frequency — same shape as the E/F
+        // porta and arpeggio/vibrato fixes.
+        if current_note.linear_hz != 0.0 && self.target_note.linear_hz != 0.0 {
+            let cur = current_note.linear_hz;
+            let target = self.target_note.linear_hz;
+            if (cur - target).abs() < 1e-3 { return; }
+            let step = (self.speed as f32 / 768.0).exp2();
+            let new = if cur < target {
+                (cur * step).min(target)
+            } else {
+                (cur / step).max(target)
+            };
+            current_note.linear_hz = new.max(1.0);
+            return;
+        }
+
+        if self.target_note.period == 0 { return; }
         // Widen to i32 so the clamp catches overshoot. The previous u16-
         // wrapping arithmetic looked like it clamped, but a downward slide
         // larger than `current` underflowed to ~65000 and the
