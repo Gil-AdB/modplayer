@@ -712,9 +712,11 @@ pub(super) const IT_S_TABLE: [ExtendedCmdKind; 16] = {
         SetItPanning,     // S8 (param << 4 - 16-step coarse panning)
         None,             // S9  surround
         None,             // SA  high sample offset (TODO)
-        None,             // SB  pattern loop (handled separately for IT?)
+        PatternLoop,      // SB  pattern loop — same handler as S3M; 1_channel_moog.it
+                          // uses 10–12 of these per pattern to build out its
+                          // structure within a 4 kB compo budget.
         NoteCutAtTick,    // SC
-        None,             // SD  note delay
+        None,             // SD  note delay (gated via `is_note_delay` in dispatch)
         PatternDelay,     // SE
         None,             // SF  MIDI macro
     ]

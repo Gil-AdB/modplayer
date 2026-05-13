@@ -289,6 +289,7 @@ impl Song {
                 return true;
             }
 
+            let took_pattern_loop = self.pattern_change.is_loop;
             if self.pattern_change.pattern_break || self.pattern_change.pattern_jump || self.pattern_change.is_loop {
                 if self.pattern_change.is_loop {
                     // Stay in same pattern
@@ -325,7 +326,22 @@ impl Song {
             // has looped — terminate so the playlist advances. The
             // bypassed paths (FF / duration-calc) have their own visited
             // tracking and must run the full loop.
-            if !self.is_fast_forwarding && !self.is_calculating_duration {
+            //
+            // When an in-pattern SBxy / E6x pattern loop fires, the rows
+            // about to be replayed (loop_row..current_row) need their
+            // visited bits cleared so the loop body can run again — and
+            // we skip the check on the transition itself. 1_channel_moog.it
+            // uses 10–12 SB loops per pattern; without this the loop body
+            // is marked visited on its first pass and the loop terminates
+            // playback on its very first replay instead of cycling.
+            if took_pattern_loop {
+                let pat_base = self.song_position * 512;
+                let lo = pat_base + self.row;
+                let hi = pat_base + 512;
+                if hi <= self.visited_rows.len() {
+                    for v in &mut self.visited_rows[lo..hi] { *v = false; }
+                }
+            } else if !self.is_fast_forwarding && !self.is_calculating_duration {
                 let idx = self.song_position * 512 + self.row;
                 if idx < self.visited_rows.len() {
                     if self.visited_rows[idx] { return false; }
