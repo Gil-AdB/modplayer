@@ -379,16 +379,20 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
     }
 
     fn truncate_patterns(pattern_order: &mut Vec<u8>) {
-        let mut write_pos = 0;
-        for i in 0..pattern_order.len() {
-            if pattern_order[i] < 254 {
-                pattern_order[write_pos] = pattern_order[i];
-                write_pos += 1;
-            } else if pattern_order[i] == 255 {
-                break;
-            }
+        // IT order list semantics:
+        //   value <254 -- pattern index
+        //   254       -- "+++" skip marker (advance to next order at playback)
+        //   255       -- "---" end-of-song marker
+        // Both sentinels can appear in the middle of the list, and Bxx jumps
+        // address the original indices — so we must NOT compact or truncate
+        // the list (doing so reindexes Bxx targets and drops orders that
+        // are only reachable via Bxx). orbiter.it is the canary: its
+        // B1E/B1C loop hops to order 30 which sits past a 255 at order 29.
+        // Strip only trailing 255s so song_length doesn't include an
+        // unreachable tail.
+        while pattern_order.last() == Some(&255) {
+            pattern_order.pop();
         }
-        pattern_order.truncate(write_pos);
     }
 
     fn read_it_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>

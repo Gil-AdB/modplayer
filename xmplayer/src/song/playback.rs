@@ -17,6 +17,30 @@ use crate::song::{
 };
 
 impl Song {
+    /// Hash every channel's *active* pattern-loop frame into a single u64.
+    /// libopenmpt's `RowVisitor::LoopState` tracks the same thing: a song
+    /// has "truly looped" once we revisit a row with identical pattern-
+    /// loop counters across every channel. Only `loop_count > 0` is
+    /// considered active — once an SB / E6 loop finishes its counter
+    /// drops to 0 and the lingering `loop_row` is just a memory slot,
+    /// not a state that affects future playback, so we ignore it.
+    /// Without this, moog's row-93 SB7 leaves `loop_row=84` on every
+    /// iteration and the hash never stabilises, so the song-end check
+    /// wouldn't fire on the first B00 back to position 0.
+    fn channel_loop_state_hash(channels: &[ChannelState]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut h = DefaultHasher::new();
+        for (i, ch) in channels.iter().enumerate() {
+            if ch.loop_count > 0 {
+                i.hash(&mut h);
+                ch.loop_row.hash(&mut h);
+                ch.loop_count.hash(&mut h);
+            }
+        }
+        h.finish()
+    }
+
     pub(super) fn compute_total_duration(&mut self) -> f32 {
         let current_display = self.display;
         let current_ff = self.is_fast_forwarding;
@@ -63,17 +87,19 @@ impl Song {
         self.total_samples = 0;
         self.last_fps_sample = 0;
         self.last_display_update_sample = 0;
-        // Clear the loop-detection bitset; otherwise a PlaybackCmd::Restart
-        // would immediately terminate since every row was already visited.
-        for v in self.visited_rows.iter_mut() { *v = 0; }
-        // Mark the initial (song_position=0, row=0) entry as visit #1.
-        // We only increment visited_rows inside the row-transition path
-        // (`if self.tick >= self.speed` in next_tick), so the very first
-        // row of the song would otherwise never be counted and the
-        // song-level loop-back via Bxx would take an extra iteration
-        // to terminate.
+        // Clear loop-detection state; otherwise a PlaybackCmd::Restart
+        // would immediately terminate since every order was already
+        // visited at its current loop state.
+        for set in self.visited_rows.iter_mut() { set.clear(); }
+        // Record the initial (song_position=0, row=0) entry. We only
+        // tag visits inside the row-transition path (`if self.tick >=
+        // self.speed` in next_tick), so the very first row of the song
+        // would otherwise never be tagged and a Bxx back to position 0
+        // would take an extra iteration to terminate. The state hash at
+        // song-start is "all channels' loop_row/loop_count = 0".
         if !self.visited_rows.is_empty() {
-            self.visited_rows[0] = 1;
+            let h = Self::channel_loop_state_hash(&self.channels);
+            self.visited_rows[0].insert(h);
         }
 
         self.tick_state = TickState {
@@ -321,6 +347,20 @@ impl Song {
                 }
             }
             if self.song_position >= self.song_data.song_length as usize { return false; }
+            // IT/S3M can have sentinels embedded in the order list: 254
+            // ("+++") means skip to next order, 255 ("---") means end of
+            // song. Bxx can jump past these to a valid pattern further on
+            // (orbiter.it: order 29 is 255, order 30 is the AFF/T20 slow
+            // loop body). After any song_position change, walk past 254s
+            // and terminate on 255.
+            loop {
+                if self.song_position >= self.song_data.song_length as usize { return false; }
+                let v = self.song_data.pattern_order[self.song_position];
+                if v == 254 { self.song_position += 1; continue; }
+                if v == 255 { return false; }
+                if (v as usize) >= self.song_data.patterns.len() { return false; }
+                break;
+            }
             self.tick = 0;
             self.pattern_change.reset();
 
@@ -334,27 +374,35 @@ impl Song {
             // about to be replayed (loop_row..current_row) need their
             // visited bits cleared so the loop body can run again — and
             // we skip the check on the transition itself. 1_channel_moog.it
-            // Song-level loop detection. Tag only the *entry* row of each
-            // order (row 0). SBxy / E6x pattern loops within a pattern
-            // don't touch row 0 so the loop body can repeat freely; Bxx
-            // pattern jumps and natural next_pattern() advance always land
-            // at row 0 of the new order, so every song-level pass
-            // increments here. Terminate on the first revisit — the
-            // initial pos=0 row=0 was tagged in reset() so a Bxx back to
-            // pos=0 trips this on its first replay (matches libopenmpt's
-            // ~65 s for 1_channel_moog.it).
+            // Song-level loop detection (mirrors libopenmpt's
+            // RowVisitor::Visit at order-entry granularity).
             //
-            // This runs in *all* paths (regular playback, duration calc,
-            // user seeks). compute_total_duration and seek operations can
-            // ride the same `CallbackState::Complete` exit; no separate
-            // termination machinery needed. (User-driven seeks that want
-            // to bypass this — e.g. seek-to-start after song-end — should
-            // call reset() first to clear visited_rows.)
+            // Tag only the entry row of each order (row 0). SBxy / E6x
+            // pattern loops within a pattern don't touch row 0 so the
+            // loop body can repeat freely; Bxx pattern jumps and natural
+            // next_pattern() advance always land at row 0 of the new
+            // order, so every song-level pass increments here.
+            //
+            // The state key combines order with the hash of every
+            // channel's open pattern-loop frame (loop_row, loop_count).
+            // Identical hash on a revisit means the song would
+            // deterministically repeat from this point — terminate.
+            // Different hash means SB/E6 counters are in different
+            // mid-flight states from the previous visit, so the song
+            // hasn't truly looped yet (e.g. orbiter.it spends many
+            // iterations in its B28↔B30 loop while SB counters evolve).
+            //
+            // Runs in every code path — regular playback,
+            // compute_total_duration, user seeks — so all of them exit
+            // via the same `CallbackState::Complete`.
             if self.row == 0 {
-                let idx = self.song_position * 512;
-                if idx < self.visited_rows.len() {
-                    if self.visited_rows[idx] >= 1 { return false; }
-                    self.visited_rows[idx] = self.visited_rows[idx].saturating_add(1);
+                let order = self.song_position;
+                if order < self.visited_rows.len() {
+                    let h = Self::channel_loop_state_hash(&self.channels);
+                    if self.visited_rows[order].contains(&h) {
+                        return false;
+                    }
+                    self.visited_rows[order].insert(h);
                 }
             }
             let _ = took_pattern_loop;

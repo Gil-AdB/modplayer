@@ -13,7 +13,7 @@ use crate::module_reader::{SongData, SongType, Patterns};
 use crate::tables::{TableType, AMIGA_PERIODS, LINEAR_PERIODS};
 use crate::tables::{AudioTables, AMIGA_TABLES, LINEAR_TABLES};
 use shared_sync_primitives::TripleBufferWriter;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub mod backend;
 pub mod test_dump;
@@ -511,17 +511,16 @@ pub struct Song {
     pub is_fast_forwarding:         bool,
     pub is_calculating_duration:    bool,
     /// Per-row visited bitset for loop detection at playback time. Same
-    /// shape as the one `compute_total_duration` uses internally:
-    /// `visited_rows[song_position * 512 + row]`. When `next_tick` is about
-    /// to enter a row that's already in the set, it returns false so the
-    /// playlist advances to the next track. Bypassed in fast-forward /
-    /// duration-calc modes so seeking and the duration-pre-pass don't
-    /// trip it.
-    /// Per-(order × row) visit counter for natural-end / loop detection.
-    /// libopenmpt-style behavior is to play through the song with B-jump
-    /// back-loops allowed once — we approximate that by terminating when
-    /// any row would be visited a third time (count >= 2).
-    pub visited_rows:               Vec<u8>,
+    /// Song-level loop detection. For each order, store the set of
+    /// "pattern-loop state hashes" seen at row 0. A state hash combines
+    /// every channel's `(loop_row, loop_count)` — i.e. the open SB / E6
+    /// pattern-loop frames. Revisiting an order's entry row with the
+    /// same loop-state hash means the song would deterministically
+    /// repeat from here, so we terminate. Different hash means the loop
+    /// body's state evolved (open SB counters, etc.) and the song
+    /// hasn't truly looped yet — we keep playing. This mirrors
+    /// libopenmpt's `RowVisitor::Visit`, just at order entry granularity.
+    pub visited_rows:               Vec<HashSet<u64>>,
     pub triple_buffer_writer:       TripleBufferWriter<PlayData>,
     pub master_samples:             [f32; 8192],
     pub master_samples_pos:         usize,
@@ -631,7 +630,7 @@ impl Song {
             // the duration pre-pass detected gets detected at playback
             // time. A packed bitset would be 64 KB but adds complexity
             // we don't need for one allocation per song.
-            visited_rows: vec![0u8; 1024 * 512],
+            visited_rows: vec![HashSet::new(); 1024],
             triple_buffer_writer,
             master_samples: [0.0; 8192],
             master_samples_pos: 0,
