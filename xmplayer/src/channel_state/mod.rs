@@ -662,6 +662,12 @@ pub struct ChannelState {
     pub channel_volume:                 u8,
     pub porta_to_note:                  PortaToNoteState,
     pub force_off:                      bool,
+    /// IT/S3M S91 surround flag. Persists across notes on this channel
+    /// — that's why it lives here rather than on `Voice`. Each render
+    /// tick the output stage negates the right-channel gain when this
+    /// is set so the signal cancels in mono and stereo speakers hear
+    /// a wide / phase-spread image.
+    pub surround:                       bool,
     pub effect_memory:                  [u8; EFFECT_MEMORY_LEN],
     pub(crate) glissando:                      bool,
     pub(crate) tremor:                         u8,
@@ -715,6 +721,7 @@ impl ChannelState {
             channel_volume: 64,
             porta_to_note: PortaToNoteState::new(),
             force_off: false,
+            surround: false,
             effect_memory: [0u8; EFFECT_MEMORY_LEN],
             glissando: false,
             tremor: 0,

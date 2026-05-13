@@ -652,6 +652,7 @@ pub(super) enum ExtendedCmdKind {
     SetExtraPanning,    // S3M S8, IT S8 (param << 4)
     SetItPanning,       // IT only - 0..255 panning at first tick (currently goes through 0x18)
     SetFinetuneS3m,     // S3M / IT S2 — channel c5_speed override via S3M_FINETUNE_TABLE
+    SetSurround,        // IT S9 / S3M S9 — y=0 disables, y=1 enables (right-channel phase invert)
 }
 
 /// XM's Exy table.
@@ -714,7 +715,7 @@ pub(super) const S3M_S_TABLE: [ExtendedCmdKind; 16] = {
         None,             // S6  frame delay (rarely-used IT-era extension)
         None,             // S7  NNA controls (IT-only)
         SetExtraPanning,  // S8  panning (param * 17)
-        None,             // S9  surround   (n/a for stereo pipeline)
+        SetSurround,      // S9  surround on/off (y=0 off, y=1 on; right channel phase-inverted)
         None,             // SA  high sample offset (TODO: combine with O for >65535-byte samples)
         PatternLoop,      // SB
         NoteCutAtTick,    // SC
@@ -737,7 +738,7 @@ pub(super) const IT_S_TABLE: [ExtendedCmdKind; 16] = {
         None,             // S6  frame delay (uncommon)
         None,             // S7  NNA / instr controls (handled at note-trigger logic)
         SetItPanning,     // S8 (param << 4 - 16-step coarse panning)
-        None,             // S9  surround
+        SetSurround,      // S9  surround on/off (y=0 off, y=1 on; right channel phase-inverted)
         None,             // SA  high sample offset (TODO)
         PatternLoop,      // SB  pattern loop — same handler as S3M; 1_channel_moog.it
                           // uses 10–12 of these per pattern to build out its
@@ -912,6 +913,27 @@ pub(super) fn apply_extended(
             if first_tick {
                 if let Some(v) = voice.as_deref_mut() {
                     v.panning.set_panning((y << 4) as i32);
+                }
+            }
+        }
+        ExtendedCmdKind::SetSurround => {
+            // IT/S3M S9x. Only S90/S91 are well-defined here:
+            //   y == 0 → surround off
+            //   y == 1 → surround on; pan snaps to center (128)
+            // Surround playback inverts the right-channel sign so the
+            // signal cancels in mono and stereo speakers hear a
+            // phase-spread image. (OMT also defines S98..S9F for
+            // ModPlug reverb / mixing extensions — ignore those.)
+            if first_tick {
+                match y {
+                    0 => { channel.surround = false; }
+                    1 => {
+                        channel.surround = true;
+                        if let Some(v) = voice.as_deref_mut() {
+                            v.panning.set_panning(128);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }

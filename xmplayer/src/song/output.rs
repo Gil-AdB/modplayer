@@ -288,7 +288,7 @@ impl Song {
 
             let sample = self.song_data.get_sample(voice);
             let pan = voice.panning.final_panning as usize;
-            let (vol_left, vol_right) = match mix.pan_law {
+            let (vol_left, mut vol_right) = match mix.pan_law {
                 PanLaw::Ft2Sqrt => (
                     PANNING_TAB[256 - pan] as f32 / 65536.0,
                     PANNING_TAB[pan]       as f32 / 65536.0,
@@ -298,6 +298,15 @@ impl Song {
                     pan         as f32 / 256.0,
                 ),
             };
+            // IT/S3M S91 surround: phase-invert the right channel so
+            // the signal cancels in mono and stereo speakers hear a
+            // wide / phase-spread image. orbiter.it ch4 hits this on
+            // pat0:r0 (S91) — without the negation we'd just play it
+            // double-panned mono, which is what diff_bisect saw as
+            // "395× too loud" against OMT's cancelled mono mix.
+            if self.channels[voice.channel_idx].surround {
+                vol_right = -vol_right;
+            }
 
             let mut i = 0;
 
