@@ -115,6 +115,27 @@ impl ModuleBackend for ItBackend {
                                     }
                                 }
 
+                                // For IT envCarry, snapshot the previous voice's
+                                // envelope state — but only when the new note is
+                                // re-triggering the *same* instrument. Per IT
+                                // spec the carry bit means "don't reset this
+                                // envelope on retrigger of this instrument";
+                                // a fresh instrument always reinitialises.
+                                let carry_snapshot = channel.voice_idx
+                                    .filter(|&vi| {
+                                        r.voices.get(vi)
+                                            .map(|v| v.on && v.instrument == inst_idx)
+                                            .unwrap_or(false)
+                                    })
+                                    .map(|vi| {
+                                        let pv = &r.voices[vi];
+                                        (
+                                            pv.volume_envelope_state,
+                                            pv.panning_envelope_state,
+                                            pv.pitch_envelope_state,
+                                        )
+                                    });
+
                                 let voice_idx = alloc_voice(r.voices);
                                 init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
                                 let voice = &mut r.voices[voice_idx];
@@ -123,6 +144,16 @@ impl ModuleBackend for ItBackend {
                                     voice.panning.panning = instrument.samples[final_sample_idx].panning;
                                 } else {
                                     voice.panning.panning = r.song_data.initial_channel_panning[i];
+                                }
+
+                                // Drop the snapshot into the new voice's envelope
+                                // states for the carry-enabled envelopes only. (For
+                                // non-carry envelopes trigger_note will overwrite
+                                // these via reset just below.)
+                                if let Some((vol_env, pan_env, pitch_env)) = carry_snapshot {
+                                    if instrument.volume_envelope.carry  { voice.volume_envelope_state  = vol_env; }
+                                    if instrument.panning_envelope.carry { voice.panning_envelope_state = pan_env; }
+                                    if instrument.pitch_envelope.carry   { voice.pitch_envelope_state   = pitch_env; }
                                 }
 
                                 voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);

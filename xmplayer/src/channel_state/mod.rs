@@ -259,10 +259,12 @@ impl Voice {
     }
 
     pub(crate) fn update_filter(&mut self, rate: f32, cutoff: u8) {
-        // Bypass when filter is effectively a no-op — cutoff fully open
-        // and no resonance boost. Matches the previous behavior so IT
-        // modules without filter-envelope/resonance instruments
-        // (monochrome_crisis-style) stay unfiltered.
+        // Bypass only when cutoff is at-or-above the fully-open ceiling
+        // AND resonance is zero. Filter-envelope instruments with high
+        // resonance (e.g. moog inst 3 res=120) skip this branch even
+        // when envModifier pushes cutoff past 127, and IT modules without
+        // any filter envelope or resonance (monochrome_crisis-style) hit
+        // this branch and bypass entirely.
         if cutoff >= 127 && self.filter_resonance == 0 {
             self.filter_state.a0 = 1.0;
             self.filter_state.b0 = 0.0;
@@ -347,10 +349,10 @@ impl Voice {
         self.loop_started = false;
         self.sustained = true;
         self.on = true;
-        
+
         self.volume.fadeout_vol = 65536;
         self.volume.fadeout_speed = instruments[self.instrument].volume_fadeout as i32;
-        
+
         let instrument = &instruments[self.instrument];
         self.instrument_global_volume = instrument.global_volume;
         self.filter_cutoff = instrument.initial_filter_cutoff;
@@ -360,12 +362,27 @@ impl Voice {
         }
 
         if reset_envelopes {
-            self.volume_envelope_state.reset(0, &instrument.volume_envelope);
-            self.panning_envelope_state.reset(0, &instrument.panning_envelope);
-            self.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
+            // IT envCarry (envelope flag bit 3): preserve the envelope's
+            // current position across a fresh trigger of the same
+            // instrument. Required for 1_channel_moog.it inst 1's filter
+            // sweep, which only reaches its peak after ~140 ticks and
+            // would never get there if every retrigger reset it to 0.
+            // Caller is expected to have copied the prior voice's
+            // envelope state into `self` for the carry-enabled
+            // envelopes before calling trigger_note (see the IT NNA
+            // alloc path in `song/backend/it.rs`).
+            if !instrument.volume_envelope.carry {
+                self.volume_envelope_state.reset(0, &instrument.volume_envelope);
+            }
+            if !instrument.panning_envelope.carry {
+                self.panning_envelope_state.reset(0, &instrument.panning_envelope);
+            }
+            if !instrument.pitch_envelope.carry {
+                self.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
+            }
             self.vibrato_envelope_state.reset(&instrument.vibrato_envelope);
         }
-        
+
         if vibrato_retrig { self.vibrato_state.pos = 0; }
         if tremolo_retrig { self.tremolo_state.pos = 0; }
     }

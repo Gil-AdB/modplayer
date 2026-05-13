@@ -28,6 +28,11 @@ pub struct Envelope {
     pub has_loop:           bool,
     pub has_sustain_loop:   bool,
     pub is_filter:          bool,
+    /// IT envCarry (envelope flags bit 3): when set, a fresh trigger of the
+    /// same instrument continues this envelope from its current position
+    /// instead of resetting to frame 0. Required for the filter-sweep
+    /// patches in `1_channel_moog.it` (inst 1 pitch envelope, flag 0x8B).
+    pub carry:              bool,
 }
 
 impl Envelope {
@@ -44,7 +49,8 @@ impl Envelope {
             sustain: false,
             has_loop: false,
             has_sustain_loop: false,
-            is_filter: false
+            is_filter: false,
+            carry: false,
         }
     }
 
@@ -62,6 +68,8 @@ impl Envelope {
             has_loop: (env_type & 4) == 4,
             has_sustain_loop: (env_type & 8) == 8,
             is_filter: (env_type & 128) == 128,
+            // bit 4 reserved here (`env_type & 0x10`) for IT envCarry.
+            carry: (env_type & 0x10) == 0x10,
         }
     }
 }

@@ -322,13 +322,18 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 //   XM  bit 0 = enable, bit 1 = sustain (point),
                 //       bit 2 = loop, bit 3 = (unused historically).
                 // `Envelope::create` is built for XM bit layout
-                // (`has_loop = bit 2`, `has_sustain_loop = bit 3`). Without
-                // this remap an IT envelope with `flags = 0x05`
-                // (enable + sustain-loop) gets misread as enable + normal-
-                // loop pointing at the sustain-loop endpoints, which on a
-                // module like chimerical_tidbits.it locks every voice's
-                // volume to point 0 (value=0) forever.
+                // (`has_loop = bit 2`, `has_sustain_loop = bit 3`). We
+                // remap IT's loop/sus-loop bits up by one, preserve the
+                // filter bit at 7, and stash the IT envCarry bit at 4
+                // (an otherwise-unused slot in the XM convention).
+                // envCarry is critical for 1_channel_moog.it: its inst 1
+                // pitch envelope (flags 0x8B = enable|loop|carry|filter)
+                // is supposed to continue across rapid re-triggers so the
+                // long filter sweep actually reaches its peak. Without
+                // honoring the bit, each new note resets the envelope and
+                // the sweep never gets above the early-frame cutoff.
                 let flags = (it_flags & 0x01) | ((it_flags & 0x06) << 1)
+                    | ((it_flags & 0x08) << 1)  // carry → engine bit 4
                     | (it_flags & 0x80);
 
                 envelopes.push(Envelope::create(
