@@ -27,14 +27,18 @@ impl ItBackend {
             1 => { // Continue
                 // Do nothing
             }
-            2 => { // Note Off
-                if instrument.volume_envelope.on {
-                    voice.sustained = false;
-                } else {
-                    // IT: If no volume envelope is active, Note Off = Cut
-                    voice.on = false;
-                    voice.volume.output_volume = 0.0;
-                }
+            2 => { // Note Off (NNA=2, equivalent to OMT KeyOff)
+                // Per OMT's `KeyOff` (Snd_fx.cpp:6141): release sustain (so
+                // any vol envelope enters its release phase) AND set the
+                // fadeout flag (`!sustained`). For instruments with no vol
+                // envelope and fadeout==0 (orbiter inst 15), this means the
+                // voice keeps playing at full level until the sample ends
+                // naturally — the new NNA-spawned voice overlaps it. Our
+                // previous implementation cut the voice immediately when
+                // the envelope was off, which silenced the tail at every
+                // retrigger and made orbiter ch7 ~10× quieter than OMT.
+                voice.sustained = false;
+                voice.volume.fadeout_speed = (instrument.volume_fadeout as i32) << 6;
             }
             3 => { // Note Fade
                 voice.sustained = false;
