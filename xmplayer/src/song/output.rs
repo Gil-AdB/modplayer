@@ -5,6 +5,7 @@
 use crate::instrument::LoopType;
 use crate::tables::PANNING_TAB;
 use crate::song::{Song, BufferAdapter, FilterType};
+use crate::song::backend::PanLaw;
 
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 use core::arch::wasm32::*;
@@ -286,8 +287,17 @@ impl Song {
             voice.last_render_tick = current_buf_position as u64;
 
             let sample = self.song_data.get_sample(voice);
-            let vol_right = PANNING_TAB[      voice.panning.final_panning as usize] as f32 / 65536.0;
-            let vol_left  = PANNING_TAB[256 - voice.panning.final_panning as usize] as f32 / 65536.0;
+            let pan = voice.panning.final_panning as usize;
+            let (vol_left, vol_right) = match mix.pan_law {
+                PanLaw::Ft2Sqrt => (
+                    PANNING_TAB[256 - pan] as f32 / 65536.0,
+                    PANNING_TAB[pan]       as f32 / 65536.0,
+                ),
+                PanLaw::Linear => (
+                    (256 - pan) as f32 / 256.0,
+                    pan         as f32 / 256.0,
+                ),
+            };
 
             let mut i = 0;
 

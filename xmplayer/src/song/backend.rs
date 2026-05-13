@@ -222,6 +222,21 @@ pub(super) fn delay_schedule(song_type: SongType) -> DelaySchedule {
 
 /// Per-format mixer parameters for the per-voice volume loop and the
 /// master-gain calculation in `output.rs`.
+/// Per-format pan-law selector. Decides what mapping from the
+/// per-voice `final_panning` byte (0..255) to the L/R gain pair we use
+/// at the mixing stage.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PanLaw {
+    /// FT2 sqrt LUT (`PANNING_TAB`): `gain = sqrt(pan/256)`. Center
+    /// (pan=128) → L=R≈0.707, sum ≈ 1.414. OMT's `FT2Panning`. XM.
+    Ft2Sqrt,
+    /// Pure linear: `leftVol = (256-pan)/256`, `rightVol = pan/256`.
+    /// Center → L=R=0.5, sum = 1.0 (3 dB quieter than `Ft2Sqrt` at
+    /// center; identical at hard left/right). OMT's `NoSoftPanning`,
+    /// which is the default for IT/S3M/MOD under `MixLevels::Compatible`.
+    Linear,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct VoiceMixFormula {
     /// XM/S3M/IT update envelopes per tick; MOD has none.
@@ -243,6 +258,8 @@ pub(super) struct VoiceMixFormula {
     /// FT2 Amiga clock instead of Protracker PAL (14187580/14317456 ≈
     /// 0.99093, ~16 cents). Other formats: 1.0.
     pub freq_scale: f32,
+    /// L/R gain mapping at the final mix stage. See `PanLaw`.
+    pub pan_law: PanLaw,
 }
 
 const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
@@ -250,36 +267,46 @@ const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
     apply_global_vol: true,  global_vol_div: 64.0,
     master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
     freq_scale: 1.0,
+    pan_law: PanLaw::Ft2Sqrt,
 };
 const MOD_MIX: VoiceMixFormula = VoiceMixFormula {
     update_envelopes: false, channel_vol: false, instrument_global: false,
     apply_global_vol: false, global_vol_div: 1.0,
     master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
     freq_scale: 14187580.0 / 14317456.0,
+    pan_law: PanLaw::Ft2Sqrt,
 };
 const S3M_MIX: VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: true,  instrument_global: false,
     apply_global_vol: true,  global_vol_div: 64.0,
     master_byte_mask: 0x7F,  global_scale: std::f32::consts::SQRT_2,
     freq_scale: 1.0,
+    pan_law: PanLaw::Ft2Sqrt,
 };
 const IT_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: true, instrument_global: true,
     apply_global_vol: true,  global_vol_div: 128.0,
-    // Calibrated empirically against libopenmpt v1.17RC3 default mix
-    // (m_nSamplePreAmp = 48 from IT header, no global preamp, /2 attenuation
-    // when not using global preamp). 1.5 lands the overall mix RMS within
-    // ~3% of OMT for monochrome_crisis.it. Was 3.0 — that calibration
-    // pre-dated the IFC-bit-7 fix in the IT instrument reader, which
-    // unmasked the real cascade levels.
-    master_byte_mask: 0xFF,  global_scale: 1.5,
+    // OMT loads IT with `MixLevels::Compatible` → `PanningMode::NoSoftPanning`
+    // — pure linear L/R split, not the FT2 sqrt LUT. The prior 1.5
+    // calibration absorbed the 1.414× over-loud contribution from
+    // `Ft2Sqrt` at center pan; with the law now correct (see
+    // `pan_law` below), bump global_scale by 1/0.75 ≈ 1.33 so the
+    // per-channel diff_bisect ratios against OMT stay near 1.0
+    // (was uniformly ~0.75 after the pan-law switch).
+    master_byte_mask: 0xFF,  global_scale: 2.0,
     freq_scale: 1.0,
+    // OMT loads IT with `MixLevels::Compatible` → `PanningMode::NoSoftPanning`
+    // — pure linear L/R split, not the FT2 sqrt LUT. Net effect at center
+    // pan: 1.414× quieter than `Ft2Sqrt`. Closes the per-channel
+    // monochrome_crisis ch3/12/15 over-loud gap.
+    pan_law: PanLaw::Linear,
 };
 const STM_MIX: VoiceMixFormula = VoiceMixFormula {
     update_envelopes: false, channel_vol: false, instrument_global: false,
     apply_global_vol: false, global_vol_div: 1.0,
     master_byte_mask: 0x7F,  global_scale: std::f32::consts::SQRT_2,
     freq_scale: 1.0,
+    pan_law: PanLaw::Ft2Sqrt,
 };
 
 pub(super) fn voice_mix(song_type: SongType) -> &'static VoiceMixFormula {
