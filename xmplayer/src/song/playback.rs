@@ -24,21 +24,23 @@ impl Song {
         self.reset();
         self.display = false;
         self.is_fast_forwarding = true;
-        // NOTE: deliberately leave `is_calculating_duration` false so the
-        // normal next_tick path runs its own visited_rows / SB-loop reset
-        // logic. The previous version maintained a *local* visited_rows
-        // that didn't know about SB-induced pattern loops and tripped on
-        // the very first SB replay — measuring 3.75 s for a 60 s song
-        // (1_channel_moog.it). Now the song terminates itself via the
-        // shared visited-twice rule and fast_forward_until just rides
-        // along until `CallbackState::Complete`.
+        // `is_calculating_duration` activates the cheap process_tick fast-
+        // path (flow-control effects only, no voice/sample work). The
+        // termination path is shared with regular playback — next_tick
+        // tags each order's row 0 in `visited_rows` and returns false on
+        // the second visit, so fast_forward_until exits via
+        // `CallbackState::Complete` at the same song time the real
+        // playback would. A 20-minute hard cap stays in place as a
+        // safety net for songs that don't terminate naturally.
+        self.is_calculating_duration = true;
 
-        let max_samples = (20.0 * 60.0 * self.original_rate) as u64; // 20 mins safety cap.
+        let max_samples = (20.0 * 60.0 * self.original_rate) as u64;
         self.fast_forward_until(|s| s.total_samples > max_samples);
 
         let duration = (self.total_samples as f32 / self.original_rate) * 1000.0;
         self.reset();
 
+        self.is_calculating_duration = false;
         self.is_fast_forwarding = current_ff;
         self.display = current_display;
 
@@ -332,30 +334,29 @@ impl Song {
             // about to be replayed (loop_row..current_row) need their
             // visited bits cleared so the loop body can run again — and
             // we skip the check on the transition itself. 1_channel_moog.it
-            // uses 10–12 SB loops per pattern; without this the loop body
-            // is marked visited on its first pass and the loop terminates
-            // playback on its very first replay instead of cycling.
-            // Song-level loop detection. We tag only the *entry* row of each
-            // order (row 0). SBxy / E6x pattern loops within a pattern don't
-            // touch row 0 so the loop body can repeat freely; Bxx pattern
-            // jumps and natural next_pattern() advance always land at row
-            // 0 of the new order, so every song-level pass increments here.
-            // Two passes per entry are allowed — libopenmpt plays moog-style
-            // songs through their Bxx back-loop once before stopping.
-            if !self.is_fast_forwarding && self.row == 0 {
+            // Song-level loop detection. Tag only the *entry* row of each
+            // order (row 0). SBxy / E6x pattern loops within a pattern
+            // don't touch row 0 so the loop body can repeat freely; Bxx
+            // pattern jumps and natural next_pattern() advance always land
+            // at row 0 of the new order, so every song-level pass
+            // increments here. Terminate on the first revisit — the
+            // initial pos=0 row=0 was tagged in reset() so a Bxx back to
+            // pos=0 trips this on its first replay (matches libopenmpt's
+            // ~65 s for 1_channel_moog.it).
+            //
+            // This runs in *all* paths (regular playback, duration calc,
+            // user seeks). compute_total_duration and seek operations can
+            // ride the same `CallbackState::Complete` exit; no separate
+            // termination machinery needed. (User-driven seeks that want
+            // to bypass this — e.g. seek-to-start after song-end — should
+            // call reset() first to clear visited_rows.)
+            if self.row == 0 {
                 let idx = self.song_position * 512;
                 if idx < self.visited_rows.len() {
-                    // Terminate as soon as we'd visit any order's entry row
-                    // a second time. The initial pos=0 row=0 was already
-                    // tagged in reset() so a Bxx back to pos=0 trips this on
-                    // its first replay (matches libopenmpt's ~65 s for
-                    // 1_channel_moog.it).
                     if self.visited_rows[idx] >= 1 { return false; }
                     self.visited_rows[idx] = self.visited_rows[idx].saturating_add(1);
                 }
             }
-            // The earlier SB-induced clear is no longer needed because we
-            // only track row 0 — SB body rows never get marked.
             let _ = took_pattern_loop;
             // Paused-mode "play one row" UX: decrement on each row advance
             // and re-pause when the budget runs out. Placed here (after the
