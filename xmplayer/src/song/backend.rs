@@ -266,7 +266,13 @@ const S3M_MIX: VoiceMixFormula = VoiceMixFormula {
 const IT_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: true, instrument_global: true,
     apply_global_vol: true,  global_vol_div: 128.0,
-    master_byte_mask: 0xFF,  global_scale: 3.0,
+    // Calibrated empirically against libopenmpt v1.17RC3 default mix
+    // (m_nSamplePreAmp = 48 from IT header, no global preamp, /2 attenuation
+    // when not using global preamp). 1.5 lands the overall mix RMS within
+    // ~3% of OMT for monochrome_crisis.it. Was 3.0 — that calibration
+    // pre-dated the IFC-bit-7 fix in the IT instrument reader, which
+    // unmasked the real cascade levels.
+    master_byte_mask: 0xFF,  global_scale: 1.5,
     freq_scale: 1.0,
 };
 const STM_MIX: VoiceMixFormula = VoiceMixFormula {

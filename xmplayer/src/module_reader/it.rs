@@ -325,8 +325,16 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 dct,
                 dca,
                 global_volume: global_vol,
-                initial_filter_cutoff: ifc,
-                initial_filter_resonance: ifr,
+                // IT IFC/IFR: bit 7 = "enable per-instrument filter". When
+                // unset, the instrument uses no filter — store 127 (fully
+                // open) for cutoff and 0 for resonance so the mixer's
+                // `filter_cutoff < 127` gate skips the resonant filter.
+                // (Previously stored raw byte; for inst with IFC=0 this
+                // meant the filter ran with cutoff=0 = fully closed,
+                // zeroing the audio. monochrome_crisis.it inst 8 hit
+                // exactly this and ch4..9 played ~10x too quiet.)
+                initial_filter_cutoff: if (ifc & 0x80) != 0 { ifc & 0x7F } else { 127 },
+                initial_filter_resonance: if (ifr & 0x80) != 0 { ifr & 0x7F } else { 0 },
                 is_filter_envelope: envelopes[2].is_filter,
                 samples: vec![]
             });

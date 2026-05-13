@@ -370,7 +370,6 @@ impl Song {
                         voice.filter_state.history[1] = new_band;
                         final_sample = new_low;
                     }
-
                     final_sample *= output_vol;
 
                     // Update per-channel visualizer
