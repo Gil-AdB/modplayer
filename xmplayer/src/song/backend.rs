@@ -264,7 +264,7 @@ const S3M_MIX: VoiceMixFormula = VoiceMixFormula {
     freq_scale: 1.0,
 };
 const IT_MIX:  VoiceMixFormula = VoiceMixFormula {
-    update_envelopes: true,  channel_vol: false, instrument_global: true,
+    update_envelopes: true,  channel_vol: true, instrument_global: true,
     apply_global_vol: true,  global_vol_div: 128.0,
     master_byte_mask: 0xFF,  global_scale: 3.0,
     freq_scale: 1.0,
@@ -1041,24 +1041,37 @@ pub(super) const S3M_EFFECT_TABLE: [EffectKind; 32] = {
 pub(super) const IT_EFFECT_TABLE: [EffectKind; 32] = {
     use EffectKind::*;
     let mut t = [EK; 32];
+    // IT effect numbering is alphabet-direct: A=1, B=2, ..., Z=26. Same
+    // mapping as S3M (see S3M_EFFECT_TABLE above). Keep the two tables
+    // in sync — any IT-handled effect that has an S3M analogue should
+    // appear at the same index in both.
     // 0x01 A  SetSpeed         - apply_flow_control_effect
     // 0x02 B  PatternJump      - apply_flow_control_effect
     // 0x03 C  PatternBreak     - apply_flow_control_effect
-    t[0x04] = VolSlideItStyle;
-    t[0x05] = PortaDown;
-    t[0x06] = PortaUp;
-    t[0x07] = PortaToNote;
-    t[0x08] = Vibrato;
-    t[0x0A] = Arpeggio;
-    t[0x0B] = VibratoPlusVolSlide;
-    t[0x0C] = PortaPlusVolSlide;
-    t[0x11] = Retrig;
-    t[0x13] = Extended; // S - table-driven via IT_S_TABLE
+    t[0x04] = VolSlideItStyle;     // D
+    t[0x05] = PortaDown;           // E
+    t[0x06] = PortaUp;             // F
+    t[0x07] = PortaToNote;         // G
+    t[0x08] = Vibrato;             // H
+    t[0x09] = Tremor;              // I
+    t[0x0A] = Arpeggio;            // J
+    t[0x0B] = VibratoPlusVolSlide; // K
+    t[0x0C] = PortaPlusVolSlide;   // L
+    t[0x0D] = SetChannelVolume;    // M
+    t[0x0E] = ChannelVolSlide;     // N
+    t[0x0F] = SampleOffset;        // O — was missing; ch4..9 of
+                                   // monochrome_crisis.it use this to
+                                   // start the sample at offset 768
+    t[0x10] = PanningSlide;        // P
+    t[0x11] = Retrig;              // Q
+    t[0x12] = Tremolo;             // R
+    t[0x13] = Extended;            // S - table-driven via IT_S_TABLE
     // 0x14 T  SetBpm           - apply_flow_control_effect
-    t[0x16] = SetGlobalVolume;
-    t[0x17] = GlobalVolSlide;
-    t[0x18] = SetPanningIt;
-    t[0x1A] = Filter;
+    t[0x15] = FineVibrato;         // U
+    t[0x16] = SetGlobalVolume;     // V
+    t[0x17] = GlobalVolSlide;      // W
+    t[0x18] = SetPanningIt;        // X
+    t[0x1A] = Filter;              // Z
     t
 };
 
