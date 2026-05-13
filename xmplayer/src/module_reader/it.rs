@@ -278,7 +278,19 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             }
 
             let mut envelopes = vec![];
-            for _ in 0..3 {
+            for env_idx in 0..3 {
+                // OMT `ITEnvelope::ConvertToMPT` (ITTools.cpp:78) normalises
+                // all envelopes to a 0..64 internal range by adding
+                // `envOffset` to the file's signed int8 values: 0 for the
+                // volume envelope, 32 for pan and pitch/filter. IT stores
+                // pan as -32..+32 and pitch/filter as -32..+32 (signed),
+                // while volume is 0..64 (unsigned). Without the offset our
+                // u16 cast wrapped negatives to ~65500 and the downstream
+                // `value * 256` either overflowed or produced filter cutoff
+                // deltas with the wrong sign — 1_channel_moog.it inst 3's
+                // filter envelope ended up driving cutoff *open* (toward
+                // 127) when it should have been closing toward 0.
+                let env_offset: i16 = if env_idx == 0 { 0 } else { 32 };
                 let it_flags = file.read_u8()?;
                 let size = file.read_u8()?;
                 let loop_start_point = file.read_u8()?;
@@ -291,7 +303,8 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                     let value = file.read_i8()?;
                     let frame = file.read_u16()?;
                     if i < size as usize {
-                        points[i] = EnvelopePoint { frame, value: value as u16 };
+                        let shifted = (value as i16 + env_offset).clamp(0, 64) as u16;
+                        points[i] = EnvelopePoint { frame, value: shifted };
                     }
                 }
                 // IT envelope struct is 82 bytes: 6-byte header + 25*3 byte
