@@ -517,7 +517,11 @@ pub struct Song {
     /// playlist advances to the next track. Bypassed in fast-forward /
     /// duration-calc modes so seeking and the duration-pre-pass don't
     /// trip it.
-    pub visited_rows:               Vec<bool>,
+    /// Per-(order × row) visit counter for natural-end / loop detection.
+    /// libopenmpt-style behavior is to play through the song with B-jump
+    /// back-loops allowed once — we approximate that by terminating when
+    /// any row would be visited a third time (count >= 2).
+    pub visited_rows:               Vec<u8>,
     pub triple_buffer_writer:       TripleBufferWriter<PlayData>,
     pub master_samples:             [f32; 8192],
     pub master_samples_pos:         usize,
@@ -627,7 +631,7 @@ impl Song {
             // the duration pre-pass detected gets detected at playback
             // time. A packed bitset would be 64 KB but adds complexity
             // we don't need for one allocation per song.
-            visited_rows: vec![false; 1024 * 512],
+            visited_rows: vec![0u8; 1024 * 512],
             triple_buffer_writer,
             master_samples: [0.0; 8192],
             master_samples_pos: 0,
