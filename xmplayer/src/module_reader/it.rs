@@ -284,6 +284,14 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                         points[i] = EnvelopePoint { frame, value: value as u16 };
                     }
                 }
+                // IT envelope struct is 82 bytes: 6-byte header + 25*3 byte
+                // nodes + 1 trailing reserved byte. Previously skipped — the
+                // pan and pitch envelopes that follow then started 1 / 2
+                // bytes early and consumed garbage as their flag/size,
+                // producing nonsense values like `size=212` for instruments
+                // whose pitch envelope was disabled (which masked the bug
+                // since the engine then ignored the bogus data).
+                let _reserved = file.read_u8()?;
 
                 // IT envelope flag bits differ from XM:
                 //   IT  bit 0 = enable, bit 1 = loop, bit 2 = sustain loop,

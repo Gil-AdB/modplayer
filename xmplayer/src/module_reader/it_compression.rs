@@ -51,10 +51,19 @@ impl<'a> ITDecompressor<'a> {
                     continue;
                 }
             } else if bit_width < 9 {
-                let lower = (1 << (bit_width - 1)) - (1 << (8 - bit_width));
-                let upper = (1 << (bit_width - 1)) + (1 << (8 - bit_width));
+                // Mode B (8-bit): escape range is `topBit + lowerB..=topBit + upperB`
+                // with lowerB=-4, upperB=3 (libopenmpt `IT8BitParams`). The width
+                // offset is encoded directly in `val` — no extra bits to read.
+                // Previously this used a symmetric `topBit ± 2^(8-width)` range
+                // AND read 3 phantom bits via `read_bits(3)`, both of which
+                // desynced the bit-stream and produced corrupted samples
+                // (1_channel_moog.it's compressed instruments came out with
+                // their loops badly mis-decoded, audible as wrong pitch).
+                let top_bit = 1u32 << (bit_width - 1);
+                let lower = top_bit.wrapping_sub(4);
+                let upper = top_bit + 3;
                 if val >= lower && val <= upper {
-                    let mut new_width = decompressor.read_bits(3)? + 1;
+                    let mut new_width = (val - lower) + 1;
                     if new_width >= bit_width { new_width += 1; }
                     bit_width = new_width;
                     continue;
@@ -109,10 +118,13 @@ impl<'a> ITDecompressor<'a> {
                     continue;
                 }
             } else if bit_width < 17 {
-                let lower = (1 << (bit_width - 1)) - (1 << (16 - bit_width));
-                let upper = (1 << (bit_width - 1)) + (1 << (16 - bit_width));
+                // Mode B (16-bit): see 8-bit version above. 16-bit uses
+                // lowerB=-8, upperB=7 (libopenmpt `IT16BitParams`).
+                let top_bit = 1u32 << (bit_width - 1);
+                let lower = top_bit.wrapping_sub(8);
+                let upper = top_bit + 7;
                 if val >= lower && val <= upper {
-                    let mut new_width = decompressor.read_bits(4)? + 1;
+                    let mut new_width = (val - lower) + 1;
                     if new_width >= bit_width { new_width += 1; }
                     bit_width = new_width;
                     continue;
