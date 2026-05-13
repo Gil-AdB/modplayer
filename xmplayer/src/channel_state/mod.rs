@@ -232,20 +232,8 @@ impl Voice {
             // libopenmpt Sndmix.cpp:2349 — IT filter envelope is
             // *multiplicative* on cutoff:
             //   computedCutoff = cutoff * (envModifier + 256) / 256
-            // where envModifier is the envelope value mapped to -256..+256
-            // (raw IT pitch/filter env value -32..+32 scaled by 8).
-            //
-            // The previous additive form (`final += (env - 8192) / 256`,
-            // ±32 around the base) gave a much narrower swing than IT
-            // expected. For inst 3 in 1_channel_moog.it with base cutoff
-            // 69 this meant our cutoff swept [37..101] when libopenmpt
-            // swept [0..127] — we never closed the filter all the way at
-            // the envelope's negative peak, leaving the high-mid Moog
-            // harmonics unattenuated.
-            //
-            // env value range coming back from `handle()` is 0..16384
-            // (= 0..64 * 256, center 8192 = the +32 OMT offset). Map to
-            // envMod -256..+256 by dividing by 32.
+            // env value range 0..16384 (= 0..64 * 256, center 8192 from
+            // the OMT +32 offset). Map to envMod -256..+256.
             let env_mod = (envelope_filter as i32 - 8192) / 32;
             final_cutoff = (self.filter_cutoff as i32 * (env_mod + 256)) / 256;
         } else {
@@ -271,13 +259,10 @@ impl Voice {
     }
 
     pub(crate) fn update_filter(&mut self, rate: f32, cutoff: u8) {
-        // Bypass when filter is effectively a no-op (cutoff at maximum and
-        // no resonance boost). libopenmpt also runs the filter for IT even
-        // at cutoff=127 (kITFilterBehaviour), but mirroring that requires
-        // tracking envModifier separately so `computedCutoff >= 254` can
-        // actually bypass — without that, "always run" attenuates IT modules
-        // that rely on the cutoff=127=off semantics. Deferred until we have
-        // a proper envModifier model.
+        // Bypass when filter is effectively a no-op — cutoff fully open
+        // and no resonance boost. Matches the previous behavior so IT
+        // modules without filter-envelope/resonance instruments
+        // (monochrome_crisis-style) stay unfiltered.
         if cutoff >= 127 && self.filter_resonance == 0 {
             self.filter_state.a0 = 1.0;
             self.filter_state.b0 = 0.0;
@@ -285,11 +270,9 @@ impl Voice {
             return;
         }
 
-        // IT cutoff byte → Hz: 110 * 2^(0.25 + cutoff/24) → ~130 Hz .. ~10.67 kHz.
-        // (libopenmpt's `CutOffToFrequency`, IT branch; envModifier = 0
-        // here because the envelope was already folded into `cutoff` upstream
-        // in `update_envelopes`.)
-        let computed_cutoff = cutoff as f32 * 256.0; // (envModifier + 256) with mod=0
+        // libopenmpt CutOffToFrequency (Snd_flt.cpp:40), IT branch.
+        // envModifier folded into `cutoff` upstream in update_envelopes.
+        let computed_cutoff = cutoff as f32 * 256.0;
         let mut fc = 110.0 * 2.0f32.powf(0.25 + computed_cutoff / (24.0 * 512.0));
         fc = fc.clamp(120.0, 20_000.0).min(rate * 0.5);
         let fc_omega = fc * 2.0 * std::f32::consts::PI;
