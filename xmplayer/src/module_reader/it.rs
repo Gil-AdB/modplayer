@@ -113,7 +113,9 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         result
     }
 
-    fn read_samples<R: Read + Seek>(file: &mut R, sample_ptrs: &Vec<u32>, it215: bool) -> SimpleResult<Vec<Sample>> {
+    fn read_samples<R: Read + Seek>(file: &mut R, sample_ptrs: &Vec<u32>, cmwt: u16) -> SimpleResult<Vec<Sample>> {
+        let it215 = cmwt >= 0x215;
+        let supports_stereo = cmwt >= 0x214;
         let mut samples: Vec<Sample> = vec![];
         samples.reserve_exact(sample_ptrs.len());
 
@@ -208,12 +210,31 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                         sample.data = Sample::upsamplei16(decompressed_data);
                     }
                 } else { // Uncompressed
+                    // IT stereo samples: bit 2 of `flags`. Layout is split —
+                    // all L samples, then all R samples. OMT loads both
+                    // sides; we downmix to (L+R)/2 mono. This is exact at
+                    // center pan for any L/R correlation, and at the per-
+                    // sample-pair level matches OMT for correlated stereo
+                    // (the common musical case). Anti-correlated content
+                    // at non-center pan won't be bit-exact but the gross
+                    // RMS is dramatically closer than reading L-only.
+                    let is_stereo = (flags & 4) == 4 && supports_stereo;
                     if bitness == 8 {
                         let mut data = file.read_i8_vec(length as usize)?;
                         if (convert & 1) == 0 {
                             for x in &mut data { *x = (Wrapping(*x as u8) + Wrapping(128u8)).0 as i8; }
                         }
                         if (convert & 4) == 4 { data = Sample::unpack_i8(data); }
+                        if is_stereo {
+                            let mut right = file.read_i8_vec(length as usize)?;
+                            if (convert & 1) == 0 {
+                                for x in &mut right { *x = (Wrapping(*x as u8) + Wrapping(128u8)).0 as i8; }
+                            }
+                            if (convert & 4) == 4 { right = Sample::unpack_i8(right); }
+                            for i in 0..data.len() {
+                                data[i] = (((data[i] as i16) + (right[i] as i16)) / 2) as i8;
+                            }
+                        }
                         sample.data = Sample::upsamplei16(Sample::upsamplei8(data));
                     } else {
                         let mut data = file.read_i16_vec(length as usize)?;
@@ -222,6 +243,17 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                             for x in &mut data { *x = (Wrapping(*x as u16) + Wrapping(32768u16)).0 as i16; }
                         }
                         if (convert & 4) == 4 { data = Sample::unpack_i16(data); }
+                        if is_stereo {
+                            let mut right = file.read_i16_vec(length as usize)?;
+                            if (convert & 2) == 2 { for x in &mut right { *x = x.swap_bytes(); } }
+                            if (convert & 1) == 0 {
+                                for x in &mut right { *x = (Wrapping(*x as u16) + Wrapping(32768u16)).0 as i16; }
+                            }
+                            if (convert & 4) == 4 { right = Sample::unpack_i16(right); }
+                            for i in 0..data.len() {
+                                data[i] = (((data[i] as i32) + (right[i] as i32)) / 2) as i16;
+                            }
+                        }
                         sample.data = Sample::upsamplei16(data);
                     }
                 }
@@ -460,8 +492,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         // IT 2.15+ adds a second delta-integration pass to the compressed
         // sample format. Earlier IT versions use single-pass deltas. cmwt
         // (Compatible With Tracker) >= 0x215 selects the IT215 variant.
-        let it215 = compatible_with_version >= 0x215;
-        let samples = read_samples(file, &sample_ptrs, it215)?;
+        let samples = read_samples(file, &sample_ptrs, compatible_with_version)?;
         let mut instruments = read_instruments(file, &instrument_ptrs)?;
 
         let mut patterns: Vec<Patterns> = vec![];
