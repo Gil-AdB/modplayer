@@ -484,9 +484,16 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 let mut inst = crate::instrument::Instrument::new();
                 inst.name = sample.name.clone();
                 for note_idx in 0..120 {
-                    inst.sample_indexes[note_idx] = (note_idx as u8 + 1, 1u8); 
+                    inst.sample_indexes[note_idx] = (note_idx as u8 + 1, 1u8);
                 }
                 inst.samples = vec![sample.clone()];
+                // IT sample-mode: OMT keeps m_nInstruments=0 and skips the
+                // SV*IV/64 cascade entirely. Our IT_MIX always applies
+                // `instrument_global_volume / 128`, so a synthesized
+                // instrument with the XM-unity default (64) would halve
+                // every voice. Set 128 = IT unity so the multiplier becomes
+                // 1.0. Fixes shes_cute / testing_chemicals (uniform 0.5×).
+                inst.global_volume = 128;
                 instruments.push(inst);
             }
         }
