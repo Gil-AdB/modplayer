@@ -143,33 +143,37 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Silence channels via set_channel_volume(0) instead of
-     * set_channel_mute_status(true). Critical reason: OpenMPT's S3M
-     * playback ignores effects on MUTED channels entirely
-     * (kST3NoMutedChannels flag, Snd_fx.cpp:571-576 — "not even effects
-     * are processed on muted S3M channels"). With set_channel_mute_status,
-     * if any muted channel had a SetSpeed/SetBpm/PatternBreak effect,
-     * the song timing in solo would drift from the full mix's timing —
-     * solo and full would no longer represent the same song timeline,
-     * breaking the diagnostic.
+    /* Pick the right mute primitive per song type.
      *
-     * set_channel_volume(0) is a post-mix multiplier: the channel still
-     * processes ALL effects (including global ones), only its audio
-     * contribution to the output is zeroed. This gives a clean
-     * "what does this channel contribute, with everything else's
-     * effects intact" measurement that's directly comparable between
-     * our engine's force_off behavior and OpenMPT's. */
+     * For S3M we must use set_channel_volume(0), because S3M's
+     * kST3NoMutedChannels flag (Snd_fx.cpp:3179) skips *effects* on
+     * muted channels — including SetSpeed/SetBpm/PatternBreak — which
+     * would desync solo from the full mix.
+     *
+     * For IT/XM/MOD that flag doesn't apply. set_channel_volume(0)
+     * writes the same field that IT's Mxx (channel volume) effect
+     * writes (libopenmpt_ext_impl.cpp:179-187 → nGlobalVol). Songs
+     * with Mxx on row 0 (e.g. chris31b.it) promptly overwrite our 0
+     * back to the song's value, so the "muted" render is identical
+     * to the full mix and per-channel attribution collapses to junk.
+     *
+     * set_channel_mute_status uses CHN_MUTE, which the mixer respects
+     * regardless of Mxx, matching our renderer's force_off semantics. */
+    const char *mod_type = openmpt_module_get_metadata(mod, "type");
+    int use_mute_status = (mod_type && strcmp(mod_type, "s3m") != 0);
     if (solo_channel >= 0) {
         for (int c = 0; c < n_channels; c++) {
             if (c != solo_channel) {
-                iface.set_channel_volume(ext, c, 0.0);
+                if (use_mute_status) iface.set_channel_mute_status(ext, c, 1);
+                else                  iface.set_channel_volume(ext, c, 0.0);
             }
         }
     }
     for (int i = 0; i < mute_count; i++) {
         int c = mute_list[i];
         if (c >= 0 && c < n_channels) {
-            iface.set_channel_volume(ext, c, 0.0);
+            if (use_mute_status) iface.set_channel_mute_status(ext, c, 1);
+            else                  iface.set_channel_volume(ext, c, 0.0);
         }
     }
 
