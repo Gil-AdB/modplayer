@@ -113,15 +113,28 @@ impl TerminalModeSetter {
 
         if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
         let _ = crossterm::terminal::enable_raw_mode();
-        // Request kitty keyboard protocol so we get KeyCode::Media events
-        // for system media keys (Play/Pause/Stop/Next/Prev). Supported by
-        // kitty, WezTerm, alacritty, foot, ghostty; harmlessly ignored
-        // by Terminal.app / iTerm2 (they don't advertise support so we
-        // just don't receive media events on those, falling back to the
-        // regular Char/Esc bindings).
+        // Request the kitty keyboard protocol with the full flag set so
+        // KeyCode::Media events are delivered for OS Play/Pause/Stop/
+        // Next/Prev keys. iTerm 3.5+ supports this if the user has
+        // enabled "Report modern keyboard protocol" in Profiles → Keys;
+        // kitty / WezTerm / alacritty / foot / ghostty enable it
+        // implicitly. Terminals that don't advertise support just
+        // ignore the request and we keep the regular Char/Esc bindings.
+        //
+        // Belt-and-suspenders: ask for everything useful at once.
+        // DISAMBIGUATE_ESCAPE_CODES is what actually unlocks the media-
+        // key path; REPORT_EVENT_TYPES tells the terminal to send key
+        // release/repeat events too (we filter to Press below so we
+        // don't double-fire); REPORT_ALTERNATE_KEYS surfaces shifted /
+        // alternate-layout key codepoints. Together this matches the
+        // "modern keyboard" preset most kitty-protocol terminals use.
         let _ = crossterm::execute!(
             stdout(),
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+            ),
         );
         TerminalModeSetter {}
     }
@@ -379,6 +392,15 @@ fn mainloop(song_data: &SongState, channel_count: usize) -> LoopExit {
             // function returns `true`
             match crossterm::event::read() {
                 Ok(crossterm::event::Event::Key(event)) => {
+                    // With REPORT_EVENT_TYPES on under the kitty keyboard
+                    // protocol, terminals deliver Press / Release / Repeat
+                    // events. Filter to Press only so a single tap of any
+                    // key doesn't double-fire its command. KeyEventKind
+                    // is implicitly Press on terminals that don't support
+                    // the protocol, so this is a no-op there.
+                    if event.kind != KeyEventKind::Press {
+                        continue;
+                    }
                     let tx = song_data.get_sender();
 
                     // Command-palette mode short-circuits all normal keymapping.
