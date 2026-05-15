@@ -113,27 +113,19 @@ impl TerminalModeSetter {
 
         if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
         let _ = crossterm::terminal::enable_raw_mode();
-        // Request the kitty keyboard protocol with the full flag set so
-        // KeyCode::Media events are delivered for OS Play/Pause/Stop/
-        // Next/Prev keys. iTerm 3.5+ supports this if the user has
-        // enabled "Report modern keyboard protocol" in Profiles → Keys;
-        // kitty / WezTerm / alacritty / foot / ghostty enable it
-        // implicitly. Terminals that don't advertise support just
-        // ignore the request and we keep the regular Char/Esc bindings.
-        //
-        // Belt-and-suspenders: ask for everything useful at once.
-        // DISAMBIGUATE_ESCAPE_CODES is what actually unlocks the media-
-        // key path; REPORT_EVENT_TYPES tells the terminal to send key
-        // release/repeat events too (we filter to Press below so we
-        // don't double-fire); REPORT_ALTERNATE_KEYS surfaces shifted /
-        // alternate-layout key codepoints. Together this matches the
-        // "modern keyboard" preset most kitty-protocol terminals use.
+        // Request kitty keyboard protocol — the DISAMBIGUATE_ESCAPE_CODES
+        // bit alone unlocks the media-key path. We deliberately do NOT
+        // ask for REPORT_EVENT_TYPES / REPORT_ALTERNATE_KEYS: with iTerm
+        // 3.5 those caused a CPU storm (iTerm reportedly pegged at 150%)
+        // — likely because every key turns into a press+release event
+        // pair, multiplying terminal-side encoding work and our event
+        // loop churn. Press-only is enough for our needs; the kind
+        // filter below stays defensive in case future terminals send
+        // releases anyway.
         let _ = crossterm::execute!(
             stdout(),
             PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
             ),
         );
         TerminalModeSetter {}
