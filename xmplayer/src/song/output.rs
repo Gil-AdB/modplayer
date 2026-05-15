@@ -430,8 +430,6 @@ impl Song {
                         voice.current_right_vol += voice.right_ramp_step;
                         voice.ramp_samples_remaining -= 1;
                     }
-
-                    // Update per-channel visualizer. Use the average of
                     // current L/R as an "applied gain" surrogate so the
                     // scope follows the ramp (otherwise the visualizer
                     // would show the raw waveform regardless of cuts).
