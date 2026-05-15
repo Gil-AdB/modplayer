@@ -8,6 +8,19 @@ use crate::song::{FilterType, PlaybackCmd, Song, UserData};
 
 impl Song {
     pub fn handle_commands(&mut self, rx: & Receiver<PlaybackCmd>) -> bool {
+        // Coalesce: a fast Control Center scrub (or any other source
+        // that spams seek commands) can flood the channel with dozens
+        // of SeekToSeconds in a single tick. Executing each one means
+        // running reset()+fast_forward_until() repeatedly — the audio
+        // thread holds the song lock through all of them and the
+        // player feels frozen even though it's "doing work". Coalesce
+        // by keeping only the last SeekToSeconds target seen during a
+        // single drain pass, then apply it once after the channel
+        // empties. Other commands (volume, pattern jump, etc.) still
+        // execute in order — the optimization is specific to a class
+        // of commands that's safe to deduplicate because only the
+        // final target matters.
+        let mut pending_seek_secs: Option<f32> = None;
         loop {
             if let Ok(cmd) = rx.try_recv() {
                 match cmd {
@@ -39,13 +52,9 @@ impl Song {
                         self.seek_backward_seconds(10.0);
                     }
                     PlaybackCmd::SeekToSeconds(target_sec) => {
-                        let current_sec = self.total_samples as f32 / self.rate;
-                        let delta = target_sec - current_sec;
-                        if delta >= 0.0 {
-                            self.seek_forward_seconds(delta);
-                        } else {
-                            self.seek_backward_seconds(-delta);
-                        }
+                        // Defer until the drain finishes; only the last
+                        // target matters during a scrub-drag flood.
+                        pending_seek_secs = Some(target_sec);
                     }
 
                     PlaybackCmd::Restart => {
@@ -162,6 +171,18 @@ impl Song {
                 break;
             }
 
+        }
+        // Apply any pending coalesced seek now that the command channel
+        // is empty. If multiple SeekToSeconds arrived during this drain,
+        // only the latest one runs — old targets are discarded.
+        if let Some(target_sec) = pending_seek_secs {
+            let current_sec = self.total_samples as f32 / self.rate;
+            let delta = target_sec - current_sec;
+            if delta >= 0.0 {
+                self.seek_forward_seconds(delta);
+            } else {
+                self.seek_backward_seconds(-delta);
+            }
         }
         if self.song_position as usize >= self.song_data.pattern_order.len() {
             return false;
