@@ -690,17 +690,48 @@ impl Display {
             if ch_y >= y + height { break; }
 
             if status[i].on {
-                // High-fidelity per-channel Braille scope with local AGC
+                // Per-channel Braille scope. Mild AGC so silent voices
+                // still leave a flat trace and very quiet voices remain
+                // legible, but bounded so volume modulation (envelope
+                // decay, tremolo, fadeout) actually shows up — a strict
+                // "rescale to fit" would erase exactly the modulation
+                // the user wants to see (task #58).
+                //
+                // Min-gain cap (`>= 0.5`) means loud signals are NOT
+                // amplified above their actual amplitude — peak signals
+                // hit the scope's full height. Max-gain cap (`<= 4.0`)
+                // limits how much we boost very quiet content; a
+                // genuinely-silent voice (peak < 0.05) shows as a thin
+                // baseline near zero, not as amplified noise.
                 let data = &status[i].oscilloscope;
                 let mut peak: f32 = 0.0001;
                 for &s in data.iter() {
                     let abs_s = s.abs();
                     if abs_s > peak { peak = abs_s; }
                 }
-                
-                let gain = (0.8 / peak).min(10.0);
+
+                let raw_gain = 0.8 / peak;
+                let gain = raw_gain.clamp(0.5, 4.0);
                 let vertical_dots = cell_h * 4;
-                let display_samples = data.len().min(cell_w * 2);
+                // Frequency-aware time window: show ~3 cycles of the
+                // channel's current fundamental so pitch modulation
+                // (vibrato Hxx, porta Exx/Fxx/Gxx, arpeggio Jxx) is
+                // visible as stretching/squeezing of the waveform
+                // between redraws. Without this the scope always
+                // shows a fixed sample-count window and small pitch
+                // shifts vanish into the sub-pixel noise of the
+                // dx-to-sample mapping (task #58 second half).
+                //
+                // RATE matches Song::output_channels' fixed 48 kHz mix
+                // rate. status[i].frequency is the voice's current Hz
+                // including envelope/vibrato modulation, set in
+                // song/display.rs. Falls back to a sensible default
+                // for silent voices (avoids 1/0).
+                const RATE: f32 = 48_000.0;
+                let freq = status[i].frequency.max(20.0);
+                let period = ((RATE / freq) as usize).max(1);
+                let n_cycles = 3;
+                let display_samples = (period * n_cycles).min(data.len()).max(8);
                 
                 let mut prev_dot_y: Option<usize> = None;
                 for dx in 0..cell_w.saturating_sub(1) {

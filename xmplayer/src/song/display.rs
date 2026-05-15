@@ -142,20 +142,21 @@ impl Song {
                 }
             }
 
-            // High-fidelity scope normalization
-            let mut peak = 0.01f32;
-            for &s in channel.last_samples.iter() {
-                peak = peak.max(s.abs());
-            }
-            let gain = if peak > 0.0001 { 0.5 / peak } else { 1.0 };
-
+            // Pass last_samples through unscaled so the consumer sees the
+            // actual post-volume amplitude. Earlier this divided by the
+            // per-tick peak (0.5 / peak), which normalized every channel
+            // to the same display height regardless of envelope / tremolo
+            // / fadeout — i.e., made volume modulation invisible. The
+            // renderer (display::render_multi_scope) still applies a
+            // gentle gain so very quiet voices remain visible, but it's
+            // capped so loud vs. quiet stays visually distinct.
             if status.oscilloscope.len() != 512 {
                 status.oscilloscope = vec![0.0; 512];
             }
             if channel.on && voice_on {
                 for j in 0..512 {
                     let idx = (channel.last_samples_pos + j) % 512;
-                    status.oscilloscope[j] = channel.last_samples[idx] * gain;
+                    status.oscilloscope[j] = channel.last_samples[idx];
                 }
             } else {
                 for j in 0..512 {
