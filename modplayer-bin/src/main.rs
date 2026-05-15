@@ -6,7 +6,10 @@ use std::time::Duration;
 use std::io::{stdout, Write};
 
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{
+    KeyCode, KeyModifiers, MediaKeyCode,
+    KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+};
 use xmplayer::song_state::{SongState, SongHandle};
 use xmplayer::AudioConsumer;
 
@@ -102,6 +105,7 @@ impl TerminalModeSetter {
         // Install panic hook to restore terminal on crash
         let default_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
+            let _ = crossterm::execute!(stdout(), PopKeyboardEnhancementFlags);
             let _ = crossterm::terminal::disable_raw_mode();
             let _ = crossterm::execute!(stdout(), Show, LeaveAlternateScreen);
             default_hook(info);
@@ -109,12 +113,23 @@ impl TerminalModeSetter {
 
         if let Err(_e) = crossterm::execute!(stdout(), EnterAlternateScreen) {}
         let _ = crossterm::terminal::enable_raw_mode();
+        // Request kitty keyboard protocol so we get KeyCode::Media events
+        // for system media keys (Play/Pause/Stop/Next/Prev). Supported by
+        // kitty, WezTerm, alacritty, foot, ghostty; harmlessly ignored
+        // by Terminal.app / iTerm2 (they don't advertise support so we
+        // just don't receive media events on those, falling back to the
+        // regular Char/Esc bindings).
+        let _ = crossterm::execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        );
         TerminalModeSetter {}
     }
 }
 
 impl Drop for TerminalModeSetter {
     fn drop(&mut self) {
+        let _ = crossterm::execute!(stdout(), PopKeyboardEnhancementFlags);
         let _ = crossterm::terminal::disable_raw_mode();
         let _ = crossterm::execute!(stdout(), Show, LeaveAlternateScreen);
     }
@@ -437,6 +452,37 @@ fn mainloop(song_data: &SongState, channel_count: usize) -> LoopExit {
                         }
                         continue;
                     }
+                    // System media keys: routed through the kitty keyboard
+                    // protocol enabled in `TerminalModeSetter`. On supported
+                    // terminals (kitty/WezTerm/alacritty/foot/ghostty),
+                    // pressing the OS Play/Pause/Stop/Next/Prev keys
+                    // delivers a `KeyCode::Media(...)` event we can map to
+                    // existing playback commands. Other terminals just
+                    // don't get these events, no harm done.
+                    if let KeyCode::Media(mk) = event.code {
+                        match mk {
+                            MediaKeyCode::PlayPause
+                            | MediaKeyCode::Play
+                            | MediaKeyCode::Pause => {
+                                let _ = tx.send(PlaybackCmd::PauseToggle);
+                            }
+                            MediaKeyCode::Stop => {
+                                let _ = tx.send(PlaybackCmd::Quit);
+                                return LoopExit::Quit;
+                            }
+                            MediaKeyCode::TrackNext | MediaKeyCode::FastForward => {
+                                let _ = tx.send(PlaybackCmd::Quit);
+                                return LoopExit::NextSong;
+                            }
+                            MediaKeyCode::TrackPrevious | MediaKeyCode::Rewind => {
+                                let _ = tx.send(PlaybackCmd::Quit);
+                                return LoopExit::PrevSong;
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     match event.code {
                         KeyCode::Backspace => {}
                         KeyCode::Enter => {}
