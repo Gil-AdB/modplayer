@@ -423,13 +423,23 @@ fn mainloop(song_data: &SongState, channel_count: usize, media_keys: Option<&Med
     let mut mode = InputMode::Normal;
 
     if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
-    // Local pause-state mirror so we can report it back to Now Playing.
-    // The audio engine's own paused state lives in song_data; we only
-    // touch this local copy when a media-key Toggle fires so Control
-    // Center's icon stays in sync. The keyboard-side PauseToggle path
-    // doesn't update this (left as a follow-up — there are several
-    // command paths and it's not worth piping a callback right now).
-    let mut paused = false;
+    // Local pause-state mirror. Updated by every code path that sends
+    // PlaybackCmd::PauseToggle so Control Center's play/pause icon stays
+    // in sync. Uses RefCell because the borrow checker would otherwise
+    // refuse to capture `&mut paused` in the closure while the main
+    // loop already holds `&mut` to its surrounding state.
+    let paused = std::cell::RefCell::new(false);
+    // Helper: toggle pause + sync the OS media controls. Call this for
+    // every PauseToggle origin (keyboard space, media-key Toggle, future
+    // command-palette / scripted toggles).
+    let toggle_pause = |tx: &std::sync::mpsc::Sender<PlaybackCmd>| {
+        let _ = tx.send(PlaybackCmd::PauseToggle);
+        let mut p = paused.borrow_mut();
+        *p = !*p;
+        if let Some(mk) = media_keys {
+            mk.set_playing(!*p);
+        }
+    };
     loop {
         // Natural song-end → advance to next playlist item.
         if song_data.is_stopped() { return LoopExit::SongEnded; }
@@ -446,9 +456,7 @@ fn mainloop(song_data: &SongState, channel_count: usize, media_keys: Option<&Med
                 let tx = song_data.get_sender();
                 match key {
                     MediaKey::Toggle => {
-                        let _ = tx.send(PlaybackCmd::PauseToggle);
-                        paused = !paused;
-                        mk.set_playing(!paused);
+                        toggle_pause(&tx);
                     }
                     MediaKey::Stop => {
                         let _ = tx.send(PlaybackCmd::Quit);
@@ -571,7 +579,7 @@ fn mainloop(song_data: &SongState, channel_count: usize, media_keys: Option<&Med
                             MediaKeyCode::PlayPause
                             | MediaKeyCode::Play
                             | MediaKeyCode::Pause => {
-                                let _ = tx.send(PlaybackCmd::PauseToggle);
+                                toggle_pause(&tx);
                             }
                             MediaKeyCode::Stop => {
                                 let _ = tx.send(PlaybackCmd::Quit);
@@ -703,7 +711,7 @@ fn mainloop(song_data: &SongState, channel_count: usize, media_keys: Option<&Med
                                     let _ = tx.send(PlaybackCmd::DecBPM);
                                 }
                                 ' ' => {
-                                    let _ = tx.send(PlaybackCmd::PauseToggle);
+                                    toggle_pause(&tx);
                                 }
                                 'n' => {
                                     let _ = tx.send(PlaybackCmd::Next);
