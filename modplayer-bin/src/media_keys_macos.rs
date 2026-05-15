@@ -22,9 +22,11 @@
 //! responsible for terminal input as before.
 
 use std::sync::{mpsc, Mutex};
+use std::time::Duration;
 
 use souvlaki::{
-    MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, PlatformConfig,
+    MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition,
+    PlatformConfig,
 };
 
 use core_foundation::base::Boolean;
@@ -48,14 +50,29 @@ pub enum MediaKey {
     Next,
     /// Previous track / rewind.
     Previous,
+    /// Absolute scrub from Control Center's progress bar. Position is
+    /// in seconds from the start of the current song.
+    SeekToSeconds(f32),
 }
 
 pub struct MediaKeysHandle {
     /// Behind a mutex because souvlaki's MediaControls is `!Sync` and we
-    /// touch it from both the main loop (set_song_title / set_playing)
-    /// and the OS callback thread (when MediaControls drops it).
+    /// touch it from both the main loop (set_song_title / set_playing /
+    /// set_progress) and indirectly from the OS callback thread when
+    /// MediaControls drops it.
     controls: Mutex<MediaControls>,
     rx: mpsc::Receiver<MediaKey>,
+    /// Last metadata snapshot — needed because souvlaki's set_metadata
+    /// replaces the whole NSDictionary; pushing a progress update via
+    /// set_playback alone wouldn't carry title/duration forward.
+    state: Mutex<NowPlayingState>,
+}
+
+#[derive(Default, Clone)]
+struct NowPlayingState {
+    title: String,
+    duration_secs: Option<f32>,
+    playing: bool,
 }
 
 /// Initialize the media controls, register key handlers, and return a
@@ -79,6 +96,9 @@ pub fn init(display_name: &'static str) -> Result<MediaKeysHandle, String> {
                 MediaControlEvent::Stop => Some(MediaKey::Stop),
                 MediaControlEvent::Next => Some(MediaKey::Next),
                 MediaControlEvent::Previous => Some(MediaKey::Previous),
+                MediaControlEvent::SetPosition(MediaPosition(d)) => {
+                    Some(MediaKey::SeekToSeconds(d.as_secs_f32()))
+                }
                 _ => None,
             };
             if let Some(k) = mapped {
@@ -96,6 +116,7 @@ pub fn init(display_name: &'static str) -> Result<MediaKeysHandle, String> {
     Ok(MediaKeysHandle {
         controls: Mutex::new(controls),
         rx,
+        state: Mutex::new(NowPlayingState::default()),
     })
 }
 
@@ -120,17 +141,29 @@ impl MediaKeysHandle {
         self.rx.try_recv().ok()
     }
 
-    /// Update the Now Playing entry with the current song title. Empty
-    /// / whitespace-only titles fall back to "modplayer".
-    pub fn set_song_title(&self, title: &str) {
-        let trimmed = title.trim();
-        let display = if trimmed.is_empty() { "modplayer" } else { trimmed };
+    /// Update the Now Playing entry with the current song title and
+    /// total duration (seconds). The duration becomes the right edge
+    /// of the Control Center scrubber. Empty / whitespace-only titles
+    /// fall back to "modplayer". duration_secs <= 0 means "unknown" —
+    /// the scrubber displays without a max marker in that case.
+    pub fn set_song(&self, title: &str, duration_secs: f32) {
+        let trimmed = title.trim().to_string();
+        let title_display = if trimmed.is_empty() { "modplayer".to_string() } else { trimmed };
+        let duration = if duration_secs > 0.0 {
+            Some(Duration::from_secs_f64(duration_secs as f64))
+        } else {
+            None
+        };
+        if let Ok(mut state) = self.state.lock() {
+            state.title = title_display.clone();
+            state.duration_secs = if duration_secs > 0.0 { Some(duration_secs) } else { None };
+        }
         if let Ok(mut controls) = self.controls.lock() {
             let _ = controls.set_metadata(MediaMetadata {
-                title: Some(display),
+                title: Some(&title_display),
                 artist: None,
                 album: None,
-                duration: None,
+                duration,
                 cover_url: None,
             });
         }
@@ -138,15 +171,41 @@ impl MediaKeysHandle {
 
     /// Update the system's playing/paused state. Drives the Control
     /// Center play/pause icon and tells macOS this app currently has
-    /// audio output, which biases media-key routing toward us.
+    /// audio output, which biases media-key routing toward us. Resets
+    /// the scrubber position to 0 implicitly — call `set_progress`
+    /// after this if mid-song state was being preserved.
     pub fn set_playing(&self, playing: bool) {
+        if let Ok(mut state) = self.state.lock() {
+            state.playing = playing;
+        }
         if let Ok(mut controls) = self.controls.lock() {
-            let state = if playing {
+            let pb = if playing {
                 MediaPlayback::Playing { progress: None }
             } else {
                 MediaPlayback::Paused { progress: None }
             };
-            let _ = controls.set_playback(state);
+            let _ = controls.set_playback(pb);
+        }
+    }
+
+    /// Push the current playback position to Control Center so its
+    /// scrubber thumb tracks the song. Call periodically (every ~500
+    /// ms is plenty — macOS interpolates between updates). `elapsed`
+    /// is seconds from song start.
+    pub fn set_progress(&self, elapsed_secs: f32) {
+        let playing = if let Ok(state) = self.state.lock() {
+            state.playing
+        } else {
+            true
+        };
+        if let Ok(mut controls) = self.controls.lock() {
+            let pos = MediaPosition(Duration::from_secs_f64(elapsed_secs.max(0.0) as f64));
+            let pb = if playing {
+                MediaPlayback::Playing { progress: Some(pos) }
+            } else {
+                MediaPlayback::Paused { progress: Some(pos) }
+            };
+            let _ = controls.set_playback(pb);
         }
     }
 }

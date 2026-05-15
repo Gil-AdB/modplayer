@@ -38,6 +38,15 @@ impl Song {
                     PlaybackCmd::SeekBackward10s => {
                         self.seek_backward_seconds(10.0);
                     }
+                    PlaybackCmd::SeekToSeconds(target_sec) => {
+                        let current_sec = self.total_samples as f32 / self.rate;
+                        let delta = target_sec - current_sec;
+                        if delta >= 0.0 {
+                            self.seek_forward_seconds(delta);
+                        } else {
+                            self.seek_backward_seconds(-delta);
+                        }
+                    }
 
                     PlaybackCmd::Restart => {
                         self.row = 0;

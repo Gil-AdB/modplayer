@@ -211,6 +211,12 @@ pub enum PlaybackCmd {
     Prev,
     SeekForward10s,
     SeekBackward10s,
+    /// Absolute seek to the given offset from song start, in seconds.
+    /// Used by the macOS Control Center scrubber via souvlaki's
+    /// `MediaControlEvent::SetPosition` callback. Backward seeks
+    /// reset + fast-forward to the target; forward seeks just
+    /// fast-forward.
+    SeekToSeconds(f32),
     LoopPattern,
     Restart,
     Quit,

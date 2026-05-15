@@ -38,12 +38,13 @@ pub struct MediaKeysHandle;
 impl MediaKeysHandle {
     pub fn pump(&self) {}
     pub fn try_recv(&self) -> Option<MediaKey> { None }
-    pub fn set_song_title(&self, _: &str) {}
+    pub fn set_song(&self, _: &str, _: f32) {}
     pub fn set_playing(&self, _: bool) {}
+    pub fn set_progress(&self, _: f32) {}
 }
 #[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone, Copy)]
-pub enum MediaKey { Toggle, Stop, Next, Previous }
+pub enum MediaKey { Toggle, Stop, Next, Previous, SeekToSeconds(f32) }
 
 fn main() {
     if env::args().len() < 2 { return; }
@@ -210,19 +211,20 @@ fn run_playlist(items: Vec<PathBuf>) {
         // Use the IT/XM/etc internal song name if present, otherwise the
         // file name. The OS uses this as the routing hint for media keys.
         if let Some(mk) = media_keys.as_ref() {
-            let title = {
+            let (title, duration_secs) = {
                 let song = song_data.get_song().lock().unwrap();
                 let internal = song.name.trim().to_string();
-                if internal.is_empty() {
+                let title = if internal.is_empty() {
                     Path::new(&path).file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or("modplayer")
                         .to_string()
                 } else {
                     internal
-                }
+                };
+                (title, song.total_duration_ms / 1000.0)
             };
-            mk.set_song_title(&title);
+            mk.set_song(&title, duration_secs);
             mk.set_playing(true);
         }
 
@@ -470,8 +472,52 @@ fn mainloop(song_data: &SongState, channel_count: usize, media_keys: Option<&Med
                         let _ = tx.send(PlaybackCmd::Quit);
                         return LoopExit::PrevSong;
                     }
+                    MediaKey::SeekToSeconds(t) => {
+                        let _ = tx.send(PlaybackCmd::SeekToSeconds(t));
+                    }
                 }
             }
+
+            // Push the current position to Control Center periodically.
+            // 500 ms is responsive without thrashing the system pasteboard
+            // — macOS interpolates between updates so the thumb stays
+            // smooth. Lock window kept short: just read total_samples and
+            // drop the song mutex before the FFI call.
+            const PROGRESS_INTERVAL_MS: u64 = 500;
+            use std::time::Instant;
+            // RefCell-free: keep the last push time on the stack via a
+            // mutable local. The outer `loop` already owns `paused`, so
+            // adding one more local is consistent.
+            // Note: we can't easily put a static here because mainloop
+            // is called once per song and we want fresh state per song.
+            let now_ms = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()) as u64;
+            // Use a process-local-once cell as the "last push" cursor.
+            // We rely on the 10-ms poll cadence to keep the modulo
+            // check coarse — checking every iteration is cheap.
+            thread_local! {
+                static LAST_PROGRESS_MS: std::cell::Cell<u64> = std::cell::Cell::new(0);
+            }
+            let should_push = LAST_PROGRESS_MS.with(|c| {
+                let last = c.get();
+                if now_ms.saturating_sub(last) >= PROGRESS_INTERVAL_MS {
+                    c.set(now_ms);
+                    true
+                } else {
+                    false
+                }
+            });
+            if should_push {
+                let elapsed = {
+                    let song = song_data.get_song().lock().unwrap();
+                    song.total_samples as f32 / song.rate
+                };
+                mk.set_progress(elapsed);
+            }
+            let _ = now_ms;
+            let _ = Instant::now();
         }
 
         // `event::poll` returns Ok(true) when an event is ready and Ok(false)
