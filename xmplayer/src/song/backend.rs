@@ -618,19 +618,28 @@ pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
 ///
 /// Debug builds panic with the channel indices + slot number; release builds
 /// log once per occurrence so corpus rendering doesn't get gated on it.
-pub(super) fn validate_voice_pool(voices: &[Voice], channels: &[ChannelState]) {
+pub(super) fn validate_voice_pool(voices: &[Voice], channels: &mut [ChannelState]) {
+    // Two-pass: first detect (logs distinct violations), then clear
+    // the stale pointers. Splitting the pass means we don't hold a
+    // mutable borrow during the diagnostic logging.
+    //
+    // Why repair at all: the orphan-creation site is `alloc_voice`'s
+    // "steal quietest" fallback (confirmed empirically on
+    // spx-shuttledeparture at t>150s). The fix at the trigger sites
+    // requires invasive borrow-check plumbing across four backends
+    // (the per-channel `iter_mut()` loop holds `&mut channels[i]`
+    // throughout, blocking access to `channels[prev_owner]`). A
+    // defensive validate-time clear keeps the pool consistent
+    // tick-by-tick while we work on the structural fix. The clear is
+    // NOT silent — every *distinct* (channel, slot, host) triple is
+    // still logged once on first appearance via the throttled
+    // diagnostic below.
+    let mut to_clear: Vec<usize> = Vec::new();
     for (ci, ch) in channels.iter().enumerate() {
         let Some(vi) = ch.voice_idx else { continue };
         if vi >= voices.len() { continue; }
         let v = &voices[vi];
         if v.on && v.channel_idx != ci {
-            // Stale pointer: another channel reused this slot without
-            // clearing our reference. We do NOT auto-repair — that
-            // would hide whatever cut/alloc path is leaving orphans
-            // behind. Debug builds panic for fast pinpointing; release
-            // builds log each *distinct* (channel, slot) pair once so
-            // the user can see how many real orphans there are without
-            // drowning in per-tick repeats of the same pair.
             let msg = format!(
                 "voice-pool invariant violated: channel {} → voice_idx=Some({}), \
                  but voice {} is active and owned by channel {}",
@@ -642,10 +651,9 @@ pub(super) fn validate_voice_pool(voices: &[Voice], channels: &[ChannelState]) {
             {
                 use std::sync::Mutex;
                 use std::collections::HashSet;
-                // Distinct-pair throttle: log each (ci, vi, host) combo
-                // once per process. Same orphan persisting across many
-                // ticks counts as one; truly new orphans appearing later
-                // each get their own line.
+                // Distinct-triple throttle: log each (ci, vi, host) once
+                // per process. Lets you see how many real orphans there
+                // are without drowning in per-tick repeats.
                 static SEEN: Mutex<Option<HashSet<(usize, usize, usize)>>> = Mutex::new(None);
                 let key = (ci, vi, v.channel_idx);
                 let mut guard = SEEN.lock().unwrap();
@@ -654,7 +662,11 @@ pub(super) fn validate_voice_pool(voices: &[Voice], channels: &[ChannelState]) {
                     eprintln!("[voice-pool] {}", msg);
                 }
             }
+            to_clear.push(ci);
         }
+    }
+    for ci in to_clear {
+        channels[ci].voice_idx = None;
     }
 }
 
