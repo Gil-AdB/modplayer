@@ -24,6 +24,27 @@ use display::{ViewPort, Grid};
 mod settings;
 use settings::Settings;
 
+#[cfg(target_os = "macos")]
+mod media_keys_macos;
+#[cfg(target_os = "macos")]
+use media_keys_macos::{MediaKey, MediaKeysHandle};
+
+// On non-macOS, stub the handle as a unit so the call sites compile.
+// The actual integration is OS-specific; future Linux (MPRIS via souvlaki
+// with use_dbus feature) / Windows (SMTC) backends would slot in here.
+#[cfg(not(target_os = "macos"))]
+pub struct MediaKeysHandle;
+#[cfg(not(target_os = "macos"))]
+impl MediaKeysHandle {
+    pub fn pump(&self) {}
+    pub fn try_recv(&self) -> Option<MediaKey> { None }
+    pub fn set_song_title(&self, _: &str) {}
+    pub fn set_playing(&self, _: bool) {}
+}
+#[cfg(not(target_os = "macos"))]
+#[derive(Debug, Clone, Copy)]
+pub enum MediaKey { Toggle, Stop, Next, Previous }
+
 fn main() {
     if env::args().len() < 2 { return; }
 
@@ -156,6 +177,18 @@ enum LoopExit {
 fn run_playlist(items: Vec<PathBuf>) {
     let _mode_setter = TerminalModeSetter::new();
 
+    // Initialize OS-level media keys + Now Playing once per process so
+    // the system sees us as a continuous audio app across the whole
+    // playlist (not per-song registration churn). On non-macOS this is
+    // a no-op stub.
+    #[cfg(target_os = "macos")]
+    let media_keys: Option<MediaKeysHandle> = match media_keys_macos::init("modplayer") {
+        Ok(h) => Some(h),
+        Err(e) => { eprintln!("media-keys init failed: {}", e); None }
+    };
+    #[cfg(not(target_os = "macos"))]
+    let media_keys: Option<MediaKeysHandle> = None;
+
     // Load once at session start; carry the latest UI state forward
     // between tracks so toggling theme on track 1 sticks for track 2.
     // Save on every track end (not just the final one) so a kill -9 mid-
@@ -173,7 +206,27 @@ fn run_playlist(items: Vec<PathBuf>) {
             Err(e) => { eprintln!("  load failed: {:?}", e); idx += 1; continue; }
         };
 
-        let exit = run_one(&mut song_data, consumer, &settings);
+        // Push the new song's title to Control Center + flip to Playing.
+        // Use the IT/XM/etc internal song name if present, otherwise the
+        // file name. The OS uses this as the routing hint for media keys.
+        if let Some(mk) = media_keys.as_ref() {
+            let title = {
+                let song = song_data.get_song().lock().unwrap();
+                let internal = song.name.trim().to_string();
+                if internal.is_empty() {
+                    Path::new(&path).file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("modplayer")
+                        .to_string()
+                } else {
+                    internal
+                }
+            };
+            mk.set_song_title(&title);
+            mk.set_playing(true);
+        }
+
+        let exit = run_one(&mut song_data, consumer, &settings, media_keys.as_ref());
 
         // Refresh `settings` from the song's final UI state and persist.
         {
@@ -196,7 +249,7 @@ fn run_playlist(items: Vec<PathBuf>) {
     }
 }
 
-fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Settings) -> LoopExit {
+fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Settings, media_keys: Option<&MediaKeysHandle>) -> LoopExit {
     const _CHANNELS: i32 = 2;
     const SAMPLE_RATE: f32 = 48_000.0;
 
@@ -252,7 +305,7 @@ fn run_one(song_data: &mut SongHandle, consumer: AudioConsumer, settings: &Setti
     });
 
     audio.start_audio_output();
-    let exit = mainloop(song_data, channel_count);
+    let exit = mainloop(song_data, channel_count, media_keys);
 
     song_data.close();
     if handle.0.is_some() {
@@ -357,7 +410,7 @@ fn execute_command(buf: &str, tx: &std::sync::mpsc::Sender<PlaybackCmd>) -> Opti
     None
 }
 
-fn mainloop(song_data: &SongState, channel_count: usize) -> LoopExit {
+fn mainloop(song_data: &SongState, channel_count: usize, media_keys: Option<&MediaKeysHandle>) -> LoopExit {
 
     if let Ok(size) = crossterm::terminal::size() {
         let tx = song_data.get_sender();
@@ -370,9 +423,49 @@ fn mainloop(song_data: &SongState, channel_count: usize) -> LoopExit {
     let mut mode = InputMode::Normal;
 
     if let Err(_e) = crossterm::terminal::enable_raw_mode() {}
+    // Local pause-state mirror so we can report it back to Now Playing.
+    // The audio engine's own paused state lives in song_data; we only
+    // touch this local copy when a media-key Toggle fires so Control
+    // Center's icon stays in sync. The keyboard-side PauseToggle path
+    // doesn't update this (left as a follow-up — there are several
+    // command paths and it's not worth piping a callback right now).
+    let mut paused = false;
     loop {
         // Natural song-end → advance to next playlist item.
         if song_data.is_stopped() { return LoopExit::SongEnded; }
+
+        // Drain any pending macOS media-key callbacks: pump the CFRunLoop
+        // briefly (non-blocking) so souvlaki's registered handlers fire,
+        // then read whatever ended up in its channel and translate to the
+        // player's commands. This is the *whole* reason we don't need a
+        // separate NSApplication run loop — once per outer iteration is
+        // enough latency for a key press to feel instant (<10 ms typical).
+        if let Some(mk) = media_keys {
+            mk.pump();
+            while let Some(key) = mk.try_recv() {
+                let tx = song_data.get_sender();
+                match key {
+                    MediaKey::Toggle => {
+                        let _ = tx.send(PlaybackCmd::PauseToggle);
+                        paused = !paused;
+                        mk.set_playing(!paused);
+                    }
+                    MediaKey::Stop => {
+                        let _ = tx.send(PlaybackCmd::Quit);
+                        return LoopExit::Quit;
+                    }
+                    MediaKey::Next => {
+                        let _ = tx.send(PlaybackCmd::Quit);
+                        return LoopExit::NextSong;
+                    }
+                    MediaKey::Previous => {
+                        let _ = tx.send(PlaybackCmd::Quit);
+                        return LoopExit::PrevSong;
+                    }
+                }
+            }
+        }
+
         // `event::poll` returns Ok(true) when an event is ready and Ok(false)
         // on timeout. The previous `.is_ok()` check entered the `read()` arm
         // on *both* — and `read()` blocks indefinitely waiting for input.

@@ -20,6 +20,16 @@ crossterm = "0.29.0"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 dirs = "5"
+# souvlaki wraps macOS MPRemoteCommandCenter (+ Linux MPRIS / Windows
+# SystemMediaTransportControls). Gives us OS-level media keys, system
+# Now Playing display, and play/pause/next/prev callbacks that fire
+# regardless of which app has focus.
+[target.'cfg(target_os = "macos")'.dependencies]
+# default features pull in libdbus for the Linux MPRIS backend, which
+# doesn't link on macOS. Disable defaults so we only get the macOS
+# (CoreFoundation / AppKit / MediaPlayer) backend.
+souvlaki = { version = "0.8", default-features = false }
+core-foundation = "0.10"
 
 
 # uncomment for termux
