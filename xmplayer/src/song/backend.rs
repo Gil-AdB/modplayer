@@ -530,28 +530,28 @@ pub(super) fn cut_voice(
     }
 }
 
-/// Move the contents of an actively-playing voice into a background slot
-/// and mark THAT copy with `pending_cut`. The mixer will continue to
-/// play the snapshot's sample (at its current sample_position) while
-/// ramping its gain to 0 over the next ~5 ms. Meanwhile the source slot
-/// is freed (`on = false`) so the upcoming `alloc_voice` for the new
-/// note can take it.
+/// Move the contents of an actively-playing voice into a background
+/// slot and mark THAT copy with `pending_cut`. The mixer will continue
+/// to play the snapshot's sample (at its current sample_position)
+/// while ramping its gain to 0 over the next ~5 ms; meanwhile the
+/// source slot is freed (`on = false`) so the upcoming `alloc_voice`
+/// for the new note can take it. During the 5 ms overlap window both
+/// voices contribute — background fades out, new voice fades in,
+/// summing to a smooth crossfade. Without this snapshot the old
+/// voice's audio disappears the instant the new trigger lands, and
+/// the new voice's 0-to-target fade-in leaves a brief amplitude gap
+/// (the residual pop the gain-only ramp couldn't fix).
 ///
-/// The point: during the 5 ms overlap window, both voices contribute —
-/// the background voice fades out, the new voice fades in, summing to
-/// a smooth crossfade. Without this snapshot the old voice's audio
-/// disappears the instant the new trigger lands, and the new voice's
-/// 0-to-target fade-in leaves a brief gap (the residual "pop" the
-/// gain-only ramp couldn't fix).
+/// Caller-side contract: this function only touches `voices`. Any
+/// `channels[ci].voice_idx` that pointed to `src_idx` is left in
+/// place — `bind_voice_for_channel` resets it during the upcoming
+/// new-note allocation. Pass through this entry point from every
+/// "abrupt cut" site (NNA Cut, NoteAction::Cut, DCA Cut) so the
+/// snapshot semantics stay consistent.
 ///
-/// Falls back to in-place pending_cut if no background slot is free —
-/// the 256-slot pool makes that unlikely, but the fallback keeps
-/// behaviour deterministic.
-/// Variant of `spawn_background_cut` for callers that don't have
-/// `&mut channels` (e.g. `cut_or_nna_existing_voice`). The caller is
-/// responsible for clearing/reassigning `channels[ci].voice_idx` —
-/// `bind_voice_for_channel` does that after allocating the new note
-/// in the typical trigger flow, so this is a safe simplification.
+/// Falls back to in-place `pending_cut` on the source slot when no
+/// idle slot is free — the 256-slot pool makes that unlikely, but the
+/// fallback keeps behaviour deterministic if it ever happens.
 pub(super) fn spawn_background_cut_inline(
     voices: &mut [Voice],
     src_idx: usize,
@@ -571,45 +571,6 @@ pub(super) fn spawn_background_cut_inline(
     } else {
         voices[src_idx].pending_cut = true;
         voices[src_idx].cut_reason = Some(reason);
-    }
-}
-
-pub(super) fn spawn_background_cut(
-    voices: &mut [Voice],
-    channels: &mut [ChannelState],
-    src_idx: usize,
-    reason: crate::channel_state::VoiceCutReason,
-) {
-    if !voices[src_idx].on || voices[src_idx].pending_cut {
-        return;
-    }
-    let bg_idx = voices.iter().position(|v| !v.on);
-    let ci = voices[src_idx].channel_idx;
-    if let Some(bg) = bg_idx {
-        if bg != src_idx {
-            voices[bg] = voices[src_idx];
-            voices[bg].pending_cut = true;
-            voices[bg].cut_reason = Some(reason);
-            // The background voice no longer "hosts" any channel — it's
-            // a detached ramp-out copy. Clearing channel_idx isn't
-            // strictly needed (mixer reads voice.channel_idx only for
-            // pan/surround lookups and that's still correct), but the
-            // channel.voice_idx pointer must stop referencing this slot
-            // so the new trigger can claim it.
-        }
-        // The source slot is now free for the new trigger to use.
-        voices[src_idx].on = false;
-        voices[src_idx].cut_reason = Some(reason);
-        if ci < channels.len() && channels[ci].voice_idx == Some(src_idx) {
-            channels[ci].voice_idx = None;
-        }
-    } else {
-        // No idle slot — fall back to ramping the source in-place.
-        voices[src_idx].pending_cut = true;
-        voices[src_idx].cut_reason = Some(reason);
-        if ci < channels.len() && channels[ci].voice_idx == Some(src_idx) {
-            channels[ci].voice_idx = None;
-        }
     }
 }
 
