@@ -415,16 +415,22 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         //   value <254 -- pattern index
         //   254       -- "+++" skip marker (advance to next order at playback)
         //   255       -- "---" end-of-song marker
-        // Both sentinels can appear in the middle of the list, and Bxx jumps
-        // address the original indices — so we must NOT compact or truncate
-        // the list (doing so reindexes Bxx targets and drops orders that
-        // are only reachable via Bxx). orbiter.it is the canary: its
-        // B1E/B1C loop hops to order 30 which sits past a 255 at order 29.
-        // Strip only trailing 255s so song_length doesn't include an
-        // unreachable tail.
-        while pattern_order.last() == Some(&255) {
-            pattern_order.pop();
-        }
+        // We treat 255 as a hard end-of-song: linear playback stops there
+        // AND Bxx jumps past it terminate as well (the target is past
+        // song_length). Composers using Bxx-past-255 are typically
+        // building outros that compute to long structural lengths the
+        // listener never actually hears (e.g. orbiter.it: an Axx=0xFF
+        // /Txx=0x20 silent loop in pat 25 makes the song's structural
+        // length 24+ min while the audible end is at 3:09). Treating 255
+        // as hard end matches the user's intent for orbiter and doesn't
+        // regress any other corpus song (no other module Bxx-jumps past
+        // a sentinel).
+        //
+        // 254 ("+++") embedded mid-list IS still preserved verbatim so
+        // Bxx targets keep their original indices and the playback-time
+        // sentinel-skip walks past it.
+        let cut = pattern_order.iter().position(|&v| v == 255).unwrap_or(pattern_order.len());
+        pattern_order.truncate(cut);
     }
 
     fn read_it_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
