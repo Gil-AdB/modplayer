@@ -574,6 +574,7 @@ pub(super) fn spawn_background_cut_inline(
     }
 }
 
+
 pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
     // Prefer truly idle slots (on==false). A `pending_cut` voice is
     // technically still on (mixer is ramping it out) — skip those so
@@ -614,6 +615,13 @@ pub(super) fn validate_voice_pool(voices: &[Voice], channels: &[ChannelState]) {
         if vi >= voices.len() { continue; }
         let v = &voices[vi];
         if v.on && v.channel_idx != ci {
+            // Stale pointer: another channel reused this slot without
+            // clearing our reference. We do NOT auto-repair — that
+            // would hide whatever cut/alloc path is leaving orphans
+            // behind. Debug builds panic for fast pinpointing; release
+            // builds log each *distinct* (channel, slot) pair once so
+            // the user can see how many real orphans there are without
+            // drowning in per-tick repeats of the same pair.
             let msg = format!(
                 "voice-pool invariant violated: channel {} → voice_idx=Some({}), \
                  but voice {} is active and owned by channel {}",
@@ -622,7 +630,21 @@ pub(super) fn validate_voice_pool(voices: &[Voice], channels: &[ChannelState]) {
             #[cfg(debug_assertions)]
             panic!("{}", msg);
             #[cfg(not(debug_assertions))]
-            eprintln!("[voice-pool] {}", msg);
+            {
+                use std::sync::Mutex;
+                use std::collections::HashSet;
+                // Distinct-pair throttle: log each (ci, vi, host) combo
+                // once per process. Same orphan persisting across many
+                // ticks counts as one; truly new orphans appearing later
+                // each get their own line.
+                static SEEN: Mutex<Option<HashSet<(usize, usize, usize)>>> = Mutex::new(None);
+                let key = (ci, vi, v.channel_idx);
+                let mut guard = SEEN.lock().unwrap();
+                let set = guard.get_or_insert_with(HashSet::new);
+                if set.insert(key) {
+                    eprintln!("[voice-pool] {}", msg);
+                }
+            }
         }
     }
 }
@@ -650,6 +672,7 @@ pub(super) fn init_voice_basics(voice: &mut Voice, channel_idx: usize, instrumen
 /// that block is more involved and stays inline in ItBackend.
 pub(super) fn cut_or_nna_existing_voice(
     voices: &mut [Voice],
+    channel: &mut ChannelState,
     instruments: &Vec<Instrument>,
     song_type: SongType,
     channel_idx: usize,
@@ -657,25 +680,27 @@ pub(super) fn cut_or_nna_existing_voice(
 ) {
     let v = &voices[prev_voice_idx];
     if !(v.on && v.channel_idx == channel_idx) { return; }
+    // Helper: snapshot the voice into a background slot, then clear the
+    // host channel's voice_idx if it was pointing at this slot. Without
+    // the clear, a later alloc_voice call may hand the freed slot to a
+    // different channel and the old pointer becomes a stale reference.
+    let cut_and_clear = |voices: &mut [Voice], ch: &mut ChannelState, idx: usize| {
+        spawn_background_cut_inline(voices, idx,
+            crate::channel_state::VoiceCutReason::NoteCut);
+        if ch.voice_idx == Some(idx) { ch.voice_idx = None; }
+    };
     match song_type {
         SongType::XM | SongType::MOD => {
-            spawn_background_cut_inline(voices, prev_voice_idx,
-                crate::channel_state::VoiceCutReason::NoteCut);
+            cut_and_clear(voices, channel, prev_voice_idx);
         }
         _ => {
             let nna = instruments[voices[prev_voice_idx].instrument].nna;
             match nna {
-                0 => {
-                    spawn_background_cut_inline(voices, prev_voice_idx,
-                        crate::channel_state::VoiceCutReason::NoteCut);
-                }
+                0 => { cut_and_clear(voices, channel, prev_voice_idx); }
                 1 => { /* Continue */ }
                 2 => { voices[prev_voice_idx].key_off(instruments, song_type); } // Note Off
                 3 => { voices[prev_voice_idx].sustained = false; } // Fade
-                _ => {
-                    spawn_background_cut_inline(voices, prev_voice_idx,
-                        crate::channel_state::VoiceCutReason::NoteCut);
-                }
+                _ => { cut_and_clear(voices, channel, prev_voice_idx); }
             }
         }
     }

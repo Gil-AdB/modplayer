@@ -16,17 +16,22 @@ impl ItBackend {
         Self {}
     }
 
-    fn apply_it_action(voices: &mut [Voice], voice_idx: usize, action: u8, instrument: &Instrument) {
+    fn apply_it_action(voices: &mut [Voice], channel: &mut crate::channel_state::ChannelState, voice_idx: usize, action: u8, instrument: &Instrument) {
         if action == 0 {
             // Cut: snapshot the voice state into a background slot and
             // ramp THAT copy to 0 — the source slot is freed so the
             // new note's alloc_voice can claim it and start its own
-            // ramp from 0. Both contribute during the 5 ms crossover
-            // for a clean transition.
+            // ramp from 0. Then clear the host channel's voice_idx if
+            // it points at this slot, otherwise a later alloc_voice
+            // hand-off to a different channel orphans the pointer (the
+            // spx-shuttledeparture DCT=3 invariant warnings).
             crate::song::backend::spawn_background_cut_inline(
                 voices, voice_idx,
                 crate::channel_state::VoiceCutReason::NoteCut,
             );
+            if channel.voice_idx == Some(voice_idx) {
+                channel.voice_idx = None;
+            }
             return;
         }
         let voice = &mut voices[voice_idx];
@@ -123,19 +128,22 @@ impl ModuleBackend for ItBackend {
                                 // IT DCT/DCA handling
                                 let mut dca_applied = false;
                                 for vi in 0..r.voices.len() {
-                                    let v = &mut r.voices[vi];
-                                    if !v.on || v.channel_idx != i { continue; }
+                                    let (on, ci, last_note, samp, inst_id) = {
+                                        let v = &r.voices[vi];
+                                        (v.on, v.channel_idx, v.last_played_note, v.sample, v.instrument)
+                                    };
+                                    if !on || ci != i { continue; }
                                     match instrument.dct {
-                                        1 => { if v.last_played_note == pattern.note { Self::apply_it_action(r.voices, vi, instrument.dca, instrument); dca_applied = true; } }
-                                        2 => { if v.sample == final_sample_idx && v.instrument == inst_idx { Self::apply_it_action(r.voices, vi, instrument.dca, instrument); dca_applied = true; } }
-                                        3 => { if v.instrument == inst_idx { Self::apply_it_action(r.voices, vi, instrument.dca, instrument); dca_applied = true; } }
+                                        1 => { if last_note == pattern.note { Self::apply_it_action(r.voices, channel, vi, instrument.dca, instrument); dca_applied = true; } }
+                                        2 => { if samp == final_sample_idx && inst_id == inst_idx { Self::apply_it_action(r.voices, channel, vi, instrument.dca, instrument); dca_applied = true; } }
+                                        3 => { if inst_id == inst_idx { Self::apply_it_action(r.voices, channel, vi, instrument.dca, instrument); dca_applied = true; } }
                                         _ => {}
                                     }
                                 }
                                 if !dca_applied {
                                     if let Some(v_idx) = channel.voice_idx {
                                         if r.voices[v_idx].on {
-                                            Self::apply_it_action(r.voices, v_idx, instrument.nna, instrument);
+                                            Self::apply_it_action(r.voices, channel, v_idx, instrument.nna, instrument);
                                         }
                                     }
                                 }

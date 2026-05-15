@@ -62,7 +62,7 @@ impl ModuleBackend for ModBackend {
                     if inst_idx != 0 && !instruments[inst_idx].samples.is_empty() {
                         let sample_idx = 0;
                         let prev_voice_idx = channel.voice_idx.unwrap_or(i);
-                        cut_or_nna_existing_voice(r.voices, instruments, r.song_data.song_type, i, prev_voice_idx);
+                        cut_or_nna_existing_voice(r.voices, channel, instruments, r.song_data.song_type, i, prev_voice_idx);
 
                         let voice_idx = alloc_voice(r.voices);
                         init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, sample_idx);

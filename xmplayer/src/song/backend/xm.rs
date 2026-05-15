@@ -86,7 +86,7 @@ impl ModuleBackend for XmBackend {
                                 // the current voice volume. Only an explicit
                                 // instrument reloads sample default vol+pan.
                                 let prev_vol = r.voices[prev_voice_idx].volume.volume;
-                                cut_or_nna_existing_voice(r.voices, instruments, r.song_data.song_type, i, prev_voice_idx);
+                                cut_or_nna_existing_voice(r.voices, channel, instruments, r.song_data.song_type, i, prev_voice_idx);
 
                                 let voice_idx = alloc_voice(r.voices);
                                 init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
