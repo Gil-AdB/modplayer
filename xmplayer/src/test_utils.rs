@@ -117,6 +117,7 @@ impl MockSongBuilder {
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
             initial_channel_panning: [128; 64],
+            initial_channel_surround: [false; 64],
             global_volume: self.global_volume,
             master_volume: self.master_volume,
             mixing_volume: 128,

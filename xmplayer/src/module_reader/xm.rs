@@ -309,6 +309,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
         song_message: "".to_string(),
         initial_channel_volume: [64; 64],
         initial_channel_panning: [128; 64],
+        initial_channel_surround: [false; 64],
         global_volume:           64,
         master_volume:           128,
         mixing_volume:           128,

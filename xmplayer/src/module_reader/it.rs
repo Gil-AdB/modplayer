@@ -476,14 +476,24 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         
         let mut initial_channel_panning = [128u8; 64];
         let mut initial_channel_volume = [64u8; 64];
+        let mut initial_channel_surround = [false; 64];
         for i in 0..64 {
             let p = file.read_u8()?;
-            if p <= 64 {
-                initial_channel_panning[i] = p * 4;
-            } else if p == 100 {
-                initial_channel_panning[i] = 128; // Surround -> Center for now
-            } else if p >= 128 { // Mute
+            let pan = p & 0x7F;
+            // High bit = channel muted by default. Note OMT keeps the
+            // pan value alongside the mute, we mirror by zeroing the
+            // initial channel volume which has the same audible effect
+            // (the channel plays silent).
+            if p >= 128 {
                 initial_channel_volume[i] = 0;
+            }
+            if pan <= 64 {
+                initial_channel_panning[i] = pan * 4;
+            } else if pan == 100 {
+                // IT surround marker: center pan + flag the channel
+                // for phase-inverted right-channel output at the mixer.
+                initial_channel_panning[i] = 128;
+                initial_channel_surround[i] = true;
             }
         }
 
@@ -576,6 +586,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             song_message,
             initial_channel_volume,
             initial_channel_panning,
+            initial_channel_surround,
             global_volume,
             master_volume,
             mixing_volume,

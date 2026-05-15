@@ -201,6 +201,7 @@
             song_message: "".to_string(),
             initial_channel_volume,
             initial_channel_panning,
+            initial_channel_surround: [false; 64],
             global_volume,
             master_volume,
             mixing_volume:           128,

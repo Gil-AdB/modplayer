@@ -109,6 +109,12 @@ pub struct SongData {
     pub                     song_message:       String,
     pub                     initial_channel_volume: [u8; 64],
     pub                     initial_channel_panning: [u8; 64],
+    /// Per-channel header-level surround flag. IT chnpan byte == 100
+    /// means "this channel plays surround (phase-inverted R)" — OMT
+    /// sets CHN_SURROUND at load time. dean.it / xemogasa songs rely
+    /// on this for ch1/ch6/etc. Without it our renderer plays the
+    /// channels centered and the diff vs OMT shows them mis-attributed.
+    pub                     initial_channel_surround: [bool; 64],
     pub                     global_volume:           u8,
     pub                     master_volume:           u8,
     pub                     mixing_volume:           u8,
@@ -144,6 +150,7 @@ impl Default for SongData {
             song_message: "".to_string(),
             initial_channel_volume: [64; 64],
             initial_channel_panning: [128; 64],
+            initial_channel_surround: [false; 64],
             global_volume: 128,
             master_volume: 128,
             mixing_volume: 128,

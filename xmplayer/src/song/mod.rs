@@ -580,12 +580,8 @@ impl Song {
             let mut channel = ChannelState::new();
             channel.frequency_scale = mix.freq_scale;
             if i < 64 {
-                let p = song_data.initial_channel_panning[i];
-                if p == 100 {
-                    channel.panning.panning = 128; // Surround -> Center for now
-                } else {
-                    channel.panning.panning = p;
-                }
+                channel.panning.panning = song_data.initial_channel_panning[i];
+                channel.surround = song_data.initial_channel_surround[i];
                 channel.volume.set_volume(song_data.initial_channel_volume[i] as i32);
                 channel.channel_volume = song_data.initial_channel_volume[i];
             }

@@ -117,12 +117,8 @@ impl Song {
             *ch = ChannelState::new();
             ch.frequency_scale = mix.freq_scale;
             if i < 64 && i < self.song_data.initial_channel_volume.len() && i < self.song_data.initial_channel_panning.len() {
-                let p = self.song_data.initial_channel_panning[i];
-                if p == 100 {
-                    ch.panning.panning = 128;
-                } else {
-                    ch.panning.panning = p;
-                }
+                ch.panning.panning = self.song_data.initial_channel_panning[i];
+                ch.surround = self.song_data.initial_channel_surround[i];
                 ch.volume.set_volume(self.song_data.initial_channel_volume[i] as i32);
                 ch.channel_volume = self.song_data.initial_channel_volume[i];
             }
