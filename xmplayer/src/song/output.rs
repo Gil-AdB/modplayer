@@ -264,6 +264,7 @@ impl Song {
             return;
         }
 
+
         // Both axes (master byte mask + post-master scale) come from the
         // shared per-format mixer table (`backend::voice_mix`). S3M/STM
         // mask bit 7 (stereo flag) and apply √2 to match libopenmpt's

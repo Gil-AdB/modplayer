@@ -178,11 +178,34 @@ impl Sample {
             self.loop_type = LoopType::ForwardLoop;
         }
 
-        // Add 4 samples at the end for suffix padding
+        // Suffix padding: 4 samples placed AT loop_end (not appended at
+        // the end of the array). For samples where `length > loop_end`
+        // (i.e. there's "tail" data after the loop point), appending at
+        // `length` leaves bytes [loop_end..length] holding the original
+        // tail, which the mixer's interpolation reads when sample_position
+        // is just past loop_end (before the wrap fires) — producing
+        // clicks if the tail and loop-start values differ. orbiter's
+        // sample 28 hits this: tail bytes are 0x80 (-1.0 in signed
+        // f32), loop_start bytes are ~0xEB (-0.16). The interpolation
+        // momentarily reads -1.0 before the wrap → audible pop.
+        //
+        // Overwrite the 4 bytes immediately after loop_end with the
+        // first 4 samples of the loop so linear/cubic/sinc interp at
+        // any fractional position near loop_end yields a continuous
+        // value matching the post-wrap data.
         if self.loop_type == LoopType::ForwardLoop {
+            let loop_end = self.loop_end as usize;
+            let loop_start = self.loop_start as usize;
+            // Make sure the buffer has room for the 4-sample suffix at
+            // [loop_end..loop_end+4]. If length == loop_end, we still
+            // need to extend by 4. Otherwise the existing tail past
+            // loop_end is overwritten in-place.
+            while self.data.len() < loop_end + 4 {
+                self.data.push(0.0);
+            }
             for i in 0..4 {
-                let idx = (self.loop_start as usize + i).min(self.loop_end as usize - 1);
-                self.data.push(self.data[idx]);
+                let idx = (loop_start + i).min(loop_end.saturating_sub(1));
+                self.data[loop_end + i] = self.data[idx];
             }
         } else {
             let last = *self.data.last().unwrap();
