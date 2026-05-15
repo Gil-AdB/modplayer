@@ -482,7 +482,12 @@ impl Song {
                         let pos = voice.sample_position as usize;
                         let phase = (voice.sample_position.fract() * 512.0) as usize;
                         let table = &self.frequency_tables.resampling.sinc_table[phase];
-                        sinc_dot_product(&sample.data[pos - 3..], table)
+                        // saturating_sub matches the SIMD sinc path above
+                        // — `pos` should always be >= 4 thanks to the
+                        // sample's 4-sample prefix padding, but degenerate
+                        // / short / mid-loop-wrap edges can briefly land
+                        // < 3 and we'd otherwise panic on the slice.
+                        sinc_dot_product(&sample.data[pos.saturating_sub(3)..], table)
                     },
                     FilterType::None => {
                         sample.data[voice.sample_position as usize]
