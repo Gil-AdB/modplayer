@@ -706,7 +706,12 @@ mod tests {
         tester.tick();
         assert_eq!(tester.song.channels[0].period_shift, 0);
         let expected_hz = 8363.0 * 2.0f32.powf(2.0 / 12.0);
-        tester.assert_pitch_near(0, expected_hz, 5.0);
+        // With volume ramping, the row-0 voice persists in its slot
+        // (ramping out) while the row-1 trigger gets a fresh slot.
+        // Resolve the channel's current host voice rather than hard-
+        // coding voice index 0.
+        let v_idx = tester.song.channels[0].voice_idx.expect("channel 0 should have a host voice");
+        tester.assert_pitch_near(v_idx, expected_hz, 5.0);
     }
 
     #[test]

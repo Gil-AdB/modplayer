@@ -20,9 +20,13 @@ impl ItBackend {
         let voice = &mut voices[voice_idx];
         match action {
             0 => { // Cut
-                voice.on = false;
+                // Deferred cut — mixer ramps voice gain to 0 over
+                // ~5 ms before releasing the slot. Keeping output_volume
+                // at its current value lets the ramp interpolate from
+                // the actual amplitude (not from 0), so the cross-fade
+                // is smooth.
+                voice.pending_cut = true;
                 voice.cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
-                voice.volume.output_volume = 0.0;
             }
             1 => { // Continue
                 // Do nothing

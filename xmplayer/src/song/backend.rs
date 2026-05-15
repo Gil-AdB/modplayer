@@ -487,11 +487,18 @@ pub(super) fn dispatch_main_and_extended(
     }
 }
 
-/// Pick a voice slot for a new note: prefer the first idle voice, otherwise
-/// steal the quietest one. Used by every backend's note-trigger block.
 /// Cut `voices[v_idx]` and invalidate the owning channel's `voice_idx` if it
 /// pointed here. Use this for every "voice.on = false" path so the voice-pool
 /// invariant (host channel ↔ voice ownership) is maintained.
+///
+/// The cut is *deferred* — we set `pending_cut` and the mixer ramps the
+/// voice's gain to 0 over ~5 ms before flipping `on` to false. The
+/// channel ownership pointer is cleared immediately so subsequent note
+/// triggers don't try to interact with the dying voice (they'll get a
+/// fresh slot from `alloc_voice`, leaving this one to ramp out in
+/// peace). Without the ramp, hard-cutting a voice mid-cycle produces
+/// the step-discontinuity pops that are obvious in orbiter and present
+/// quietly in every other module.
 pub(super) fn cut_voice(
     voices: &mut [Voice],
     channels: &mut [ChannelState],
@@ -499,9 +506,24 @@ pub(super) fn cut_voice(
     reason: crate::channel_state::VoiceCutReason,
 ) {
     let voice = &mut voices[v_idx];
-    if !voice.on { return; }
+    if !voice.on || voice.pending_cut { return; }
     let ci = voice.channel_idx;
-    voice.on = false;
+    // Short-circuit: a voice that's already silent doesn't need a ramp.
+    // This keeps the mute_silent_voices end-of-tick cleanup deterministic
+    // for test frameworks that don't run the audio mixer — and avoids
+    // wasting mixer cycles on already-zero ramps.
+    let already_silent =
+        voice.current_left_vol.abs() < 1e-5 && voice.current_right_vol.abs() < 1e-5
+        && voice.volume.output_volume < 1e-5;
+    if already_silent {
+        voice.on = false;
+        voice.cut_reason = Some(reason);
+        if ci < channels.len() && channels[ci].voice_idx == Some(v_idx) {
+            channels[ci].voice_idx = None;
+        }
+        return;
+    }
+    voice.pending_cut = true;
     voice.cut_reason = Some(reason);
     if ci < channels.len() && channels[ci].voice_idx == Some(v_idx) {
         channels[ci].voice_idx = None;
@@ -509,8 +531,16 @@ pub(super) fn cut_voice(
 }
 
 pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
+    // Prefer truly idle slots (on==false). A `pending_cut` voice is
+    // technically still on (mixer is ramping it out) — skip those so
+    // we don't yank away the ramp; pick another slot instead.
     for (vi, v) in voices.iter().enumerate() {
         if !v.on { return vi; }
+    }
+    // Fall back to slots ramping out — better than evicting a live
+    // voice if every slot is busy. (We have 256 slots so this is rare.)
+    for (vi, v) in voices.iter().enumerate() {
+        if v.pending_cut { return vi; }
     }
     let mut idx = 0;
     let mut min_vol = f32::INFINITY;
@@ -563,6 +593,11 @@ pub(super) fn init_voice_basics(voice: &mut Voice, channel_idx: usize, instrumen
     voice.channel_idx = channel_idx;
     voice.instrument = instrument;
     voice.sample = sample;
+    // Fresh note triggers fade in from silence — otherwise reusing a
+    // slot that still holds the previous voice's instantaneous gain
+    // would re-introduce the step-discontinuity click we're trying to
+    // avoid.
+    voice.reset_ramp_for_new_note();
 }
 
 /// Apply the previous-voice-on-channel handling that runs before alloc_voice
@@ -580,21 +615,21 @@ pub(super) fn cut_or_nna_existing_voice(
     if !(v.on && v.channel_idx == channel_idx) { return; }
     match song_type {
         SongType::XM | SongType::MOD => {
-            voices[prev_voice_idx].on = false;
+            voices[prev_voice_idx].pending_cut = true;
             voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
         }
         _ => {
             let nna = instruments[voices[prev_voice_idx].instrument].nna;
             match nna {
                 0 => {
-                    voices[prev_voice_idx].on = false;
+                    voices[prev_voice_idx].pending_cut = true;
                     voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
                 }
                 1 => { /* Continue */ }
                 2 => { voices[prev_voice_idx].key_off(instruments, song_type); } // Note Off
                 3 => { voices[prev_voice_idx].sustained = false; } // Fade
                 _ => {
-                    voices[prev_voice_idx].on = false;
+                    voices[prev_voice_idx].pending_cut = true;
                     voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
                 }
             }

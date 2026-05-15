@@ -274,6 +274,13 @@ impl Song {
         let master_gain = (raw_master as f32 / 128.0) * (self.mixing_volume as f32 / 128.0);
         let final_master_gain = master_gain * mix.global_scale;
 
+        // ~5 ms ramp at 48 kHz (matches OMT's default mixer ramp). Smooths
+        // every per-voice gain change: fresh trigger from 0 to target,
+        // NNA Cut / sample-end / fadeout to 0, plus any per-tick gain
+        // motion from envelopes / vibrato / channel-volume effects. Set
+        // once per call; updates per voice on the per-tick target jump.
+        const RAMP_SAMPLES: u32 = 240;
+
         for (voice_idx, voice) in self.voices.iter_mut().enumerate() {
             if !voice.on { continue; }
 
@@ -288,7 +295,7 @@ impl Song {
 
             let sample = self.song_data.get_sample(voice);
             let pan = voice.panning.final_panning as usize;
-            let (vol_left, mut vol_right) = match mix.pan_law {
+            let (pan_left, mut pan_right) = match mix.pan_law {
                 PanLaw::Ft2Sqrt => (
                     PANNING_TAB[256 - pan] as f32 / 65536.0,
                     PANNING_TAB[pan]       as f32 / 65536.0,
@@ -305,7 +312,29 @@ impl Song {
             // double-panned mono, which is what diff_bisect saw as
             // "395× too loud" against OMT's cancelled mono mix.
             if self.channels[voice.channel_idx].surround {
-                vol_right = -vol_right;
+                pan_right = -pan_right;
+            }
+
+            // Per-tick target L/R gain. When `pending_cut` is set the
+            // target is 0 — the mixer ramps current_*_vol down to 0,
+            // then sets voice.on = false at the bottom of this block.
+            let target_amp = if voice.pending_cut {
+                0.0
+            } else {
+                (voice.volume.output_volume * 0.5) * final_master_gain
+            };
+            let target_left = target_amp * pan_left;
+            let target_right = target_amp * pan_right;
+            // Start a fresh ramp whenever the target moves. ε avoids
+            // restarting the ramp on tiny per-tick envelope/vibrato
+            // motion that's already smooth enough not to click.
+            let eps = 1e-7f32;
+            if (target_left - voice.current_left_vol).abs() > eps
+               || (target_right - voice.current_right_vol).abs() > eps {
+                let n = RAMP_SAMPLES as f32;
+                voice.left_ramp_step  = (target_left  - voice.current_left_vol)  / n;
+                voice.right_ramp_step = (target_right - voice.current_right_vol) / n;
+                voice.ramp_samples_remaining = RAMP_SAMPLES;
             }
 
             let mut i = 0;
@@ -373,7 +402,6 @@ impl Song {
                     }
                 }
 
-                let output_vol = (voice.volume.output_volume / 2.0) * final_master_gain;
                 let channel = &mut self.channels[voice.channel_idx];
 
                 for j in 0..4 {
@@ -392,14 +420,27 @@ impl Song {
                         voice.filter_state.history[0] = out;
                         final_sample = out;
                     }
-                    final_sample *= output_vol;
 
-                    // Update per-channel visualizer
-                    channel.last_samples[channel.last_samples_pos] = final_sample;
+
+                    // Step the per-sample ramp toward target. Once the
+                    // ramp samples are exhausted, current_*_vol stays
+                    // pinned at target.
+                    if voice.ramp_samples_remaining > 0 {
+                        voice.current_left_vol  += voice.left_ramp_step;
+                        voice.current_right_vol += voice.right_ramp_step;
+                        voice.ramp_samples_remaining -= 1;
+                    }
+
+                    // Update per-channel visualizer. Use the average of
+                    // current L/R as an "applied gain" surrogate so the
+                    // scope follows the ramp (otherwise the visualizer
+                    // would show the raw waveform regardless of cuts).
+                    let avg_gain = (voice.current_left_vol + voice.current_right_vol) * 0.5;
+                    channel.last_samples[channel.last_samples_pos] = final_sample * avg_gain.abs() * 2.0;
                     channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
 
-                    let l = final_sample * vol_left;
-                    let r = final_sample * vol_right;
+                    let l = final_sample * voice.current_left_vol;
+                    let r = final_sample * voice.current_right_vol;
 
                     self.master_samples[self.master_samples_pos] = (l + r) / 2.0;
                     self.master_samples_pos = (self.master_samples_pos + 1) % 8192;
@@ -415,6 +456,8 @@ impl Song {
             // Scalar Fallback
             while i < ticks_to_generate {
                 if voice.sample_position as u32 >= sample.length {
+                    // Sample exhausted with no further data to mix —
+                    // there's nothing to ramp out, just release the slot.
                     voice.on = false;
                     voice.cut_reason = Some(crate::channel_state::VoiceCutReason::SampleEnd);
                     if self.channels[voice.channel_idx].voice_idx == Some(voice_idx) {
@@ -459,14 +502,21 @@ impl Song {
                     out_sample = out;
                 }
 
-                let final_sample = (out_sample / 2.0) * voice.volume.output_volume * final_master_gain;
+                if voice.ramp_samples_remaining > 0 {
+                    voice.current_left_vol  += voice.left_ramp_step;
+                    voice.current_right_vol += voice.right_ramp_step;
+                    voice.ramp_samples_remaining -= 1;
+                }
+
+                let final_sample = out_sample;
                 let channel = &mut self.channels[voice.channel_idx];
 
-                channel.last_samples[channel.last_samples_pos] = final_sample;
+                let avg_gain = (voice.current_left_vol + voice.current_right_vol) * 0.5;
+                channel.last_samples[channel.last_samples_pos] = final_sample * avg_gain.abs() * 2.0;
                 channel.last_samples_pos = (channel.last_samples_pos + 1) % 512;
 
-                let l = final_sample * vol_left;
-                let r = final_sample * vol_right;
+                let l = final_sample * voice.current_left_vol;
+                let r = final_sample * voice.current_right_vol;
 
                 self.master_samples[self.master_samples_pos] = (l + r) / 2.0;
                 self.master_samples_pos = (self.master_samples_pos + 1) % 8192;
@@ -499,6 +549,21 @@ impl Song {
                     }
                 }
                 i += 1;
+            }
+
+            // Finalize a pending cut once the gain has reached 0. The
+            // ramp pulls current_*_vol toward target=0 over RAMP_SAMPLES;
+            // once it lands, the voice contributes nothing audibly and
+            // can be released for reuse.
+            if voice.pending_cut
+                && voice.ramp_samples_remaining == 0
+                && voice.current_left_vol.abs() < 1e-5
+                && voice.current_right_vol.abs() < 1e-5
+            {
+                voice.on = false;
+                if self.channels[voice.channel_idx].voice_idx == Some(voice_idx) {
+                    self.channels[voice.channel_idx].voice_idx = None;
+                }
             }
         }
     }

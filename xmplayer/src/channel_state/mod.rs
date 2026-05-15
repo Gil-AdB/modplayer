@@ -99,6 +99,22 @@ pub struct Voice {
     /// Reason the mixer set `voice.on = false`, if any. Persists across
     /// the cut so post-mortem dumps can attribute silenced voices.
     pub cut_reason:                     Option<VoiceCutReason>,
+
+    // ---- per-sample volume ramping (anti-click) ----
+    /// Instantaneous L/R gain currently applied at the mixer. Updated
+    /// per output sample by `left_ramp_step` / `right_ramp_step`. Held
+    /// at the per-tick target once `ramp_samples_remaining` hits 0.
+    pub current_left_vol:               f32,
+    pub current_right_vol:              f32,
+    pub left_ramp_step:                 f32,
+    pub right_ramp_step:                f32,
+    pub ramp_samples_remaining:         u32,
+    /// True ⇒ a cut was requested but the mixer is ramping the voice's
+    /// gain down to 0 first. Once `current_left_vol`/`current_right_vol`
+    /// reach 0 the mixer sets `on = false`. Use the `cut_voice` helper
+    /// in `song/backend.rs` to set this — it also keeps the channel-side
+    /// `voice_idx` invariant intact.
+    pub pending_cut:                    bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -182,7 +198,30 @@ impl Voice {
             last_played_note: 0,
             last_render_tick: 0,
             cut_reason: None,
+            current_left_vol: 0.0,
+            current_right_vol: 0.0,
+            left_ramp_step: 0.0,
+            right_ramp_step: 0.0,
+            ramp_samples_remaining: 0,
+            pending_cut: false,
         }
+    }
+
+    /// Reset ramp state for a fresh note trigger. We deliberately *keep*
+    /// `current_left_vol` / `current_right_vol` at whatever value the
+    /// slot last held — when alloc_voice reuses a slot that had been
+    /// playing, the new voice inherits the slot's instantaneous gain
+    /// and the mixer's per-sample ramp interpolates from there toward
+    /// the new target. Zeroing them here would re-introduce the step
+    /// discontinuity (slot's last output → 0 in one sample) that the
+    /// ramp is supposed to prevent. The new note still effectively
+    /// "fades in" because the ramp updates start from the old gain
+    /// rather than from 0.
+    pub fn reset_ramp_for_new_note(&mut self) {
+        self.left_ramp_step = 0.0;
+        self.right_ramp_step = 0.0;
+        self.ramp_samples_remaining = 0;
+        self.pending_cut = false;
     }
 
 
