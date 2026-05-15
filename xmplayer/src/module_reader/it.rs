@@ -449,8 +449,17 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let _ = file.read_u16()?;
         let compatible_with_version = file.read_u16()?;
 
-        if compatible_with_version < 0x200 {
-            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "IT module is not in a compatible format")));
+        // cmwt < 0x200 marks files that use the OLD IT instrument
+        // format (ITOldInstrument in OMT's ITTools.h, 554 bytes with a
+        // different layout from the modern 554-byte ITInstrument).
+        // We don't implement that struct, so files that actually carry
+        // instruments need to be refused. For sample-mode files
+        // (instrument_count == 0) we never touch instrument headers,
+        // so an old cmwt is harmless and we let the loader proceed.
+        // foregone.it is the canary: cmwt=0x100 + insnum=0, plays
+        // fine if we don't gate it out.
+        if compatible_with_version < 0x200 && instrument_count > 0 {
+            return Err(SimpleError::from(io::Error::new(io::ErrorKind::Other, "IT module uses old (cmwt < 0x200) instrument format")));
         }
 
         let flags = file.read_u16()?;
