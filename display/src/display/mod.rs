@@ -446,7 +446,15 @@ impl Display {
         theme_id: u32,
         max_y: usize,
     ) {
-        let x_start = x_offset.max(0) as usize;
+        // x_offset is the user-facing horizontal pan (key `]` increments,
+        // `[` decrements). Positive values shift the channel-info table
+        // content left so the right edge becomes visible on narrow
+        // terminals; negative values just shift things right (rarely
+        // useful but kept symmetric). The pattern view below uses
+        // `x_start = 0` as before — its columns are dynamically sized
+        // to grid.width so it already fits.
+        let x_pan: isize = x_offset;
+        let x_start = 0usize;
         let y_start = (y_offset.max(0) as usize) + 1;
 
         let num_channels = play_data.channel_status.len();
@@ -473,9 +481,9 @@ impl Display {
 
         // Table Header (ABSOLUTE PARITY WITH WEB SCREENSHOT)
         let table_hdr = "STAT| CH |      INSTRUMENT      | FREQ | VOLUME | POSITION | NOTE | PITCH | CHAN VOL | ENVELOPE | FADEOUT | PANNING |";
-        grid.print(x_start, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
+        grid.print_clipped(x_start as isize - x_pan, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
         if use_two_columns {
-            grid.print(x_start + 130, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
+            grid.print_clipped(x_start as isize + 130 - x_pan, y_start, table_hdr, theme.table_hdr_fg, theme.table_hdr_bg);
         }
 
         let mut _max_y_reached = false;
@@ -483,7 +491,7 @@ impl Display {
             let actual_ch = (i + channel_scroll) % num_channels.max(1);
             let col = if use_two_columns { i / per_col } else { 0 };
             let row = if use_two_columns { i % per_col } else { i };
-            let x = x_start + (col * 130);
+            let x: isize = x_start as isize + (col * 130) as isize - x_pan;
             let y = y_start + 1 + row;
 
             if y >= max_y { 
@@ -505,71 +513,71 @@ impl Display {
             let col_status = if channel.force_off { theme.col_off } else if channel.on { theme.col_on } else { theme.col_off };
             
             // PIXEL PERFECT CURSOR-BASED LAYOUT
-            grid.print(x, y, status, col_status, row_bg);
-            grid.print(x + 4, y, "|", theme.col_sep, row_bg);
-            grid.print(x + 5, y, &format!(" {:02} ", actual_ch + 1), theme.col_note, row_bg);
-            grid.print(x + 9, y, "|", theme.col_sep, row_bg);
+            grid.print_clipped(x, y, status, col_status, row_bg);
+            grid.print_clipped(x + 4, y, "|", theme.col_sep, row_bg);
+            grid.print_clipped(x + 5, y, &format!(" {:02} ", actual_ch + 1), theme.col_note, row_bg);
+            grid.print_clipped(x + 9, y, "|", theme.col_sep, row_bg);
 
             if channel.on && !channel.force_off {
-                grid.print(x + 10, y, &format!(" {:>2}:{:17} ", channel.instrument, Self::fixed_width(&channel.instrument_name, 17)), theme.col_inst, row_bg);
-                grid.print(x + 32, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 33, y, &format!(" {:<4} ", channel.frequency as u32 % 100000), theme.col_freq, row_bg);
-                grid.print(x + 39, y, "|", theme.col_sep, row_bg);
-                
-                Self::grid_range_with_color(grid, x + 40, y, (channel.volume as f32 / 64.0 * 8.0).ceil() as u32, 8, 8, &theme.meter_colors, row_bg); 
-                grid.print(x + 48, y, "|", theme.col_sep, row_bg);
-                
+                grid.print_clipped(x + 10, y, &format!(" {:>2}:{:17} ", channel.instrument, Self::fixed_width(&channel.instrument_name, 17)), theme.col_inst, row_bg);
+                grid.print_clipped(x + 32, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 33, y, &format!(" {:<4} ", channel.frequency as u32 % 100000), theme.col_freq, row_bg);
+                grid.print_clipped(x + 39, y, "|", theme.col_sep, row_bg);
+
+                Self::grid_range_with_color_clipped(grid, x + 40, y, (channel.volume as f32 / 64.0 * 8.0).ceil() as u32, 8, 8, &theme.meter_colors, row_bg);
+                grid.print_clipped(x + 48, y, "|", theme.col_sep, row_bg);
+
                 let inst_len = if channel.instrument < instruments.len() && channel.sample < instruments[channel.instrument].samples.len() { instruments[channel.instrument].samples[channel.sample].length.max(1) } else { 1 };
-                Self::grid_range(grid, x + 49, y, channel.sample_position as u32, inst_len - 1, 10, theme.accent_fg, row_bg);
-                grid.print(x + 59, y, "|", theme.col_sep, row_bg);
-                
-                grid.print(x + 60, y, &format!(" {:3} ", channel.note), theme.col_note, row_bg);
-                grid.print(x + 66, y, "|", theme.col_sep, row_bg);
-                
+                Self::grid_range_clipped(grid, x + 49, y, channel.sample_position as u32, inst_len - 1, 10, theme.accent_fg, row_bg);
+                grid.print_clipped(x + 59, y, "|", theme.col_sep, row_bg);
+
+                grid.print_clipped(x + 60, y, &format!(" {:3} ", channel.note), theme.col_note, row_bg);
+                grid.print_clipped(x + 66, y, "|", theme.col_sep, row_bg);
+
                 // PITCH POSITION BAR (Bipolar semitone displacement - 7 slots)
                 let semitones = channel.pitch_shift;
                 let bars = (semitones * 20.0).round() as i32; // 1 bar per 0.05 semitones
-                
+
                 if bars > 0 {
                     // Positive: Clear left half + center, Draw right (Slots 4,5,6)
-                    grid.print(x + 67, y, "    ", theme.col_sep, row_bg); 
+                    grid.print_clipped(x + 67, y, "    ", theme.col_sep, row_bg);
                     let val = bars.abs().min(3) as u32;
-                    Self::grid_range_with_color(grid, x + 67 + 4, y, val, 3, 3, &theme.freq_colors, row_bg);
+                    Self::grid_range_with_color_clipped(grid, x + 67 + 4, y, val, 3, 3, &theme.freq_colors, row_bg);
                 } else if bars < 0 {
                     // Negative: Draw left, Clear right half + center (Slots 0,1,2)
                     let val = bars.abs().min(3) as usize;
-                    Self::grid_range_with_color(grid, x + 67 + 3 - val, y, val as u32, 3, 3, &theme.freq_colors, row_bg);
-                    grid.print(x + 67 + 3, y, "    ", theme.col_sep, row_bg); 
+                    Self::grid_range_with_color_clipped(grid, x + 67 + 3 - val as isize, y, val as u32, 3, 3, &theme.freq_colors, row_bg);
+                    grid.print_clipped(x + 67 + 3, y, "    ", theme.col_sep, row_bg);
                 } else {
                     // Neutral: Center indicator (Slot 3)
-                    grid.print(x + 67, y, "   ", theme.col_sep, row_bg);
-                    grid.print(x + 67 + 3, y, "-", theme.col_sep, row_bg);
-                    grid.print(x + 67 + 4, y, "   ", theme.col_sep, row_bg);
+                    grid.print_clipped(x + 67, y, "   ", theme.col_sep, row_bg);
+                    grid.print_clipped(x + 67 + 3, y, "-", theme.col_sep, row_bg);
+                    grid.print_clipped(x + 67 + 4, y, "   ", theme.col_sep, row_bg);
                 }
-                grid.print(x + 74, y, "|", theme.col_sep, row_bg); // Shifted from 73
-                
-                Self::grid_range_with_color(grid, x + 75, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
-                grid.print(x + 85, y, "|", theme.col_sep, row_bg);
-                Self::grid_range_with_color(grid, x + 86, y, (channel.envelope_volume as f32 / 16383.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
-        grid.print(x + 96, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 74, y, "|", theme.col_sep, row_bg);
 
-        Self::grid_range_with_color(grid, x + 97, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
-        grid.print(x + 106, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color_clipped(grid, x + 75, y, (channel.volume as f32 / 64.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
+                grid.print_clipped(x + 85, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color_clipped(grid, x + 86, y, (channel.envelope_volume as f32 / 16383.0 * 10.0).ceil() as u32, 10, 10, &theme.meter_colors, row_bg);
+                grid.print_clipped(x + 96, y, "|", theme.col_sep, row_bg);
 
-        Self::grid_range(grid, x + 107, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
-        grid.print(x + 116, y, "|", theme.col_sep, row_bg);
-    } else {
-                grid.print(x + 10, y, &" ".repeat(106), theme.col_off, row_bg);
-                grid.print(x + 32, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 39, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 48, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 59, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 66, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 74, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 85, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 96, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 106, y, "|", theme.col_sep, row_bg);
-                grid.print(x + 116, y, "|", theme.col_sep, row_bg);
+                Self::grid_range_with_color_clipped(grid, x + 97, y, (channel.fadeout_volume / 7282.0) as u32, 9, 9, &theme.meter_colors, row_bg);
+                grid.print_clipped(x + 106, y, "|", theme.col_sep, row_bg);
+
+                Self::grid_range_clipped(grid, x + 107, y, channel.final_panning as u32, 255, 9, theme.accent_fg, row_bg);
+                grid.print_clipped(x + 116, y, "|", theme.col_sep, row_bg);
+            } else {
+                grid.print_clipped(x + 10, y, &" ".repeat(106), theme.col_off, row_bg);
+                grid.print_clipped(x + 32, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 39, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 48, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 59, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 66, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 74, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 85, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 96, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 106, y, "|", theme.col_sep, row_bg);
+                grid.print_clipped(x + 116, y, "|", theme.col_sep, row_bg);
             }
         }
 
@@ -858,12 +866,25 @@ impl Display {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn grid_range(grid: &mut Grid, x: usize, y: usize, pos: u32, end: u32, width: usize, color: RGB, bg: RGB) {
-        if width == 0 { return; }
+        // Kept for unit tests at the bottom of this file; the live render
+        // path now goes through `grid_range_clipped` (signed x). Thin
+        // wrapper so the two stay in sync.
+        Self::grid_range_clipped(grid, x as isize, y, pos, end, width, color, bg);
+    }
+
+    /// `grid_range` with a signed x; cells with x<0 or x>=grid.width are
+    /// dropped. Used in the channel-info table where the caller pans the
+    /// content horizontally and rows can extend past either edge.
+    fn grid_range_clipped(grid: &mut Grid, x: isize, y: usize, pos: u32, end: u32, width: usize, color: RGB, bg: RGB) {
+        if width == 0 || y >= grid.height { return; }
         let indicator_pos = if end == 0 { 0 } else { ((pos as f32 / end as f32) * (width as f32 - 1.0)).round() as usize }.min(width - 1);
         for i in 0..width {
+            let cx = x + i as isize;
+            if cx < 0 || cx >= grid.width as isize { continue; }
             let c = if i == indicator_pos { '=' } else { '-' };
-            grid.set_cell(x + i, y, c, color, bg);
+            grid.set_cell(cx as usize, y, c, color, bg);
         }
     }
 
@@ -877,12 +898,53 @@ impl Display {
         }
     }
 
+    /// `grid_range_with_color` with a signed x; same clipping semantics
+    /// as `grid_range_clipped`.
+    fn grid_range_with_color_clipped(grid: &mut Grid, x: isize, y: usize, pos: u32, end: u32, width: usize, colors: &[RGB; 24], bg: RGB) {
+        if width == 0 || y >= grid.height { return; }
+        let indicator_pos = if end == 0 { 0 } else { ((pos as f32 / end as f32) * (width as f32)).round() as usize }.min(width);
+        for i in 0..width {
+            let cx = x + i as isize;
+            if cx < 0 || cx >= grid.width as isize { continue; }
+            let c = if i == indicator_pos.min(width - 1) && pos > 0 { '=' } else if i < indicator_pos { '=' } else { ' ' };
+            let color_idx = (i * colors.len()) / width;
+            grid.set_cell(cx as usize, y, c, colors[color_idx.min(colors.len() - 1)], bg);
+        }
+    }
+
     fn render_message(grid: &mut Grid, message: &str, y_offset: isize, theme: &Theme) {
+        // Hard-wrap each source line into chunks that fit on screen.
+        // Module song messages are sometimes pre-formatted as one long
+        // logical line (no embedded newlines) or as 80-col fixed-width
+        // text that overflows a 70-col terminal. Either way, dumping
+        // them with grid.print silently truncated each line to the
+        // grid width. Wrap by char (no word boundary heuristics — the
+        // legacy ASCII art / box-drawing used by tracker scenes
+        // depends on column-perfect alignment, and word-wrap would
+        // mangle that more than a hard cut).
         let start_y = (y_offset.max(0) as usize) + 2;
-        for (i, line) in message.lines().enumerate() {
-            let draw_y = start_y + i;
+        let left_margin = 2usize;
+        let wrap_width = grid.width.saturating_sub(left_margin + 1).max(1);
+        let mut draw_y = start_y;
+        for raw_line in message.lines() {
             if draw_y >= grid.height { break; }
-            grid.print(2, draw_y, line, theme.pat_note_fg, theme.row_bg_even);
+            if raw_line.is_empty() {
+                draw_y += 1;
+                continue;
+            }
+            let mut chars: Vec<char> = raw_line.chars().collect();
+            // Split into wrap_width-sized chunks.
+            let mut consumed = 0;
+            while consumed < chars.len() {
+                if draw_y >= grid.height { break; }
+                let chunk_end = (consumed + wrap_width).min(chars.len());
+                let chunk: String = chars[consumed..chunk_end].iter().collect();
+                grid.print(left_margin, draw_y, &chunk, theme.pat_note_fg, theme.row_bg_even);
+                draw_y += 1;
+                consumed = chunk_end;
+            }
+            // Suppress unused warning on chars if loop didn't enter.
+            let _ = &mut chars;
         }
     }
 

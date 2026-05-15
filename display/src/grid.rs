@@ -74,6 +74,23 @@ impl Grid {
         }
     }
 
+    /// Like `print` but accepts a signed x and clips off-screen characters
+    /// instead of truncating them. Used for horizontally-pannable views
+    /// (channel info table) where the caller's `x` becomes negative when
+    /// the user pans right — those leading characters need to be dropped,
+    /// not folded onto column 0.
+    pub fn print_clipped(&mut self, x: isize, y: usize, str: &str, fg: RGB, bg: RGB) {
+        if y >= self.height { return; }
+        let mut curr_x = x;
+        for c in str.chars() {
+            if curr_x >= self.width as isize { break; }
+            if curr_x >= 0 {
+                self.set_cell(curr_x as usize, y, c, fg, bg);
+            }
+            curr_x += 1;
+        }
+    }
+
     pub fn to_ansi(&self) -> String {
         let mut result = String::new();
         let mut last_fg = None;
