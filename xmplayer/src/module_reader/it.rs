@@ -521,7 +521,13 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 let mut inst = crate::instrument::Instrument::new();
                 inst.name = sample.name.clone();
                 for note_idx in 0..120 {
-                    inst.sample_indexes[note_idx] = (note_idx as u8 + 1, 1u8);
+                    // sample_indexes stores the 0-indexed remap note; the
+                    // backend's frequency calc adds +1 to make it
+                    // 1-indexed before note_to_period_s3m. Storing
+                    // `note_idx + 1` here would double-increment and play
+                    // every note one semitone too high (shes_cute pitch
+                    // bug: ~104 Hz vs OMT's ~98 Hz).
+                    inst.sample_indexes[note_idx] = (note_idx as u8, 1u8);
                 }
                 inst.samples = vec![sample.clone()];
                 // IT sample-mode: OMT keeps m_nInstruments=0 and skips the
