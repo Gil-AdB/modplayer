@@ -510,11 +510,19 @@ fn mainloop(song_data: &SongState, channel_count: usize, media_keys: Option<&Med
                 }
             });
             if should_push {
-                let elapsed = {
-                    let song = song_data.get_song().lock().unwrap();
-                    song.total_samples as f32 / song.rate
-                };
-                mk.set_progress(elapsed);
+                // try_lock instead of lock: the audio thread holds the
+                // song mutex during seek/fast-forward, which can run for
+                // hundreds of ms on long backward seeks. Blocking here
+                // would deadlock the keyboard event poll on the main
+                // thread — user reports "seek hangs the player
+                // interaction". macOS interpolates between progress
+                // updates so missing one tick is invisible; we'll push
+                // the next one when the lock is free.
+                if let Ok(song) = song_data.get_song().try_lock() {
+                    let elapsed = song.total_samples as f32 / song.rate;
+                    drop(song);
+                    mk.set_progress(elapsed);
+                }
             }
             let _ = now_ms;
             let _ = Instant::now();

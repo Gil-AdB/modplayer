@@ -583,7 +583,16 @@ pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
         if !v.on { return vi; }
     }
     // Fall back to slots ramping out — better than evicting a live
-    // voice if every slot is busy. (We have 256 slots so this is rare.)
+    // voice if every slot is busy. spx-shuttledeparture hits this on
+    // long sustained NNA tails; the steal-quietest path below is the
+    // last resort.
+    //
+    // NOTE: both fallback paths return a slot whose `voice.channel_idx`
+    // still points at its previous owner. The caller must clear
+    // `channels[prev_owner].voice_idx` after init_voice_basics
+    // overwrites the channel_idx, otherwise a stale host pointer
+    // persists (voice-pool invariant warnings). See the cleanup at
+    // the trigger sites in xm/s3m/mod_/it.rs.
     for (vi, v) in voices.iter().enumerate() {
         if v.pending_cut { return vi; }
     }
