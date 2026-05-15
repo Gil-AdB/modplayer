@@ -67,6 +67,13 @@ impl ModuleBackend for ItBackend {
         let first_tick = *r.tick == 0;
         let instruments = &r.song_data.instruments;
 
+        // Deferred stale-pointer cleanup — see xm.rs's process_tick for
+        // the rationale. alloc_voice's fallback paths hand us slots
+        // whose previous owner still has a stale channels[old].voice_idx
+        // pointer. We stash the (old_owner, voice_idx) pairs here and
+        // apply after the per-channel loop ends.
+        let mut stale_clears: Vec<(usize, usize)> = Vec::new();
+
         // 1. Process all channels
         for (i, channel) in r.channels.iter_mut().enumerate() {
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
@@ -170,6 +177,12 @@ impl ModuleBackend for ItBackend {
                                     });
 
                                 let voice_idx = alloc_voice(r.voices);
+                                {
+                                    let v = &r.voices[voice_idx];
+                                    if v.on && v.channel_idx != i {
+                                        stale_clears.push((v.channel_idx, voice_idx));
+                                    }
+                                }
                                 init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
                                 let voice = &mut r.voices[voice_idx];
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
@@ -301,6 +314,13 @@ impl ModuleBackend for ItBackend {
                 if channel.vibrato_active_this_row && !first_tick {
                     channel.advance_vibrato_pos(v);
                 }
+            }
+        }
+
+        // Apply deferred stale-pointer clears (see top of process_tick).
+        for (ch_idx, vi) in stale_clears {
+            if ch_idx < r.channels.len() && r.channels[ch_idx].voice_idx == Some(vi) {
+                r.channels[ch_idx].voice_idx = None;
             }
         }
 

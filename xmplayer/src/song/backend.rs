@@ -618,23 +618,15 @@ pub(super) fn alloc_voice(voices: &mut [Voice]) -> usize {
 ///
 /// Debug builds panic with the channel indices + slot number; release builds
 /// log once per occurrence so corpus rendering doesn't get gated on it.
-pub(super) fn validate_voice_pool(voices: &[Voice], channels: &mut [ChannelState]) {
-    // Two-pass: first detect (logs distinct violations), then clear
-    // the stale pointers. Splitting the pass means we don't hold a
-    // mutable borrow during the diagnostic logging.
-    //
-    // Why repair at all: the orphan-creation site is `alloc_voice`'s
-    // "steal quietest" fallback (confirmed empirically on
-    // spx-shuttledeparture at t>150s). The fix at the trigger sites
-    // requires invasive borrow-check plumbing across four backends
-    // (the per-channel `iter_mut()` loop holds `&mut channels[i]`
-    // throughout, blocking access to `channels[prev_owner]`). A
-    // defensive validate-time clear keeps the pool consistent
-    // tick-by-tick while we work on the structural fix. The clear is
-    // NOT silent — every *distinct* (channel, slot, host) triple is
-    // still logged once on first appearance via the throttled
-    // diagnostic below.
-    let mut to_clear: Vec<usize> = Vec::new();
+pub(super) fn validate_voice_pool(voices: &[Voice], channels: &[ChannelState]) {
+    // Observer only — never touches state. If a stale pointer survives
+    // to validation, that means the proactive cleanup at the trigger
+    // site (the `stale_clears` Vec applied after each per-channel
+    // loop in xm/s3m/mod_/it.rs) missed a case. Repair-in-validator
+    // would hide that regression behind a self-healing veneer; we'd
+    // rather see the warning. Debug builds panic so the offending
+    // path is easy to pinpoint; release builds log each distinct
+    // (channel, slot, host) triple once.
     for (ci, ch) in channels.iter().enumerate() {
         let Some(vi) = ch.voice_idx else { continue };
         if vi >= voices.len() { continue; }
@@ -651,9 +643,6 @@ pub(super) fn validate_voice_pool(voices: &[Voice], channels: &mut [ChannelState
             {
                 use std::sync::Mutex;
                 use std::collections::HashSet;
-                // Distinct-triple throttle: log each (ci, vi, host) once
-                // per process. Lets you see how many real orphans there
-                // are without drowning in per-tick repeats.
                 static SEEN: Mutex<Option<HashSet<(usize, usize, usize)>>> = Mutex::new(None);
                 let key = (ci, vi, v.channel_idx);
                 let mut guard = SEEN.lock().unwrap();
@@ -662,11 +651,7 @@ pub(super) fn validate_voice_pool(voices: &[Voice], channels: &mut [ChannelState
                     eprintln!("[voice-pool] {}", msg);
                 }
             }
-            to_clear.push(ci);
         }
-    }
-    for ci in to_clear {
-        channels[ci].voice_idx = None;
     }
 }
 

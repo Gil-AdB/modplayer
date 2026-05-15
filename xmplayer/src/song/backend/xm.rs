@@ -27,6 +27,14 @@ impl ModuleBackend for XmBackend {
 
         let instruments = &r.song_data.instruments;
 
+        // alloc_voice's fallback paths (steal-quietest) hand back a slot
+        // whose previous owner still has channels[old].voice_idx pointing
+        // at it. We can't clear that pointer inline because the
+        // `for (i, channel) in r.channels.iter_mut()` loop holds a
+        // mutable borrow on channels[i] throughout. Defer: stash
+        // (old_owner, voice_idx) pairs here, apply after the loop.
+        let mut stale_clears: Vec<(usize, usize)> = Vec::new();
+
         // 1. Process channels
         for (i, channel) in r.channels.iter_mut().enumerate() {
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
@@ -89,6 +97,19 @@ impl ModuleBackend for XmBackend {
                                 cut_or_nna_existing_voice(r.voices, channel, instruments, r.song_data.song_type, i, prev_voice_idx);
 
                                 let voice_idx = alloc_voice(r.voices);
+                                // Before init_voice_basics overwrites
+                                // voices[voice_idx].channel_idx, snapshot
+                                // whether the slot belonged to a different
+                                // channel — if so, that channel's
+                                // voice_idx pointer is about to go stale
+                                // and we'll need to clear it after the
+                                // per-channel loop.
+                                {
+                                    let v = &r.voices[voice_idx];
+                                    if v.on && v.channel_idx != i {
+                                        stale_clears.push((v.channel_idx, voice_idx));
+                                    }
+                                }
                                 init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
                                 let voice = &mut r.voices[voice_idx];
                                 if pattern.instrument != 0 {
@@ -222,6 +243,14 @@ impl ModuleBackend for XmBackend {
                 if channel.vibrato_active_this_row && !first_tick {
                     channel.advance_vibrato_pos(v);
                 }
+            }
+        }
+
+        // Apply deferred stale-pointer clears now that the per-channel
+        // loop has released its `&mut channels[i]` borrows.
+        for (ch_idx, vi) in stale_clears {
+            if ch_idx < r.channels.len() && r.channels[ch_idx].voice_idx == Some(vi) {
+                r.channels[ch_idx].voice_idx = None;
             }
         }
 

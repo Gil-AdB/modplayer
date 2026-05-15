@@ -17,6 +17,9 @@ impl ModuleBackend for S3MBackend {
     fn process_tick(&mut self, r: &mut SongPlaybackResources) {
         let first_tick = *r.tick == 0;
         let instruments = &r.song_data.instruments;
+        // Deferred stale-pointer cleanup — see xm.rs's process_tick for
+        // the rationale.
+        let mut stale_clears: Vec<(usize, usize)> = Vec::new();
         // 1. Process channels
         for (i, channel) in r.channels.iter_mut().enumerate() {
             let patterns = &r.song_data.patterns[r.song_data.pattern_order[*r.song_position] as usize];
@@ -95,6 +98,12 @@ impl ModuleBackend for S3MBackend {
                                 cut_or_nna_existing_voice(r.voices, channel, instruments, r.song_data.song_type, i, prev_voice_idx);
 
                                 let voice_idx = alloc_voice(r.voices);
+                                {
+                                    let v = &r.voices[voice_idx];
+                                    if v.on && v.channel_idx != i {
+                                        stale_clears.push((v.channel_idx, voice_idx));
+                                    }
+                                }
                                 init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
                                 let voice = &mut r.voices[voice_idx];
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
@@ -218,6 +227,13 @@ impl ModuleBackend for S3MBackend {
                 if channel.vibrato_active_this_row && !first_tick {
                     channel.advance_vibrato_pos(v);
                 }
+            }
+        }
+
+        // Apply deferred stale-pointer clears (see top of process_tick).
+        for (ch_idx, vi) in stale_clears {
+            if ch_idx < r.channels.len() && r.channels[ch_idx].voice_idx == Some(vi) {
+                r.channels[ch_idx].voice_idx = None;
             }
         }
 
