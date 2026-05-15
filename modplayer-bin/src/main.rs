@@ -7,7 +7,7 @@ use std::io::{stdout, Write};
 
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::event::{
-    KeyCode, KeyModifiers, MediaKeyCode,
+    KeyCode, KeyEventKind, KeyModifiers, MediaKeyCode,
     KeyboardEnhancementFlags, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
 };
 use xmplayer::song_state::{SongState, SongHandle};

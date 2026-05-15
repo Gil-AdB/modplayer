@@ -488,7 +488,13 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
                 initial_channel_volume[i] = 0;
             }
             if pan <= 64 {
-                initial_channel_panning[i] = pan * 4;
+                // IT chnpan range is 0..64; map to our 0..255 mixer range
+                // via u16 to avoid u8 wraparound (64 * 4 = 256 wraps to 0
+                // in u8). spx-shuttledeparture.it has chnpan = 0x40 on
+                // several channels meaning "hard right" — without this
+                // cast they came out as 0 = hard left, half the stereo
+                // image moved to the wrong side.
+                initial_channel_panning[i] = ((pan as u16) * 4).min(255) as u8;
             } else if pan == 100 {
                 // IT surround marker: center pan + flag the channel
                 // for phase-inverted right-channel output at the mixer.
