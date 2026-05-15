@@ -496,6 +496,13 @@ pub struct Song {
     pub channels:                   Vec<ChannelState>,
     pub voices:                     Vec<Voice>,
     pub pattern_change:             PatternChange,
+    /// Highest channel index (1-based) that any pattern actually writes
+    /// events to. Used for UI presentation only — the engine itself
+    /// still uses `channel_count` slots so NNA-spawned background voices
+    /// have somewhere to live. orbiter declares 64 channels but only
+    /// ~16 carry pattern data; without this clamp the player UI shows
+    /// 48 perpetually-empty rows.
+    pub used_channel_count:         u16,
     pub total_duration_ms:          f32,
     pub bpm:                        BPM,
     pub loop_pattern:               bool,
@@ -602,6 +609,29 @@ impl Song {
             rate: sample_rate,
             original_rate: sample_rate,
             speed: song_data.tempo as u32,
+            used_channel_count: {
+                // Highest 1-based channel index with any non-default
+                // pattern event. Pattern::new() defaults are note=0,
+                // instrument=0, volume=255, effect=0, effect_param=0 —
+                // any deviation marks the channel as "used". Clamp to
+                // channel_count so we never overshoot, and to at least
+                // 1 so the UI doesn't try to render zero rows.
+                let mut max_used = 0u16;
+                for pat in &song_data.patterns {
+                    for row in &pat.rows {
+                        for (i, ch) in row.channels.iter().enumerate() {
+                            let used = ch.note != 0 || ch.instrument != 0
+                                || ch.volume != 255 || ch.effect != 0
+                                || ch.effect_param != 0;
+                            if used {
+                                let idx = i as u16 + 1;
+                                if idx > max_used { max_used = idx; }
+                            }
+                        }
+                    }
+                }
+                max_used.max(1).min(song_data.channel_count)
+            },
             total_duration_ms: 0.0,
             bpm: BPM::new(song_data.bpm as u32, sample_rate),
             global_volume: {
@@ -696,6 +726,12 @@ impl Song {
     }
 
     pub fn get_channel_count(&self) -> usize {
-        self.song_data.channel_count as usize
+        // UI-facing accessor: report the number of channels the song
+        // actually uses, not the declared maximum (which is often 64
+        // for IT files that pattern-data only 8-16 channels). The
+        // engine's internal channels[] vector still holds
+        // song_data.channel_count slots so NNA-spawned background
+        // voices have room; see Song::used_channel_count.
+        self.used_channel_count as usize
     }
 }

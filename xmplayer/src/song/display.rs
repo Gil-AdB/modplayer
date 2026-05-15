@@ -80,14 +80,21 @@ impl Song {
         play_data.virtual_channels = active_voices.saturating_sub(host_voices);
         play_data.dump = crate::song::test_dump::dump_tick(self);
 
-        // Optimized Channel Status (In-place update)
-        let num_channels = self.channels.len();
+        // Optimized Channel Status (In-place update).
+        //
+        // For presentation we clamp to `used_channel_count` — the
+        // highest pattern-active channel — so songs that declare 64
+        // channels but only use ~16 (e.g. orbiter) don't show 48
+        // perpetually-empty rows in the player UI. The engine still
+        // iterates `self.channels.len()` slots internally; this only
+        // bounds what `play_data` exposes downstream.
+        let num_channels = (self.used_channel_count as usize).min(self.channels.len());
         while play_data.channel_status.len() < num_channels {
             play_data.channel_status.push(ChannelStatus::default());
         }
         play_data.channel_status.truncate(num_channels);
 
-        for (i, channel) in self.channels.iter().enumerate() {
+        for (i, channel) in self.channels.iter().take(num_channels).enumerate() {
             let status = &mut play_data.channel_status[i];
 
             let mut instrument_idx = 0;
