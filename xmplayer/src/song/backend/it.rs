@@ -17,17 +17,21 @@ impl ItBackend {
     }
 
     fn apply_it_action(voices: &mut [Voice], voice_idx: usize, action: u8, instrument: &Instrument) {
+        if action == 0 {
+            // Cut: snapshot the voice state into a background slot and
+            // ramp THAT copy to 0 — the source slot is freed so the
+            // new note's alloc_voice can claim it and start its own
+            // ramp from 0. Both contribute during the 5 ms crossover
+            // for a clean transition.
+            crate::song::backend::spawn_background_cut_inline(
+                voices, voice_idx,
+                crate::channel_state::VoiceCutReason::NoteCut,
+            );
+            return;
+        }
         let voice = &mut voices[voice_idx];
         match action {
-            0 => { // Cut
-                // Deferred cut — mixer ramps voice gain to 0 over
-                // ~5 ms before releasing the slot. Keeping output_volume
-                // at its current value lets the ramp interpolate from
-                // the actual amplitude (not from 0), so the cross-fade
-                // is smooth.
-                voice.pending_cut = true;
-                voice.cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
-            }
+            0 => { unreachable!(); }
             1 => { // Continue
                 // Do nothing
             }
@@ -218,9 +222,10 @@ impl ModuleBackend for ItBackend {
                 if note_delay_first_tick {
                     if let Some(v_idx) = channel.voice_idx {
                         if r.voices[v_idx].channel_idx == i {
-                            r.voices[v_idx].on = false;
-                            r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
-                            r.voices[v_idx].volume.output_volume = 0.0;
+                            crate::song::backend::spawn_background_cut_inline(
+                                r.voices, v_idx,
+                                crate::channel_state::VoiceCutReason::NoteCut,
+                            );
                             channel.voice_idx = None;
                         }
                     }

@@ -125,9 +125,10 @@ impl ModuleBackend for XmBackend {
                 NoteAction::Cut if note_delay_first_tick => {
                     if let Some(v_idx) = channel.voice_idx {
                         if r.voices[v_idx].channel_idx == i {
-                            r.voices[v_idx].on = false;
-                            r.voices[v_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
-                            r.voices[v_idx].volume.output_volume = 0.0;
+                            crate::song::backend::spawn_background_cut_inline(
+                                r.voices, v_idx,
+                                crate::channel_state::VoiceCutReason::NoteCut,
+                            );
                             channel.voice_idx = None;
                         }
                     }

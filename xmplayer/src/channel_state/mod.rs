@@ -207,17 +207,17 @@ impl Voice {
         }
     }
 
-    /// Reset ramp state for a fresh note trigger. We deliberately *keep*
-    /// `current_left_vol` / `current_right_vol` at whatever value the
-    /// slot last held — when alloc_voice reuses a slot that had been
-    /// playing, the new voice inherits the slot's instantaneous gain
-    /// and the mixer's per-sample ramp interpolates from there toward
-    /// the new target. Zeroing them here would re-introduce the step
-    /// discontinuity (slot's last output → 0 in one sample) that the
-    /// ramp is supposed to prevent. The new note still effectively
-    /// "fades in" because the ramp updates start from the old gain
-    /// rather than from 0.
+    /// Reset ramp state for a fresh note trigger. Zero current_*_vol so
+    /// the new voice fades in from silence over the ~5 ms ramp window.
+    ///
+    /// The OLD voice that previously occupied this slot (if any) has
+    /// already been moved to a background slot by
+    /// `spawn_background_cut_inline` (cut path) and continues to mix
+    /// there with its own pending_cut ramp, so we don't lose its audio
+    /// by zeroing here.
     pub fn reset_ramp_for_new_note(&mut self) {
+        self.current_left_vol = 0.0;
+        self.current_right_vol = 0.0;
         self.left_ramp_step = 0.0;
         self.right_ramp_step = 0.0;
         self.ramp_samples_remaining = 0;

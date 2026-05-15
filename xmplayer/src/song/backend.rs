@@ -505,28 +505,111 @@ pub(super) fn cut_voice(
     v_idx: usize,
     reason: crate::channel_state::VoiceCutReason,
 ) {
-    let voice = &mut voices[v_idx];
-    if !voice.on || voice.pending_cut { return; }
-    let ci = voice.channel_idx;
-    // Short-circuit: a voice that's already silent doesn't need a ramp.
-    // This keeps the mute_silent_voices end-of-tick cleanup deterministic
-    // for test frameworks that don't run the audio mixer — and avoids
-    // wasting mixer cycles on already-zero ramps.
+    if !voices[v_idx].on || voices[v_idx].pending_cut { return; }
+    let ci = voices[v_idx].channel_idx;
+    // Short-circuit: an already-silent voice doesn't need a ramp.
     let already_silent =
-        voice.current_left_vol.abs() < 1e-5 && voice.current_right_vol.abs() < 1e-5
-        && voice.volume.output_volume < 1e-5;
+        voices[v_idx].current_left_vol.abs() < 1e-5
+        && voices[v_idx].current_right_vol.abs() < 1e-5
+        && voices[v_idx].volume.output_volume < 1e-5;
     if already_silent {
-        voice.on = false;
-        voice.cut_reason = Some(reason);
+        voices[v_idx].on = false;
+        voices[v_idx].cut_reason = Some(reason);
         if ci < channels.len() && channels[ci].voice_idx == Some(v_idx) {
             channels[ci].voice_idx = None;
         }
         return;
     }
-    voice.pending_cut = true;
-    voice.cut_reason = Some(reason);
+    // Mark in-place for ramp-out. The host slot stays occupied until
+    // the mixer finishes the ramp; the channel pointer is cleared so
+    // future events can't act on the dying voice.
+    voices[v_idx].pending_cut = true;
+    voices[v_idx].cut_reason = Some(reason);
     if ci < channels.len() && channels[ci].voice_idx == Some(v_idx) {
         channels[ci].voice_idx = None;
+    }
+}
+
+/// Move the contents of an actively-playing voice into a background slot
+/// and mark THAT copy with `pending_cut`. The mixer will continue to
+/// play the snapshot's sample (at its current sample_position) while
+/// ramping its gain to 0 over the next ~5 ms. Meanwhile the source slot
+/// is freed (`on = false`) so the upcoming `alloc_voice` for the new
+/// note can take it.
+///
+/// The point: during the 5 ms overlap window, both voices contribute —
+/// the background voice fades out, the new voice fades in, summing to
+/// a smooth crossfade. Without this snapshot the old voice's audio
+/// disappears the instant the new trigger lands, and the new voice's
+/// 0-to-target fade-in leaves a brief gap (the residual "pop" the
+/// gain-only ramp couldn't fix).
+///
+/// Falls back to in-place pending_cut if no background slot is free —
+/// the 256-slot pool makes that unlikely, but the fallback keeps
+/// behaviour deterministic.
+/// Variant of `spawn_background_cut` for callers that don't have
+/// `&mut channels` (e.g. `cut_or_nna_existing_voice`). The caller is
+/// responsible for clearing/reassigning `channels[ci].voice_idx` —
+/// `bind_voice_for_channel` does that after allocating the new note
+/// in the typical trigger flow, so this is a safe simplification.
+pub(super) fn spawn_background_cut_inline(
+    voices: &mut [Voice],
+    src_idx: usize,
+    reason: crate::channel_state::VoiceCutReason,
+) {
+    if !voices[src_idx].on || voices[src_idx].pending_cut {
+        return;
+    }
+    if let Some(bg) = voices.iter().position(|v| !v.on) {
+        if bg != src_idx {
+            voices[bg] = voices[src_idx];
+            voices[bg].pending_cut = true;
+            voices[bg].cut_reason = Some(reason);
+        }
+        voices[src_idx].on = false;
+        voices[src_idx].cut_reason = Some(reason);
+    } else {
+        voices[src_idx].pending_cut = true;
+        voices[src_idx].cut_reason = Some(reason);
+    }
+}
+
+pub(super) fn spawn_background_cut(
+    voices: &mut [Voice],
+    channels: &mut [ChannelState],
+    src_idx: usize,
+    reason: crate::channel_state::VoiceCutReason,
+) {
+    if !voices[src_idx].on || voices[src_idx].pending_cut {
+        return;
+    }
+    let bg_idx = voices.iter().position(|v| !v.on);
+    let ci = voices[src_idx].channel_idx;
+    if let Some(bg) = bg_idx {
+        if bg != src_idx {
+            voices[bg] = voices[src_idx];
+            voices[bg].pending_cut = true;
+            voices[bg].cut_reason = Some(reason);
+            // The background voice no longer "hosts" any channel — it's
+            // a detached ramp-out copy. Clearing channel_idx isn't
+            // strictly needed (mixer reads voice.channel_idx only for
+            // pan/surround lookups and that's still correct), but the
+            // channel.voice_idx pointer must stop referencing this slot
+            // so the new trigger can claim it.
+        }
+        // The source slot is now free for the new trigger to use.
+        voices[src_idx].on = false;
+        voices[src_idx].cut_reason = Some(reason);
+        if ci < channels.len() && channels[ci].voice_idx == Some(src_idx) {
+            channels[ci].voice_idx = None;
+        }
+    } else {
+        // No idle slot — fall back to ramping the source in-place.
+        voices[src_idx].pending_cut = true;
+        voices[src_idx].cut_reason = Some(reason);
+        if ci < channels.len() && channels[ci].voice_idx == Some(src_idx) {
+            channels[ci].voice_idx = None;
+        }
     }
 }
 
@@ -615,22 +698,22 @@ pub(super) fn cut_or_nna_existing_voice(
     if !(v.on && v.channel_idx == channel_idx) { return; }
     match song_type {
         SongType::XM | SongType::MOD => {
-            voices[prev_voice_idx].pending_cut = true;
-            voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+            spawn_background_cut_inline(voices, prev_voice_idx,
+                crate::channel_state::VoiceCutReason::NoteCut);
         }
         _ => {
             let nna = instruments[voices[prev_voice_idx].instrument].nna;
             match nna {
                 0 => {
-                    voices[prev_voice_idx].pending_cut = true;
-                    voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+                    spawn_background_cut_inline(voices, prev_voice_idx,
+                        crate::channel_state::VoiceCutReason::NoteCut);
                 }
                 1 => { /* Continue */ }
                 2 => { voices[prev_voice_idx].key_off(instruments, song_type); } // Note Off
                 3 => { voices[prev_voice_idx].sustained = false; } // Fade
                 _ => {
-                    voices[prev_voice_idx].pending_cut = true;
-                    voices[prev_voice_idx].cut_reason = Some(crate::channel_state::VoiceCutReason::NoteCut);
+                    spawn_background_cut_inline(voices, prev_voice_idx,
+                        crate::channel_state::VoiceCutReason::NoteCut);
                 }
             }
         }
