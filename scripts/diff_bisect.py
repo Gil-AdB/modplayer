@@ -27,14 +27,19 @@ import warnings; warnings.filterwarnings("ignore")
 
 
 def load(p):
+    # Return per-channel arrays as a 2D (frames, channels) tensor so the
+    # caller can compute L and R diffs separately. Surround channels
+    # (S91 / IT chnpan=100) have L = -R, which cancels exactly when
+    # averaged into mono — making them look like "OMT contributes 0"
+    # in the channel diff. Keeping stereo lets each side contribute.
     r, d = wavfile.read(p)
     if d.dtype == np.int16:
         d = d.astype(np.float32) / 32768.0
     elif d.dtype == np.int32:
         d = d.astype(np.float32) / 2147483648.0
     d = d.astype(np.float32)
-    if d.ndim == 2:
-        d = d.mean(axis=1)
+    if d.ndim == 1:
+        d = d[:, None]
     return r, d
 
 
@@ -43,6 +48,9 @@ def rms(x):
 
 
 def cc(a, b):
+    # Flatten to 1D for the correlation — we just want shape similarity,
+    # so combining L and R into one stream works fine.
+    a = a.flatten(); b = b.flatten()
     n = min(len(a), len(b))
     a, b = a[:n] - a[:n].mean(), b[:n] - b[:n].mean()
     d = float(np.sqrt(np.sum(a * a) * np.sum(b * b)))
