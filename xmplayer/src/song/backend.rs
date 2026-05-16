@@ -265,14 +265,26 @@ pub(super) struct VoiceMixFormula {
 const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: false,
     apply_global_vol: true,  global_vol_div: 64.0,
-    master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
+    // Calibrated empirically: 25/34-song XM corpus inlier-median sat
+    // at 0.947 with FRAC_1_SQRT_2 (0.7071). Bumping the scale by
+    // 1/0.947 = 1.056 lands the bulk of the corpus at ratio ~1.0.
+    // The bumped value is close to OMT's MixLevels::CompatibleFT2
+    // 192/256 sample-pre-amp ratio (0.75), via 0.7071 * 1.056 ≈
+    // 0.7468 ≈ sqrt(192/256) = 0.866 / sqrt(2). Coincidence or not,
+    // empirical median is the source of truth for matching OMT.
+    master_byte_mask: 0xFF,  global_scale: 0.7468,
     freq_scale: 1.0,
     pan_law: PanLaw::Ft2Sqrt,
 };
 const MOD_MIX: VoiceMixFormula = VoiceMixFormula {
     update_envelopes: false, channel_vol: false, instrument_global: false,
     apply_global_vol: false, global_vol_div: 1.0,
-    master_byte_mask: 0xFF,  global_scale: std::f32::consts::FRAC_1_SQRT_2,
+    // Calibrated empirically: 23/27-song MOD inlier-median sat at
+    // 0.900 with FRAC_1_SQRT_2. Bump by 1/0.900 = 1.111 → 0.7857.
+    // Most MODs use 4 channels at hard-pan 0/255 with the Ft2Sqrt
+    // pan law — at hard pan the FT2 LUT delivers 1.0, so the master
+    // calibration directly scales the audible output.
+    master_byte_mask: 0xFF,  global_scale: 0.7857,
     freq_scale: 14187580.0 / 14317456.0,
     pan_law: PanLaw::Ft2Sqrt,
 };
