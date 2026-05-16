@@ -1439,7 +1439,31 @@ pub(super) fn apply_effect(
                     && pattern.is_porta_to_note(ctx.song_type);
                 if triggers && !xm_porta_offset_skip {
                     if let Some(v) = voice.as_deref_mut() {
-                        v.sample_position = (param as f32) * 256.0 + 4.0;
+                        let mut target = (param as u32) * 256;
+                        // S3M Oxx loop wrap (GUS-mode quirk): if the
+                        // offset lands past the end of a looping
+                        // sample's loop, wrap back into the loop.
+                        // SoundBlaster stops instead, but OpenMPT
+                        // emulates the GUS variant. Test case:
+                        // OffsetLoopWraparound.s3m.
+                        if ctx.song_type == SongType::S3M {
+                            let sample = &ctx.instruments[v.instrument]
+                                .samples
+                                .get(v.sample);
+                            if let Some(sample) = sample {
+                                if sample.loop_type != crate::instrument::LoopType::NoLoop
+                                    && sample.loop_end > 0
+                                    && target >= sample.loop_end
+                                {
+                                    let loop_span = sample.loop_end - sample.loop_start;
+                                    if loop_span > 0 {
+                                        target = (target - sample.loop_start) % loop_span
+                                            + sample.loop_start;
+                                    }
+                                }
+                            }
+                        }
+                        v.sample_position = target as f32 + 4.0;
                     }
                 }
             }
