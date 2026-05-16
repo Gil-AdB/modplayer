@@ -11,6 +11,9 @@
 //   --mute-channels list  Comma-separated channel indices to silence by setting
 //                         channel.force_off = true. Useful for A/B testing
 //                         which channel produces a divergence vs OpenMPT.
+//   --amiga-filter        MOD only: apply Paula's analog LP (~4.4 kHz) + HP
+//                         (~5 Hz) chain post-mix. Off by default. Use when
+//                         comparing against pt2-clone, which always filters.
 //
 // WAV format: PCM IEEE float32, 2 channels, 48000 Hz.
 
@@ -63,6 +66,7 @@ fn main() {
     let mut start_time = 0.0f32;
     let mut end_time = f32::INFINITY;
     let mut muted_channels: Vec<usize> = Vec::new();
+    let mut amiga_filter = false;
     let mut i = 3;
     while i < args.len() {
         match args[i].as_str() {
@@ -81,6 +85,9 @@ fn main() {
                     .filter_map(|s| s.trim().parse().ok())
                     .collect();
             }
+            "--amiga-filter" => {
+                amiga_filter = true;
+            }
             other => {
                 eprintln!("unknown flag: {}", other);
                 std::process::exit(2);
@@ -95,6 +102,10 @@ fn main() {
     };
     let (_reader, writer) = TripleBuffer::new().split();
     let mut song = Song::new(&song_data, writer, RATE);
+    if amiga_filter {
+        song.set_amiga_filter(true);
+        eprintln!("amiga filter: enabled (Paula LP@4.42kHz + HP@5Hz)");
+    }
 
     // Apply channel mutes via force_off. Each backend's per-voice loop
     // observes `channel.force_off || channel.tremor_silenced` and zeros

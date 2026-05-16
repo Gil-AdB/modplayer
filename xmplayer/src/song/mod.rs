@@ -415,6 +415,10 @@ pub trait BufferAdapter {
     fn len(&mut self) -> usize;
     fn num_frames(&mut self) -> usize;
     fn post_process(&mut self);
+    /// Read back a previously-mixed sample. Used by the MOD post-mix
+    /// Amiga filter pass (see `Song::apply_amiga_filter`).
+    fn read_sample(&self, channel: usize, pos: usize) -> f32;
+    fn write_sample(&mut self, channel: usize, value: f32, pos: usize);
 }
 
 pub struct InterleavedBufferAdaptar<'a> {
@@ -447,6 +451,14 @@ impl BufferAdapter for InterleavedBufferAdaptar<'_> {
     }
 
     fn post_process(&mut self) {}
+
+    fn read_sample(&self, channel: usize, pos: usize) -> f32 {
+        self.buf[pos * 2 + channel]
+    }
+
+    fn write_sample(&mut self, channel: usize, value: f32, pos: usize) {
+        self.buf[pos * 2 + channel] = value;
+    }
 }
 
 pub struct PlanarBufferAdaptar<'a> {
@@ -481,6 +493,14 @@ impl BufferAdapter for PlanarBufferAdaptar<'_> {
     fn post_process(&mut self) {
         Self::normalize_array(self.buf[0]);
         Self::normalize_array(self.buf[1]);
+    }
+
+    fn read_sample(&self, channel: usize, pos: usize) -> f32 {
+        self.buf[channel][pos]
+    }
+
+    fn write_sample(&mut self, channel: usize, value: f32, pos: usize) {
+        self.buf[channel][pos] = value;
     }
 }
 
@@ -575,6 +595,17 @@ pub struct Song {
     pub master_volume:       u8,
     pub mixing_volume:       u8,
     pub backend:             Option<Box<dyn crate::song::backend::ModuleBackend>>,
+    /// MOD-only Amiga A500-style analog filter chain (one-pole RC
+    /// low-pass at ~4.4 kHz + one-pole RC high-pass at ~5 Hz) applied
+    /// to the final stereo mix. The Amiga's hardware audio chain
+    /// rolls off high frequencies; pt2-clone replicates this and is
+    /// the gold-standard reference for MOD playback. OMT doesn't
+    /// apply it by default — which is why our MOD renders are ~50%
+    /// brighter (more RMS) than pt2 on songs with busy
+    /// arpeggio/portamento content like Redalert.mod. Filter state
+    /// (the previous samples) lives on Song so it persists across
+    /// `output_channels` calls.
+    pub amiga_filter:        crate::song::output::AmigaFilter,
 }
 
 impl Song {
@@ -718,6 +749,11 @@ impl Song {
                 SongType::S3M => Some(Box::new(crate::song::backend::S3MBackend::new())),
                 _ => Some(Box::new(crate::song::backend::ModBackend::new())),
             },
+            // Paula LP+HP filter chain. OFF by default — applying it changes
+            // the spectrum (and RMS) of every MOD render, which breaks our
+            // OMT-based regression baseline. Opt in via `set_amiga_filter`
+            // (e.g. render_wav --amiga-filter) when chasing pt2-clone parity.
+            amiga_filter: crate::song::output::AmigaFilter::new(sample_rate, false),
         };
 
         result.cached_fft = Some(result.fft_planner.plan_fft_forward(2048));
@@ -727,6 +763,12 @@ impl Song {
     }
 
     pub fn free(&mut self) {}
+
+    /// Toggle the post-mix Amiga Paula LP+HP filter chain. Intended for
+    /// pt2-clone-parity experiments on MOD files; off by default.
+    pub fn set_amiga_filter(&mut self, enabled: bool) {
+        self.amiga_filter.set_enabled(enabled);
+    }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.rate = sample_rate;

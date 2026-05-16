@@ -258,6 +258,77 @@ fn lerp(pos: f32, p1: f32, p2: f32) -> f32 {
     (1.0 - t) * p1 + t * p2
 }
 
+/// Amiga A500 audio-chain emulation: a 1-pole RC low-pass at ~4.4 kHz
+/// plus a 1-pole RC high-pass at ~5 Hz, applied to the final stereo
+/// mix. pt2-clone uses these by default (Paula's analog output going
+/// through fixed R/C components on the A500 motherboard); OMT does
+/// not. The difference shows up as ~30 % extra RMS energy in our MOD
+/// output vs pt2 on songs with busy arpeggio/porta content, and the
+/// authentic-sounding "warmth" of an Amiga.
+///
+/// LED filter (2-pole Sallen-Key ~3.3 kHz) is NOT applied — it's
+/// user-toggled in pt2 and off by default. A1200's LP cutoff is
+/// ~34 kHz (above human hearing) so we don't bother distinguishing
+/// the A500 vs A1200 case; we always use A500.
+#[derive(Clone, Copy, Debug)]
+pub struct AmigaFilter {
+    enabled: bool,
+    // 1-pole RC LP: y[n] = y[n-1] + alpha_lp * (x[n] - y[n-1])
+    alpha_lp: f32,
+    // 1-pole RC HP via running LP subtraction:
+    //   lp[n] = lp[n-1] + alpha_hp * (x[n] - lp[n-1])
+    //   hp[n] = x[n] - lp[n]
+    alpha_hp: f32,
+    state_lp: [f32; 2], // L, R running LP value
+    state_hp: [f32; 2], // L, R running HP-LP value
+}
+
+impl AmigaFilter {
+    pub fn new(sample_rate: f32, enabled: bool) -> Self {
+        // A500 RC values from pt2-clone Paula source (pt2_paula.c):
+        //   LP: R=360 ohm, C=0.1uF  →  fc = 1 / (2*pi*R*C) ≈ 4420.97 Hz
+        //   HP: R=1390 ohm, C=22.33uF →  fc ≈ 5.128 Hz
+        let lp_cutoff = 4420.97;
+        let hp_cutoff = 5.128;
+        let two_pi = 2.0 * std::f32::consts::PI;
+        // alpha = 1 - exp(-2π fc / fs); equivalent to dt / (RC + dt)
+        let alpha_lp = 1.0 - (-two_pi * lp_cutoff / sample_rate).exp();
+        let alpha_hp = 1.0 - (-two_pi * hp_cutoff / sample_rate).exp();
+        Self {
+            enabled,
+            alpha_lp, alpha_hp,
+            state_lp: [0.0; 2],
+            state_hp: [0.0; 2],
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        // Re-arming from a cold state avoids the HP integrator suddenly
+        // catching up on a large DC offset built up while disabled.
+        if !enabled {
+            self.state_lp = [0.0; 2];
+            self.state_hp = [0.0; 2];
+        }
+    }
+
+    /// Process a single (L, R) frame in-place.
+    #[inline]
+    pub fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        let mut out = [l, r];
+        let input = out;
+        for ch in 0..2 {
+            // LP
+            self.state_lp[ch] += self.alpha_lp * (input[ch] - self.state_lp[ch]);
+            let after_lp = self.state_lp[ch];
+            // HP: subtract a running LP (DC blocker)
+            self.state_hp[ch] += self.alpha_hp * (after_lp - self.state_hp[ch]);
+            out[ch] = after_lp - self.state_hp[ch];
+        }
+        (out[0], out[1])
+    }
+}
+
 impl Song {
     pub fn output_channels(&mut self, current_buf_position: usize, buf: &mut impl BufferAdapter, ticks_to_generate: usize) {
         if self.is_fast_forwarding {
@@ -568,6 +639,22 @@ impl Song {
                 if self.channels[voice.channel_idx].voice_idx == Some(voice_idx) {
                     self.channels[voice.channel_idx].voice_idx = None;
                 }
+            }
+        }
+
+        // Post-mix Amiga filter pass (MOD only). All voices for this
+        // tick block have been mixed into `buf`; walk the block and
+        // run each (L, R) frame through the 1-pole RC LP + HP. State
+        // persists on Song across blocks. No-op when `enabled` is
+        // false (XM/S3M/IT).
+        if self.amiga_filter.enabled {
+            for i in 0..ticks_to_generate {
+                let pos = current_buf_position + i;
+                let l = buf.read_sample(0, pos);
+                let r = buf.read_sample(1, pos);
+                let (fl, fr) = self.amiga_filter.process(l, r);
+                buf.write_sample(0, fl, pos);
+                buf.write_sample(1, fr, pos);
             }
         }
     }
