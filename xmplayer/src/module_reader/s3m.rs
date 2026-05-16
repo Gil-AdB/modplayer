@@ -24,10 +24,15 @@
     pub fn read_s3m<R: Read + Seek>(mut file: &mut R) -> SimpleResult<SongData> {
         file.seek(SeekFrom::Start(0))?;
 
+        // S3M's minimum valid file size is around 96 bytes (header) +
+        // some sample/pattern data; the SCRM signature check at byte 44
+        // is the real format gate. The previous 1084-byte floor was a
+        // MOD-specific value (MOD pattern data starts at 1084) and
+        // rejected several legitimate S3M test modules from the OpenMPT
+        // test suite (AdlibZeroVolumeNote.s3m 302 bytes, etc.).
         let file_len = file.seek(SeekFrom::End(0))?;
         file.seek(SeekFrom::Start(0))?;
-
-        if file_len < 1084 {
+        if file_len < 96 {
             return Err(SimpleError::new("File is too small!"));
         }
 
