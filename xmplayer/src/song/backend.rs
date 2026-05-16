@@ -1011,8 +1011,16 @@ pub(super) fn apply_extended(
         ExtendedCmdKind::PatternDelay => {
             // XM uses first_row_tick gating; S3M/IT use first_tick.
             // Both end up at "set once at the row's first tick".
+            //
+            // Per OpenMPT PatternDelays.xm: "If there are multiple
+            // pattern delays (EEx), only the one on the rightmost
+            // channel is considered (even if the EEx parameter is 0)."
+            // The per-channel loop processes left-to-right so the last
+            // (rightmost) channel's EE write wins naturally — drop the
+            // `!delay_processed` early-out that was preserving the
+            // leftmost value.
             let gate = match song_type { SongType::XM => first_row_tick, _ => first_tick };
-            if gate && !pattern_change.delay_processed {
+            if gate {
                 pattern_change.pattern_delay = y;
                 pattern_change.delay_processed = true;
             }

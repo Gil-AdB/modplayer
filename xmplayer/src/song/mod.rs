@@ -55,6 +55,14 @@ pub struct PatternChange {
     pub(crate) pattern:        u8,
     pattern_delay:  u8,
     delay_processed:bool,
+    /// True while we're inside a row that's been repeated by EEx pattern
+    /// delay (tick has been reset to 0 but the row's "literal first
+    /// tick" has already been consumed). Used to gate one-time-per-row
+    /// effects (PatternDelay itself, SetVolume, etc.) so they don't
+    /// re-fire on repeats. OpenMPT PatternDelaysRetrig.xm:
+    /// "Only the very first tick of a row should be considered as the
+    /// 'first tick', even if the row is repeated multiple times."
+    pub(crate) in_delay_repeat: bool,
 }
 
 impl PatternChange {
@@ -66,6 +74,7 @@ impl PatternChange {
             row: 0,
             pattern: 0,
             pattern_delay: 0, delay_processed: false,
+            in_delay_repeat: false,
         }
     }
 
@@ -82,6 +91,7 @@ impl PatternChange {
             row: 0,
             pattern: order as u8,
             pattern_delay: 0, delay_processed: false,
+            in_delay_repeat: false,
         }
     }
 
@@ -93,6 +103,7 @@ impl PatternChange {
             row: row as u8,
             pattern: 0,
             pattern_delay: 0, delay_processed: false,
+            in_delay_repeat: false,
         }
     }
     fn reset(&mut self) {

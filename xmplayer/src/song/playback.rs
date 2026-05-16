@@ -317,6 +317,10 @@ impl Song {
             if self.pattern_change.pattern_delay > 0 {
                 self.pattern_change.pattern_delay -= 1;
                 self.tick = 0;
+                // Mark this as a delay repeat so first_row_tick won't
+                // fire on this tick-0 — only the LITERAL first tick of
+                // the row gets the "first tick" treatment.
+                self.pattern_change.in_delay_repeat = true;
                 return true;
             }
 
@@ -425,6 +429,9 @@ impl Song {
                 }
             }
             let _ = took_pattern_loop;
+            // Row actually advanced — clear the delay-repeat flag so
+            // the new row gets its literal first tick treated as such.
+            self.pattern_change.in_delay_repeat = false;
             // Paused-mode "play one row" UX: decrement on each row advance
             // and re-pause when the budget runs out. Placed here (after the
             // pattern-delay early-return above) so a delayed row counts as
@@ -525,7 +532,11 @@ impl Song {
             return;
         }
 
-        let first_row_tick = self.tick == 0;
+        // "First tick of the row" in the OMT/wiki sense: only the
+        // literal first tick of the original row, NOT the tick-0 of
+        // an EEx delay repeat. Effects gated on this won't re-fire on
+        // delay repeats (PatternDelay itself, etc).
+        let first_row_tick = self.tick == 0 && !self.pattern_change.in_delay_repeat;
         let mut r = SongPlaybackResources {
             song_position: &mut self.song_position,
             row: &mut self.row,
