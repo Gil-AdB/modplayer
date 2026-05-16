@@ -108,9 +108,9 @@ impl ModuleBackend for S3MBackend {
                                 let voice = &mut r.voices[voice_idx];
                                 voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
                                 if instrument.samples[final_sample_idx].panning < 255 {
-                                    voice.panning.panning = instrument.samples[final_sample_idx].panning;
+                                    voice.panning.set_panning(instrument.samples[final_sample_idx].panning as i32);
                                 } else {
-                                    voice.panning.panning = r.song_data.initial_channel_panning[i];
+                                    voice.panning.set_panning(r.song_data.initial_channel_panning[i] as i32);
                                 }
 
                                 voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);

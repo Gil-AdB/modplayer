@@ -83,7 +83,7 @@ impl ModuleBackend for ModBackend {
                             // pattern and never moves them; the per-sample
                             // panning field is an FT2 extension that real
                             // MOD files don't carry.
-                            voice.panning.panning = r.song_data.initial_channel_panning[i];
+                            voice.panning.set_panning(r.song_data.initial_channel_panning[i] as i32);
                         }
                         voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
 
@@ -112,7 +112,7 @@ impl ModuleBackend for ModBackend {
                         let voice = &mut r.voices[voice_idx];
                         if voice.on && voice.channel_idx == i {
                             voice.volume.retrig(instruments[inst_idx].samples[sample_idx].volume as i32);
-                            voice.panning.panning = r.song_data.initial_channel_panning[i];
+                            voice.panning.set_panning(r.song_data.initial_channel_panning[i] as i32);
                             voice.volume_envelope_state.reset(0, &instruments[inst_idx].volume_envelope);
                             voice.panning_envelope_state.reset(0, &instruments[inst_idx].panning_envelope);
                             voice.pitch_envelope_state.reset(0, &instruments[inst_idx].pitch_envelope);

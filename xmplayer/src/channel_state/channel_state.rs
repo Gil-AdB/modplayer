@@ -891,7 +891,18 @@ impl Panning {
     // }
 
     pub(crate) fn set_panning(&mut self, panning: i32) {
-        self.panning = clamp(panning , 0, 255) as u8;
+        let clamped = clamp(panning , 0, 255) as u8;
+        self.panning = clamped;
+        // Mirror to final_panning so formats without panning envelopes
+        // (MOD, STM) actually see the pan in the mixer. The mixer reads
+        // `final_panning` exclusively; without this mirror, MOD ended
+        // up with `final_panning = 128` (the Panning::new() default)
+        // for every voice — output collapsed to mono regardless of
+        // the LRRL Amiga defaults the loader sets. update_envelope_
+        // panning still recomputes this when a pan envelope IS active
+        // (XM/IT/S3M with one), so this isn't redundant for formats
+        // that do drive update_envelopes.
+        self.final_panning = clamped;
     }
 
     pub(crate) fn update_envelope_panning(&mut self, envelope_panning: u16) {

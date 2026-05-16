@@ -586,7 +586,7 @@ impl Song {
             let mut channel = ChannelState::new();
             channel.frequency_scale = mix.freq_scale;
             if i < 64 {
-                channel.panning.panning = song_data.initial_channel_panning[i];
+                channel.panning.set_panning(song_data.initial_channel_panning[i] as i32);
                 channel.surround = song_data.initial_channel_surround[i];
                 channel.volume.set_volume(song_data.initial_channel_volume[i] as i32);
                 channel.channel_volume = song_data.initial_channel_volume[i];

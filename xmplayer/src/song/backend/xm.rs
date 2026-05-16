@@ -117,7 +117,7 @@ impl ModuleBackend for XmBackend {
                                 } else {
                                     voice.volume.retrig(prev_vol as i32);
                                 }
-                                voice.panning.panning = r.song_data.initial_channel_panning[i];
+                                voice.panning.set_panning(r.song_data.initial_channel_panning[i] as i32);
 
                                 // XM: a note without instrument keeps the current instrument/envelope phase.
                                 voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
@@ -171,7 +171,7 @@ impl ModuleBackend for XmBackend {
                                     let voice = &mut r.voices[v_idx];
                                     if voice.on && voice.channel_idx == i {
                                         voice.volume.retrig(sample.volume as i32);
-                                        voice.panning.panning = r.song_data.initial_channel_panning[i];
+                                        voice.panning.set_panning(r.song_data.initial_channel_panning[i] as i32);
                                         voice.volume_envelope_state.reset(0, &instrument.volume_envelope);
                                         voice.panning_envelope_state.reset(0, &instrument.panning_envelope);
                                         voice.pitch_envelope_state.reset(0, &instrument.pitch_envelope);
