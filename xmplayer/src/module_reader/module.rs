@@ -201,7 +201,11 @@
 
     fn read_sample<R: Read>(file: &mut R) -> SimpleResult<Sample> {
         let name = file.read_string(22);
-        let length = file.read_u16_be()? * 2;
+        // Length/loop_start/loop_len are stored as word counts (u16). The
+        // byte count is (word_count * 2), which can exceed u16::MAX —
+        // ArpWraparound.mod sample 2 declares 35644 words = 71288 bytes.
+        // Widen to u32 before multiplying so we don't silently truncate.
+        let length = file.read_u16_be()? as u32 * 2;
         let ft = file.read_u8()? & 0xf;
         let sign = ((ft >> 3) * 0xF0) as i8;
         let mut finetune= ft as i8 | sign;
@@ -215,8 +219,8 @@
         }
 
         let volume = file.read_u8()?;
-        let mut loop_start = file.read_u16_be()? * 2;
-        let mut loop_len = file.read_u16_be()? * 2;
+        let mut loop_start = file.read_u16_be()? as u32 * 2;
+        let mut loop_len = file.read_u16_be()? as u32 * 2;
 
         if loop_len < 2 {
             loop_len = 2;
@@ -237,10 +241,10 @@
         }
 
         Ok(Sample {
-            length: length as u32,
-            loop_start: loop_start as u32,
-            loop_end: (loop_start + loop_len) as u32,
-            loop_len: loop_len as u32,
+            length,
+            loop_start,
+            loop_end: loop_start + loop_len,
+            loop_len,
             volume: clamp(volume, 0, 64),
             finetune,
             loop_type: if loop_len > 2 {LoopType::ForwardLoop} else {LoopType::NoLoop},
