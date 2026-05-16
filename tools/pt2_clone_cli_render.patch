@@ -1,0 +1,32 @@
+diff --git a/src/pt2_main.c b/src/pt2_main.c
+index aa251a2..f47ca18 100644
+--- a/src/pt2_main.c
++++ b/src/pt2_main.c
+@@ -348,6 +348,27 @@ int main(int argc, char *argv[])
+ 
+ 	SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
+ 
++	// CLI mode: --render <output.wav> renders the loaded MOD to a WAV
++	// file and exits, no GUI interaction needed. Used by modplayer's
++	// SC2-corpus diff harness — pt2-clone is the reference for cases
++	// where libopenmpt diverges from authentic ProTracker playback.
++	if (argc >= 4 && strcmp(argv[2], "--render") == 0)
++	{
++		extern bool mod2WavRender(char *filename);
++		if (!song->loaded)
++		{
++			fprintf(stderr, "[pt2-cli] module didn't load: %s\n", argv[1]);
++			return 1;
++		}
++		mod2WavRender(argv[3]);
++		// mod2WavRender returns immediately after spawning the
++		// SDL render thread; wait for it to actually finish.
++		while (editor.mod2WavOngoing)
++			SDL_Delay(10);
++		fprintf(stderr, "[pt2-cli] rendered %s\n", argv[3]);
++		return 0;
++	}
++
+ 	editor.mainLoopOngoing = true;
+ 	hpc_ResetCounters(&video.vblankHpc); // this must be the last thing we do before entering the main loop
+ 
