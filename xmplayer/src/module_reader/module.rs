@@ -89,6 +89,17 @@
             }
         }
 
+        // OMT (`Load_mod.cpp:433`): `m_nSamplePreAmp =
+        // Clamp(256 / num_channels, 32, 128)`. Scales the sample mix
+        // down as channel count grows so per-channel headroom stays
+        // reasonable. Our `global_scale` is calibrated for the 4-channel
+        // case (pre-amp = 64); apply the relative factor through
+        // `mixing_volume` so 6CH / 8CH / 16CH MODs land at OMT's level
+        // without re-tuning the formula. firelight_-_sapphire_eyes.mod
+        // (8CHN) was 2.23× too loud against OMT before this.
+        let pre_amp = (256u32 / num_channels as u32).clamp(32, 128);
+        let mixing_volume = ((128u32 * pre_amp) / 64).min(255) as u8;
+
         Ok(SongData {
             id: id_str.trim().to_string(),
             name: name.trim().to_string(),
@@ -112,7 +123,7 @@
             initial_channel_surround: [false; 64],
             global_volume:           64,
             master_volume:           128,
-            mixing_volume:           128,
+            mixing_volume,
             old_effects: true,
             compatible_g: true,
             fast_volume_slides: false,
