@@ -1297,6 +1297,31 @@ pub(super) fn apply_effect(
                         ) as i32;
                         channel.period_shift = (stepped - base) as i16;
                     }
+                } else if ctx.song_type == SongType::MOD && channel.note.original_note != 0 {
+                    // MOD arpeggio walks the Amiga period table by note
+                    // index, not by a fixed -64 per semitone (that's an
+                    // FT2-linear convention). Amiga semitone sizes vary
+                    // with octave, so a 7-semitone arp step from period
+                    // 113 would otherwise shift period to a negative
+                    // value, get clamped to 0, and play at a wildly
+                    // wrong rate that exhausts looping samples in a
+                    // single buffer (ArpWraparound.mod ch0 row 12+).
+                    let arp_step = match ctx.tick % 3 {
+                        1 => pattern.get_x() as i8,
+                        2 => pattern.get_y() as i8,
+                        _ => 0,
+                    };
+                    if arp_step != 0 {
+                        let base_note = channel.note.original_note as i32;
+                        let target_note = (base_note + arp_step as i32).clamp(1, 120) as u8;
+                        let base = channel.note.note_to_period(
+                            base_note as u8, channel.note.finetune, ctx.frequency_tables,
+                        ) as i32;
+                        let stepped = channel.note.note_to_period(
+                            target_note, channel.note.finetune, ctx.frequency_tables,
+                        ) as i32;
+                        channel.period_shift = (stepped - base) as i16;
+                    }
                 }
             } else {
                 channel.period_shift = 0;
