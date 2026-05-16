@@ -942,10 +942,12 @@ pub(super) fn apply_extended(
     match kind {
         ExtendedCmdKind::None => {}
         ExtendedCmdKind::FinePortaUp => {
-            channel.fine_porta_up(song_type, first_tick, y);
+            // Fine porta is one-shot per row — see FineVolSlide note
+            // below. Test: PatternDelaysRetrig.xm.
+            channel.fine_porta_up(song_type, first_row_tick, y);
         }
         ExtendedCmdKind::FinePortaDown => {
-            channel.fine_porta_down(song_type, first_tick, y);
+            channel.fine_porta_down(song_type, first_row_tick, y);
         }
         ExtendedCmdKind::Glissando => {
             if first_tick { channel.glissando = y != 0; }
@@ -993,10 +995,14 @@ pub(super) fn apply_extended(
             channel.it_retrig(voice.as_deref_mut(), instruments, tick, y);
         }
         ExtendedCmdKind::FineVolSlideUp => {
-            channel.fine_volume_slide(voice.as_deref_mut(), first_tick, y as i8);
+            // Fine slides fire ONCE per row (the literal first tick) —
+            // not on every EEx pattern-delay repeat. Use first_row_tick
+            // which factors in `pattern_change.in_delay_repeat`. Test:
+            // PatternDelaysRetrig.xm.
+            channel.fine_volume_slide(voice.as_deref_mut(), first_row_tick, y as i8);
         }
         ExtendedCmdKind::FineVolSlideDown => {
-            channel.fine_volume_slide(voice.as_deref_mut(), first_tick, -(y as i8));
+            channel.fine_volume_slide(voice.as_deref_mut(), first_row_tick, -(y as i8));
         }
         ExtendedCmdKind::NoteCutAtTick => {
             if tick == y as u32 {
