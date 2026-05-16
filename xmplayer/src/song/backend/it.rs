@@ -329,6 +329,21 @@ impl ModuleBackend for ItBackend {
                                 }
                                 voice.last_played_note = revived;
                                 channel.voice_idx = Some(voice_idx);
+                                // OffsetWithInstr.it: if the bare-
+                                // instrument row also carries an Oxx
+                                // (effect 0x0F), apply it to the freshly
+                                // triggered voice's sample_position. The
+                                // shared SampleOffset effect handler
+                                // gates on note_action==Trigger and
+                                // won't fire for our NoteAction::None
+                                // path, so do it inline.
+                                if pattern.effect == 0x0F {
+                                    let offset = channel.recall_or_set(
+                                        crate::channel_state::EffectMemorySlot::SampleOffset,
+                                        pattern.effect_param,
+                                    );
+                                    voice.sample_position = (offset as f32) * 256.0 + 4.0;
+                                }
                             }
                         }
                     }
