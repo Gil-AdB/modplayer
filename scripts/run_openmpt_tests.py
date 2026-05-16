@@ -60,6 +60,15 @@ def analyze(us: np.ndarray, omt: np.ndarray) -> tuple[bool, str]:
     n = min(len(us), len(omt))
     us = us[:n]; omt = omt[:n]
 
+    # "Should remain silent" tests: both sides at the noise floor. Don't
+    # let tiny ramp/voice residue trigger a ratio failure — if both
+    # peaks are below ~-50 dBFS the absolute energies are inaudible
+    # regardless of how they compare to each other.
+    SILENCE_PEAK = 0.005  # ≈ -46 dBFS
+    if (float(np.max(np.abs(us))) < SILENCE_PEAK
+        and float(np.max(np.abs(omt))) < SILENCE_PEAK):
+        return True, f"both_silent (us_peak={np.max(np.abs(us)):.4f} omt_peak={np.max(np.abs(omt)):.4f})"
+
     fails = []
     detail_parts = []
     for ch, name in enumerate(("L", "R")):
