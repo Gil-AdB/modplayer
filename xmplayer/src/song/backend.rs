@@ -1673,9 +1673,15 @@ pub(super) fn dispatch_vol_col(
                 };
                 match (fine, with_memory) {
                     (false, false) => channel.volume_slide(voice.as_deref_mut(), ctx.first_tick, signed),
-                    (true,  false) => channel.fine_volume_slide(voice.as_deref_mut(), ctx.first_tick, signed),
+                    // Fine slides fire only on the LITERAL first tick
+                    // of the row (not on EEx pattern-delay repeats).
+                    // OMT FineVolColSlide.it: "fine volume slides in
+                    // the volume column are only ever executed on the
+                    // first tick — not on multiples of the first tick
+                    // if there is a pattern delay."
+                    (true,  false) => channel.fine_volume_slide(voice.as_deref_mut(), ctx.first_row_tick, signed),
                     (false, true)  => channel.it_vol_col_volume_slide(voice.as_deref_mut(), ctx.first_tick, signed),
-                    (true,  true)  => channel.it_vol_col_fine_volume_slide(voice.as_deref_mut(), ctx.note_delay_first_tick, signed),
+                    (true,  true)  => channel.it_vol_col_fine_volume_slide(voice.as_deref_mut(), ctx.first_row_tick, signed),
                 }
             }
             VolColAction::PortaUp { shift } => {
