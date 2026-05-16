@@ -102,8 +102,16 @@ impl ModuleBackend for ModBackend {
                     }
                 }
             }
-            // Instrument-only row (no note): refresh sample volume / panning
-            // / envelope state on the existing voice. MOD-style "ghost note".
+            // Bare instrument row (no note, `--- NN ..`): in MOD/PT this
+            // reloads the sample's *default volume* on the playing voice
+            // and nothing else — pan is NOT reset, envelopes are not
+            // reset, the note keeps playing. OMT's `bUpdVol` branch in
+            // Snd_fx.cpp:1573 does the same: only `chn.nVolume = pSmp
+            // ->nVolume`. Our previous implementation reset panning to
+            // the channel default plus reset every envelope, which
+            // wiped any per-voice effect state — user-reported wrong
+            // ch1 handling on rows 0C/0D of Zoqfot.mod (`--- 01` rows
+            // immediately after pan/vol effect work).
             NoteAction::None if pattern.instrument != 0 && first_tick => {
                 let inst_idx = channel.last_instrument;
                 if inst_idx != 0 && !instruments[inst_idx].samples.is_empty() {
@@ -112,14 +120,6 @@ impl ModuleBackend for ModBackend {
                         let voice = &mut r.voices[voice_idx];
                         if voice.on && voice.channel_idx == i {
                             voice.volume.retrig(instruments[inst_idx].samples[sample_idx].volume as i32);
-                            voice.panning.set_panning(r.song_data.initial_channel_panning[i] as i32);
-                            voice.volume_envelope_state.reset(0, &instruments[inst_idx].volume_envelope);
-                            voice.panning_envelope_state.reset(0, &instruments[inst_idx].panning_envelope);
-                            voice.pitch_envelope_state.reset(0, &instruments[inst_idx].pitch_envelope);
-                            voice.instrument_global_volume = instruments[inst_idx].global_volume;
-                            voice.sample_global_volume = instruments[inst_idx].samples[sample_idx].global_volume;
-                            voice.filter_cutoff = instruments[inst_idx].initial_filter_cutoff;
-                            voice.filter_resonance = instruments[inst_idx].initial_filter_resonance;
                         }
                     }
                 }
