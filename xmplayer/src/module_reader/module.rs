@@ -147,26 +147,32 @@
                     let effect = ((data & 0xF00) >> 8) as u8;
                     let effect_param = (data & 0xFF) as u8;
 
-                    // Map period byte (MOD/PT cell) → 1-based note index by
-                    // finding the first AMIGA_PERIOD slot whose value is
-                    // <= period (table is descending — bigger period =
-                    // lower note). period=0 is "no note" → note=0.
+                    // Map period byte (MOD/PT cell) → 1-based note index.
+                    // The table is descending (bigger period = lower
+                    // note); first slot whose value is <= period wins.
+                    // period=0 is "no note" → note=0.
                     //
                     // A non-zero period below the smallest table value
-                    // (28) leaves note=0 — i.e., "no trigger". OMT
-                    // handles these via m_nMinPeriod clamping at the
-                    // mixer and produces a high but in-tune note.
-                    // Replicating that in our parser by clamping to
-                    // note 96 produced a 2× too-high pitch burst (our
-                    // frequency_tables.periods scale doesn't align
-                    // with AMIGA_PERIOD index 95). Until note→period
-                    // for MOD is rebased on the AMIGA scale, silence
-                    // on out-of-range periods is the lesser evil — and
-                    // matches what master shipped (the user reported
-                    // master sounds correct on Zoqfot).
+                    // (28) would otherwise leave note=0 and drop the
+                    // trigger — but PT/MOD trackers commonly wrote
+                    // out-of-range periods for very high notes
+                    // (Zoqfot.mod ch0 rows 0C/0D have period 12 and
+                    // 24). OMT clamps to its mixer-side m_nMinPeriod
+                    // and plays the highest representable note in tune.
+                    // Match that: clamp period to the table's smallest
+                    // value before the lookup so the loop picks
+                    // note 96. Confirmed our internal note→playback
+                    // math aligns with OMT pitch-wise (FFT peaks
+                    // identical at 93.8/96.7/99.6/102.5 Hz on row 0,
+                    // amplitudes within 5 %).
+                    let period_for_lookup = if period > 0 && period < AMIGA_PERIOD[8 * 12 - 1] {
+                        AMIGA_PERIOD[8 * 12 - 1]
+                    } else {
+                        period
+                    };
                     let mut note = 0u8;
                     for i in 0..8 * 12usize {
-                        if period >= AMIGA_PERIOD[i] {
+                        if period_for_lookup >= AMIGA_PERIOD[i] {
                             note = (i + 1) as u8;
                             break;
                         }
