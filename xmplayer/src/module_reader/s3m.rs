@@ -128,6 +128,16 @@
                 num_channels += 1;
             }
         }
+        // Adlib-only / fully-disabled S3M files (e.g. the OpenMPT test
+        // suite's NOP.s3m, AdlibZeroVolumeNote.s3m: 1 Adlib channel,
+        // no PCM) would otherwise leave `num_channels = 0`, which
+        // crashes dump_tick on the empty `channels[]` lookup and
+        // wastes the engine's pattern path. Force at least one engine
+        // channel — it stays silent because pattern data never routes
+        // to it (channel_map keeps 0xFF entries for Adlib slots).
+        if num_channels == 0 {
+            num_channels = 1;
+        }
 
         let mut pattern_order = file.read_bytes(song_length as usize)?;
         truncate_patterns(&mut pattern_order);
@@ -271,7 +281,19 @@
                         if note_val == 255 {
                             note = 0;
                         } else if note_val == 254 {
-                            note = 97; // Note Off
+                            // S3M file byte 254 = the only "stop note"
+                            // encoding the format has — OpenMPT maps it
+                            // to NOTE_NOTECUT internally (Load_s3m.cpp:
+                            // 686-687), i.e. a hard cut, NOT a soft key
+                            // off. Use engine 255 (Cut) here. Earlier
+                            // code mapped to engine 97 (XM off sentinel)
+                            // which note_action treats as a real C#-7
+                            // trigger under S3M, so NOTE_OFF rows
+                            // triggered phantom notes instead of cutting
+                            // (OpenMPT test case OxxMemory.s3m: voice
+                            // from prior trigger kept looping audibly
+                            // because note-off didn't cut).
+                            note = 255;
                         } else {
                             let oct = (note_val >> 4) as u8;
                             let n = (note_val & 0x0F) as u8;
@@ -329,7 +351,25 @@
         for (instrument_idx, instrument_ptr) in instrument_ptrs.iter().cloned().enumerate() {
             let mut instrument = Instrument::new();
             file.seek(SeekFrom::Start((instrument_ptr as u64)  * 16))?;
-            let _type_ = file.read_u8()?;
+            let type_byte = file.read_u8()?;
+            // S3M instrument types (S3MSampleHeader.sampleType):
+            //   0 = empty slot
+            //   1 = PCM sample
+            //   2 = Adlib melodic instrument (OPL2 synth - layout from
+            //       byte 0x10 onwards holds OPL register bytes, not the
+            //       PCM fields we read below). We can't synthesize OPL,
+            //       so we register an empty instrument (it'll trigger
+            //       silently). Without this branch the read fell into
+            //       the PCM path, hit non-zero "packing" garbage from
+            //       the OPL register block at offset 0x1E, and rejected
+            //       the entire .s3m as "Unknown file format" — the
+            //       OpenMPT NOP.s3m / AdlibZeroVolumeNote.s3m /
+            //       TonePortamentoWithAdlibNote.s3m test cases all
+            //       hit this.
+            if type_byte == 2 {
+                instruments.push(Instrument::new());
+                continue;
+            }
             let _dos_name = file.read_string(12);
             let sample_ptr = file.read_u24_s3m()?;
             let sample_len = file.read_u32()?;
