@@ -1259,9 +1259,14 @@ impl ChannelState {
     }
 
     pub(crate) fn it_vol_col_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, amount: i8) {
-        // IT vol-col Cx/Dx (running). Sign is encoded by the caller; the
-        // memory slot round-trips the i8 bit-pattern through u8 so
-        // param==0 cleanly recalls the last signed step.
+        // IT vol-col Cx/Dx (running). Per OMT VolColMemory.it:
+        // "Volume column commands a, b, c and d (volume slide) share
+        // one effect memory, but it should not be shared with Dxy in
+        // the effect column." All four vol-col slide variants use the
+        // same memory slot (ItVolColVolSlide), distinct from the
+        // effect-column ItVolSlide. Sign is encoded by the caller;
+        // the memory slot round-trips the i8 bit-pattern through u8
+        // so param==0 cleanly recalls the last signed step.
         self.apply_slide(voice, first_tick, amount as u8, SlideSpec {
             field: SlideField::VoiceVolume,
             decode: SlideDecode::SignedDirect { fine: false },
@@ -1270,11 +1275,12 @@ impl ChannelState {
     }
 
     pub(crate) fn it_vol_col_fine_volume_slide(&mut self, voice: Option<&mut Voice>, first_tick: bool, amount: i8) {
-        // IT vol-col Ax/Bx (fine).
+        // IT vol-col Ax/Bx (fine). Shares memory with Cx/Dx — see the
+        // VolColMemory.it note above.
         self.apply_slide(voice, first_tick, amount as u8, SlideSpec {
             field: SlideField::VoiceVolume,
             decode: SlideDecode::SignedDirect { fine: true },
-            memory: Some(EffectMemorySlot::ItVolColFineVolSlide),
+            memory: Some(EffectMemorySlot::ItVolColVolSlide),
         });
     }
 
