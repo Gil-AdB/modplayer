@@ -759,6 +759,12 @@ pub struct ChannelState {
     /// it, *if the last triggered note was not a note cut, note off
     /// or note fade*. Cleared on every fresh note trigger.
     pub(crate) note_stopped:                   bool,
+    /// XM/MOD: a Tremor (Txx) effect that fires sets this; subsequent
+    /// rows continue the alternating on/off cycle from `tremor_count`
+    /// even without a fresh Txx on the row, until interrupted by a
+    /// new volume-affecting command (per OpenMPT TremorRecover.xm:
+    /// "volume commands should be able to override this effect").
+    pub(crate) tremor_active:                  bool,
 }
 
 impl ChannelState {
@@ -786,6 +792,7 @@ impl ChannelState {
             last_played_note: 0,
             pending_set_volume: None,
             note_stopped: false,
+            tremor_active: false,
             vibrato_waveform:       0,
             tremolo_waveform: 0,
             vibrato_retrig:         true,
@@ -1003,16 +1010,40 @@ impl ChannelState {
         self.apply_porta(first_tick, amount, spec);
     }
 
-    /// S3M Ixy / similar: alternate the channel between audible (x ticks)
-    /// and silent (y ticks). Persistent state lives in `tremor` (param
-    /// memory) and `tremor_count` (running on/off counter encoded as
-    /// sign bit + remaining-ticks-in-current-phase). Per-tick state goes
-    /// into `tremor_silenced`, which the volume post-loop honors.
+    /// XM Txx / S3M Ixy / IT Ixy: alternate the channel between audible
+    /// (x ticks) and silent (y ticks). Persistent state lives in
+    /// `tremor` (param memory) and `tremor_count` (running on/off
+    /// counter encoded as sign bit + remaining-ticks-in-current-phase).
+    /// Per-tick state goes into `tremor_silenced`, which the volume
+    /// post-loop honors.
+    ///
+    /// OpenMPT test Tremor.xm: "The tremor counter is not updated on
+    /// the first tick, and the counter is only ever reset after a phase
+    /// switch (from on to off or vice versa)." On a fresh Txx row (tick
+    /// 0) we just stash the parameter and mark the on-phase active —
+    /// the actual countdown advances only from tick 1 onwards.
     pub(crate) fn tremor(&mut self, tick: u32, param: u8) {
-        if tick == 0 && param != 0 {
-            self.tremor = param;
+        if tick == 0 {
+            if param != 0 {
+                self.tremor = param;
+            }
+            // Activate the audible phase on row entry; let tick 1+
+            // start the countdown without changing the counter.
+            self.tremor_count |= 0x80;
+            self.tremor_silenced = false;
+            self.tremor_active = true;
+            return;
         }
+        self.tremor_advance();
+    }
 
+    /// Advance the tremor counter by one tick (the actual per-tick
+    /// state machine). Pulled out so the per-tick post-loop can keep
+    /// the cycle running on rows that have no explicit Txx command —
+    /// XM tremor persists until a new volume-affecting command
+    /// interrupts it. Skipped when `tremor_active` is false.
+    pub(crate) fn tremor_advance(&mut self) {
+        if !self.tremor_active { return; }
         let mut tremor_sign = self.tremor_count & 0x80;
         let mut tremor_data = (self.tremor_count & 0x7F) as i8;
 

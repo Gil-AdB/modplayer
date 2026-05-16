@@ -237,6 +237,31 @@ impl ModuleBackend for XmBackend {
                 &mut ctx, &XM_EFFECT_TABLE, &XM_E_TABLE,
             );
 
+            // XM Tremor persists across rows: tremor_active stays set
+            // until a non-Tremor effect fires on a subsequent row. On
+            // ticks 1+ of rows that don't carry Txx (effect 0x1D), keep
+            // the counter advancing so the on/off cycle continues.
+            // Test: Tremor.xm.
+            if !first_tick && channel.tremor_active && pattern.effect != 0x1D {
+                channel.tremor_advance();
+            }
+            // A volume-affecting command on the row terminates the
+            // tremor and frees the channel to play at whatever volume
+            // the new command commands. Volume column non-zero OR a
+            // SetVolume / VolSlide effect interrupt. Test:
+            // TremorRecover.xm.
+            if pattern.effect != 0x1D && first_tick {
+                let interrupts = pattern.volume != 0
+                    || pattern.effect == 0x0C   // Cxx
+                    || pattern.effect == 0x0A   // Axx vol slide
+                    || pattern.effect == 0x05   // 5xx porta+vol
+                    || pattern.effect == 0x06;  // 6xx vibrato+vol
+                if interrupts {
+                    channel.tremor_active = false;
+                    channel.tremor_silenced = false;
+                }
+            }
+
             if let Some(v) = voice_ref.as_deref_mut() {
                 channel.update_frequency_voice(v, r.rate, false, r.frequency_tables);
                 // Post-increment vibrato wave AFTER the freq update (FT2).

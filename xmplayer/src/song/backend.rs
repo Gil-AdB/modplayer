@@ -419,6 +419,15 @@ pub(super) fn init_channel_iter(
         } else {
             0
         };
+        // FT2: an instrument number resets the tremor counter (even on
+        // a row without a note) so the next Txx restarts a fresh
+        // on-phase. OpenMPT test cases: TremorInstr.xm, TremorRecover.xm.
+        // S3M / IT don't have this rule documented in tests; gate to
+        // formats that use the FT2 tremor mixer behaviour.
+        if matches!(song_type, SongType::XM | SongType::MOD) {
+            channel.tremor_count = 0;
+            channel.tremor_silenced = false;
+        }
     }
     if pattern.is_note_delay(song_type) {
         tick == pattern.get_y() as u32
@@ -1159,6 +1168,9 @@ pub(super) const XM_EFFECT_TABLE: [EffectKind; 32] = {
     t[0x15] = SetEnvelopePos;
     t[0x19] = PanningSlide;
     t[0x1B] = XmMultiRetrig;
+    t[0x1D] = Tremor;  // T (Tremor) — was missing; OpenMPT test cases
+                       // Tremor.xm, TremorInstr.xm, TremorRecover.xm
+                       // all relied on it.
     t
 };
 
