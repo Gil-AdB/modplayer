@@ -1369,14 +1369,26 @@ pub(super) fn apply_effect(
                 ctx.song_type, voice.as_deref_mut(), ctx.first_tick, 0,
                 ctx.compatible_g, ctx.rate, ctx.frequency_tables,
             );
-            apply_vol_slide(channel, voice, ctx, pattern.effect_param);
+            // ST3 quirk (OMT kS3MIgnoreCombinedFineSlides): combined
+            // slide commands Kxy and Lxy don't run on the first tick.
+            // Fine slides written in the K/L low nibble are
+            // effectively no-ops because they'd only fire on tick 0,
+            // which we're skipping here. OpenMPT test cases:
+            // NoCombinedSlidesOnFirstTick-{Fast,Normal}.s3m.
+            let skip_first_tick = ctx.song_type == SongType::S3M && ctx.first_tick;
+            if !skip_first_tick {
+                apply_vol_slide(channel, voice, ctx, pattern.effect_param);
+            }
         }
         EffectKind::VibratoPlusVolSlide => {
             channel.vibrato(
                 voice.as_deref_mut(), ctx.first_tick, 0, 0,
                 ctx.old_effects, ctx.rate, ctx.frequency_tables, ctx.song_type,
             );
-            apply_vol_slide(channel, voice, ctx, pattern.effect_param);
+            let skip_first_tick = ctx.song_type == SongType::S3M && ctx.first_tick;
+            if !skip_first_tick {
+                apply_vol_slide(channel, voice, ctx, pattern.effect_param);
+            }
         }
 
         EffectKind::SetPanningXm => {
