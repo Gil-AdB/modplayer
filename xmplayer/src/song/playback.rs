@@ -116,6 +116,12 @@ impl Song {
         for (i, ch) in self.channels.iter_mut().enumerate() {
             *ch = ChannelState::new();
             ch.frequency_scale = mix.freq_scale;
+            // IT-specific: see Song::new for the rationale. reset() runs
+            // on every Restart / seek / compute_total_duration, so the
+            // C-0 init must be reapplied here too.
+            if self.song_data.song_type == crate::module_reader::SongType::IT {
+                ch.last_played_note = 1;
+            }
             if i < 64 && i < self.song_data.initial_channel_volume.len() && i < self.song_data.initial_channel_panning.len() {
                 ch.panning.set_panning(self.song_data.initial_channel_panning[i] as i32);
                 ch.surround = self.song_data.initial_channel_surround[i];

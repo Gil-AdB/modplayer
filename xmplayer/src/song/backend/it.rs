@@ -3,10 +3,10 @@ use crate::channel_state::Voice;
 use crate::pattern::NoteAction;
 use crate::song::backend::{
     alloc_voice, apply_flow_control_effect, apply_porta_retrig_if_needed,
-    bind_voice_for_channel, dispatch_main_and_extended, dispatch_vol_col,
-    init_channel_iter, init_voice_basics, mute_silent_voices, process_voices,
-    set_channel_note, validate_voice_pool, voice_mix, EffectCtx, ModuleBackend,
-    SongPlaybackResources, IT_EFFECT_TABLE, IT_S_TABLE, IT_VOL_COL,
+    bind_voice_for_channel, cut_or_nna_existing_voice, dispatch_main_and_extended,
+    dispatch_vol_col, init_channel_iter, init_voice_basics, mute_silent_voices,
+    process_voices, set_channel_note, validate_voice_pool, voice_mix, EffectCtx,
+    ModuleBackend, SongPlaybackResources, IT_EFFECT_TABLE, IT_S_TABLE, IT_VOL_COL,
 };
 
 pub struct ItBackend {}
@@ -225,6 +225,10 @@ impl ModuleBackend for ItBackend {
                                 voice.last_played_note = pattern.note;
                                 channel.last_played_note = pattern.note;
                                 channel.voice_idx = Some(voice_idx);
+                                // Fresh trigger clears the "note stopped"
+                                // flag used by the bare-instrument
+                                // retrigger gate below.
+                                channel.note_stopped = false;
                             }
                         }
                     }
@@ -237,6 +241,7 @@ impl ModuleBackend for ItBackend {
                             r.voices[v_idx].key_off(instruments, r.song_data.song_type);
                         }
                     }
+                    channel.note_stopped = true;
                 }
             }
             NoteAction::Cut => {
@@ -250,6 +255,7 @@ impl ModuleBackend for ItBackend {
                             channel.voice_idx = None;
                         }
                     }
+                    channel.note_stopped = true;
                 }
             }
             NoteAction::Fade => {
@@ -259,6 +265,71 @@ impl ModuleBackend for ItBackend {
                             r.voices[v_idx].sustained = false;
                             let instrument_nna = &instruments[r.voices[v_idx].instrument];
                             r.voices[v_idx].volume.fadeout_speed = (instrument_nna.volume_fadeout as i32) << 6;
+                        }
+                    }
+                    channel.note_stopped = true;
+                }
+            }
+            // Bare instrument row (no note byte, instrument byte present):
+            // IT triggers a fresh note at the channel's last_played_note
+            // (which Song::new initialises to C-0 / engine 1 for IT so
+            // the very first such row plays C-0). OpenMPT test cases:
+            // InitialNoteMemory.it, OffsetWithInstr.it, SCx-Reset.it,
+            // scx.it. The retrigger is suppressed when the previous
+            // note action was Cut / Off / Fade — see note_stopped.
+            NoteAction::None if pattern.instrument != 0
+                && note_delay_first_tick
+                && !channel.note_stopped =>
+            {
+                let revived = channel.last_played_note;
+                if revived != 0 && revived <= 120 {
+                    channel.on = true;
+                    let inst_idx = channel.last_instrument;
+                    if inst_idx != 0 {
+                        let instrument = &instruments[inst_idx];
+                        let note_idx = (revived - 1) as usize;
+                        if note_idx < instrument.sample_indexes.len() {
+                            let it_mapping = instrument.sample_indexes[note_idx];
+                            let sample_idx = it_mapping.1 as usize;
+                            if sample_idx > 0 && (sample_idx - 1) < instrument.samples.len() {
+                                let final_sample_idx = sample_idx - 1;
+                                let prev_voice_idx = channel.voice_idx.unwrap_or(i);
+                                cut_or_nna_existing_voice(r.voices, channel, instruments, r.song_data.song_type, i, prev_voice_idx);
+                                let voice_idx = alloc_voice(r.voices);
+                                {
+                                    let v = &r.voices[voice_idx];
+                                    if v.on && v.channel_idx != i {
+                                        stale_clears.push((v.channel_idx, voice_idx));
+                                    }
+                                }
+                                init_voice_basics(&mut r.voices[voice_idx], i, inst_idx, final_sample_idx);
+                                let voice = &mut r.voices[voice_idx];
+                                voice.volume.retrig(instrument.samples[final_sample_idx].volume as i32);
+                                if instrument.samples[final_sample_idx].panning < 255 {
+                                    voice.panning.set_panning(instrument.samples[final_sample_idx].panning as i32);
+                                } else {
+                                    voice.panning.set_panning(r.song_data.initial_channel_panning[i] as i32);
+                                }
+                                // pattern.instrument != 0 here by definition.
+                                voice.trigger_note(instruments, true, channel.vibrato_retrig, channel.tremolo_retrig);
+                                let sample = &instrument.samples[final_sample_idx];
+                                let mapped_note = it_mapping.0 + 1;
+                                set_channel_note(channel, voice, sample.relative_note, sample.finetune, mapped_note, r.rate, r.frequency_tables);
+                                channel.note.linear_hz = 0.0;
+                                if sample.c5_speed != 0 {
+                                    if r.song_data.use_amiga {
+                                        let p = crate::channel_state::channel_state::Note::note_to_period_s3m(mapped_note as u8, -1, sample.c5_speed);
+                                        channel.note.period = p;
+                                        channel.note.base_period = p;
+                                    } else {
+                                        let hz = crate::channel_state::channel_state::Note::it_linear_frequency(mapped_note as u8, sample.c5_speed);
+                                        channel.note.linear_hz = hz;
+                                    }
+                                    channel.update_frequency_voice(voice, r.rate, false, r.frequency_tables);
+                                }
+                                voice.last_played_note = revived;
+                                channel.voice_idx = Some(voice_idx);
+                            }
                         }
                     }
                 }

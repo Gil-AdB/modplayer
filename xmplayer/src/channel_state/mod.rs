@@ -752,6 +752,13 @@ pub struct ChannelState {
     /// row 0 sets vol=0 on an empty channel, row 1's note triggers
     /// and must keep vol=0 instead of reverting to sample default.
     pub(crate) pending_set_volume:             Option<u8>,
+    /// IT: set when the channel's last note action was Cut / Off /
+    /// Fade. Used to suppress bare-instrument-row retriggers per
+    /// OpenMPT's "OffsetWithInstr.it" rule: an offset effect can be
+    /// triggered if only an instrument number and no note is next to
+    /// it, *if the last triggered note was not a note cut, note off
+    /// or note fade*. Cleared on every fresh note trigger.
+    pub(crate) note_stopped:                   bool,
 }
 
 impl ChannelState {
@@ -778,6 +785,7 @@ impl ChannelState {
             period_shift: 0,
             last_played_note: 0,
             pending_set_volume: None,
+            note_stopped: false,
             vibrato_waveform:       0,
             tremolo_waveform: 0,
             vibrato_retrig:         true,

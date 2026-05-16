@@ -585,6 +585,14 @@ impl Song {
         for i in 0..song_data.channel_count as usize {
             let mut channel = ChannelState::new();
             channel.frequency_scale = mix.freq_scale;
+            // IT-specific: "The initial 'last note' memory of each channel
+            // in Impulse Tracker is initialized to C-0. So the first lone
+            // instrument number without any note next to it will play a
+            // C-0 of that instrument." (OpenMPT test case
+            // InitialNoteMemory.it.) Engine encoding has C-0 at note 1.
+            if song_data.song_type == crate::module_reader::SongType::IT {
+                channel.last_played_note = 1;
+            }
             if i < 64 {
                 channel.panning.set_panning(song_data.initial_channel_panning[i] as i32);
                 channel.surround = song_data.initial_channel_surround[i];
