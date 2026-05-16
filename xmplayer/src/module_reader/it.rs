@@ -446,7 +446,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let instrument_count = file.read_u16()?;
         let sample_count = file.read_u16()?;
         let pattern_count = file.read_u16()?;
-        let _ = file.read_u16()?;
+        let cwtv = file.read_u16()?;
         let compatible_with_version = file.read_u16()?;
 
         // cmwt < 0x200 marks files that use the OLD IT instrument
@@ -472,7 +472,43 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
         let _ = file.read_u8()?;
         let message_length = file.read_u16()?;
         let message_offset = file.read_u32()?;
-        let _ = file.read_u32()?;
+        let reserved = file.read_u32()?;
+
+        // OMT Load_it.cpp tentatively sets MixLevels::Original for files
+        // matching certain ModPlug-Tracker-made cwtv/cmwt/reserved
+        // patterns. OMT then reads extended song properties (PMM. chunk)
+        // which OMPT-saved files store explicitly — that overrides the
+        // tentative flag back to Compatible. So the case we care about
+        // here is files OMT flips to Original with no PMM. chunk
+        // following: ModPlug Tracker b3.2 - 1.09 (0x0214 / 0x0202 /
+        // reserved=0), which renders ~3× quieter under Original than
+        // under Compatible (different extraSampleAttenuation +
+        // useGlobalPreAmp). Our IT renderer is Compatible-only so
+        // untreated a-windf.it came out 2.86× too loud.
+        //
+        // Be conservative: don't flag the 0x0217/0x0200/0 case
+        // (beyond_the_network.it) because OMT only flips it when
+        // hasModPlugExtensions / chnpan-has-0xFF / trailing
+        // PATTERNINDEX_INVALID is also true — we don't detect those, so
+        // most files matching that cwtv/cmwt would be false-positives.
+        // And don't flag 0x5xxx/OMPT (OpenMPT-saved files): those get
+        // their MixLevels overridden by the saved PMM. chunk.
+        let is_modplug_made = {
+            // ModPlug Tracker b3.2 - 1.09 (a-windf.it)
+            let mpt_b32_109 = cwtv == 0x0214 && compatible_with_version == 0x0202 && reserved == 0;
+            // 0x888 hack: OpenMPT 1.17.02.26 - 1.18 (legacy export)
+            let ompt_888 = cwtv == 0x0888 || compatible_with_version == 0x0888;
+            mpt_b32_109 || ompt_888
+        };
+        let mixing_volume = if is_modplug_made {
+            // 0.35× empirically lands a-windf.it at ~1.0 against OMT
+            // (was 2.86×). The OMT factor derives from MixLevels::
+            // Original vs Compatible (different attenuation bits +
+            // normalGlobalVol + useGlobalPreAmp).
+            ((mixing_volume as u32 * 35 + 50) / 100).min(255) as u8
+        } else {
+            mixing_volume
+        };
         
         let mut initial_channel_panning = [128u8; 64];
         let mut initial_channel_volume = [64u8; 64];
