@@ -321,8 +321,25 @@ impl Song {
             }
 
             let took_pattern_loop = self.pattern_change.is_loop;
+            // FT2 (XM) and IT (with kITPatternLoopWithJumps) let pattern
+            // break/jump take precedence over pattern loop when both
+            // fire on the same row. Other formats prefer the loop and
+            // ignore the break/jump. OpenMPT test cases:
+            // PatLoop-Break.xm, PatLoop-Weird.xm, PatLoop-Jumps.xm,
+            // PatLoop-Break.mod (MOD also follows the FT2 rule per
+            // OMT's HandleNextRow).
+            let break_or_jump_wins = matches!(
+                self.song_data.song_type,
+                crate::module_reader::SongType::XM | crate::module_reader::SongType::MOD,
+            ) || (
+                self.song_data.song_type == crate::module_reader::SongType::IT
+                && self.pattern_change.pattern_jump
+            );
+            let do_loop = self.pattern_change.is_loop
+                && !(break_or_jump_wins
+                     && (self.pattern_change.pattern_break || self.pattern_change.pattern_jump));
             if self.pattern_change.pattern_break || self.pattern_change.pattern_jump || self.pattern_change.is_loop {
-                if self.pattern_change.is_loop {
+                if do_loop {
                     // Stay in same pattern
                 } else if !self.pattern_change.pattern_jump {
                     self.next_pattern();
