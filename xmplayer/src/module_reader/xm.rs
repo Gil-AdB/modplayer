@@ -233,6 +233,59 @@ fn read_instruments<R: Read + Seek>(file: &mut R, instrument_count: usize) -> Si
     Ok(instruments)
 }
 
+/// Scan from the current position to end-of-file for an OpenMPT STPM
+/// extended-song-properties block, locate the "PMM." (MixLevels) chunk
+/// within it, and translate the value into our mixing_volume scaling.
+/// Returns `Some(mixing_volume)` if a PMM. chunk was found, `None`
+/// otherwise (caller keeps the previously-computed value).
+///
+/// File-format reference: Load_it.cpp:2532::LoadExtendedSongProperties.
+/// Chunk layout after the STPM magic: 4-byte LE code + 2-byte LE size
+/// + data. Code "PMM." appears in memory as bytes [".","M","M","P"]
+/// (the file stores it as the LE-encoded magic of "PMM.").
+fn scan_for_mptm_pmm<R: Read + Seek>(file: &mut R) -> Option<u8> {
+    // Slurp the rest of the file. XM tail is typically small (the
+    // STPM block is hundreds of bytes max), so reading to end is
+    // fine.
+    let mut rest = Vec::new();
+    if file.read_to_end(&mut rest).is_err() { return None; }
+    // Find STPM magic.
+    let stpm = rest.windows(4).position(|w| w == b"STPM")?;
+    let mut cp = stpm + 4;
+    while cp + 6 <= rest.len() {
+        let code = &rest[cp..cp + 4];
+        let size = u16::from_le_bytes([rest[cp + 4], rest[cp + 5]]) as usize;
+        // OMT bails when any high bit is set in the code or none of
+        // the ASCII printable-marker bits are set — mirror that.
+        if code.iter().any(|&b| b & 0x80 != 0) { break; }
+        if code.iter().any(|&b| b & 0x60 == 0)  { break; }
+        if cp + 6 + size > rest.len()           { break; }
+        // ".MMP" in memory == big-endian "PMM." in the OMT source.
+        if code == b".MMP" && size >= 1 {
+            let mix_levels = rest[cp + 6];
+            // MixLevels enum (SoundFilePlayConfig.h):
+            //   0 = Original, 1..3 = v1_17RC*, 4 = Compatible,
+            //   5 = CompatibleFT2.
+            // Our XM_MIX is calibrated to CompatibleFT2 (preamp 192).
+            // Compatible / Original render at 192/256 of that.
+            // Only the Compatible (= 4) value is reproducible with our
+            // single calibration knob (mixing_volume × 0.75). Original
+            // (= 0) involves a different gain pipeline in OMT
+            // (extraSampleAttenuation = 4 vs Compatible's 1, plus
+            // useGlobalPreAmp = true) that we don't model; leave it
+            // untouched so we don't accidentally regress files like
+            // cerror_-_crack_05.xm (a separate-bug r=0.53 outlier
+            // that already renders quieter than OMT does).
+            return Some(match mix_levels {
+                4 => ((128u32 * 192) / 256) as u8,  // 96
+                _ => 128,                            // unchanged
+            });
+        }
+        cp += 6 + size;
+    }
+    None
+}
+
 fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
 {
     let id = file.read_string(17);
@@ -316,6 +369,23 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     });
 
     let instruments = read_instruments(file, instrument_count as usize)?;
+
+    // OpenMPT-saved XM files append an "STPM" chunk block after the
+    // main XM data (Load_it.cpp:2532::LoadExtendedSongProperties is
+    // called from Load_xm.cpp:1096 against the same reader). The
+    // block contains modular sub-chunks; the "PMM." one carries
+    // m_nMixLevels. We've already seen the tracker-name-based
+    // detection above, but PMM. *overrides* it when present.
+    //
+    // OpenMPT 1.26-1.30 writes Compatible (4) in PMM. for XM files
+    // even though the tracker-name path sets CompatibleFT2 — that's
+    // the OMT-bug we have to match here. 1.23 and 1.32+ write
+    // CompatibleFT2 (5) which is our XM_MIX calibration target.
+    //
+    // Each chunk: 4-byte LE code, 2-byte LE size, `size` bytes data.
+    // PMM. code "PMM." reads in memory as ".MMP" (LE order) — we just
+    // match the four bytes literally.
+    let mixing_volume = scan_for_mptm_pmm(file).unwrap_or(mixing_volume);
 
     Ok(SongData {
         id: id.trim().to_string(),
