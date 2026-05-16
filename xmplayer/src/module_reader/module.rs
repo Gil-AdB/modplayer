@@ -147,11 +147,37 @@
                     let effect = ((data & 0xF00) >> 8) as u8;
                     let effect_param = (data & 0xFF) as u8;
 
+                    // Map period byte (MOD/PT cell) → 1-based note index by
+                    // finding the first AMIGA_PERIOD slot whose value is
+                    // <= period (table is descending — bigger period =
+                    // lower note). period=0 is "no note" → note=0.
+                    //
+                    // Special case: a non-zero period that's *below* the
+                    // table's smallest value (28) is a note above the
+                    // table's range. PT/MOD trackers commonly wrote
+                    // out-of-range periods (e.g., Zoqfot.mod ch0 rows 0C/
+                    // 0D have period 12 and 24 — well below 28). OMT
+                    // treats these as the **highest representable note**
+                    // and retriggers normally; our previous code mapped
+                    // them to note=0 (no trigger), which silently dropped
+                    // those notes from the song. Match OMT: clamp to the
+                    // last slot.
                     let mut note = 0u8;
-                    for i in 0..8 * 12usize {
-                        if period >= AMIGA_PERIOD[i] {
-                            note = (i + 1) as u8;
-                            break;
+                    if period > 0 {
+                        for i in 0..8 * 12usize {
+                            if period >= AMIGA_PERIOD[i] {
+                                note = (i + 1) as u8;
+                                break;
+                            }
+                        }
+                        // Period below the smallest table value = no
+                        // match in the loop = above the highest note.
+                        // Clamp to the top of the range so the note
+                        // triggers; OMT does the same via m_nMinPeriod
+                        // clamping at the mixer (Load_mod.cpp:428 sets
+                        // m_nMinPeriod = 14*4 = 56).
+                        if note == 0 {
+                            note = (8 * 12) as u8;
                         }
                     }
 
