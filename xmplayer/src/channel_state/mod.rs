@@ -744,6 +744,14 @@ pub struct ChannelState {
     /// the same clock as our table → scale = 1.0. Set once at Song
     /// construction from `VoiceMixFormula::freq_scale`.
     pub(crate) frequency_scale:                f32,
+    /// MOD/PT: a Cxx (SetVolume) effect on a row with no active voice
+    /// stashes the param here. The next note trigger on this channel
+    /// consumes it instead of resetting to sample default. Mirrors PT
+    /// behaviour where the volume command "sticks" until the next
+    /// trigger. OpenMPT test case PTInstrVolume.mod relies on this:
+    /// row 0 sets vol=0 on an empty channel, row 1's note triggers
+    /// and must keep vol=0 instead of reverting to sample default.
+    pub(crate) pending_set_volume:             Option<u8>,
 }
 
 impl ChannelState {
@@ -769,6 +777,7 @@ impl ChannelState {
             vibrato_active_this_row: false,
             period_shift: 0,
             last_played_note: 0,
+            pending_set_volume: None,
             vibrato_waveform:       0,
             tremolo_waveform: 0,
             vibrato_retrig:         true,
@@ -1064,6 +1073,11 @@ impl ChannelState {
         if first_tick {
             if let Some(v) = voice {
                 v.volume.set_volume(vol as i32);
+            } else {
+                // No live voice: stash for the next trigger to consume.
+                // PT/MOD test case PTInstrVolume.mod: Cxx on an empty
+                // channel must persist until the next note row.
+                self.pending_set_volume = Some(vol);
             }
         }
     }

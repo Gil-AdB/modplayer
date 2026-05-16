@@ -86,6 +86,14 @@ impl ModuleBackend for ModBackend {
                             voice.panning.set_panning(r.song_data.initial_channel_panning[i] as i32);
                         }
                         voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
+                        // PT/MOD: a Cxx command on a prior row with no
+                        // active voice stashed its param in
+                        // pending_set_volume. The trigger consumes it
+                        // here so the new note plays at the commanded
+                        // volume rather than the sample's default.
+                        if let Some(v) = channel.pending_set_volume.take() {
+                            voice.volume.set_volume(v as i32);
+                        }
 
                         let sample = &instruments[inst_idx].samples[sample_idx];
                         set_channel_note(channel, voice, sample.relative_note, sample.finetune, pattern.note, r.rate, r.frequency_tables);
