@@ -249,6 +249,34 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
     let tracker_name = file.read_string(20);
     let _ver = file.read_u16()?;
 
+    // OMT MixLevels detection — see Load_xm.cpp:608-1045. We can't
+    // mirror every variant of the playBehaviour matrix, but the rule
+    // that affects raw output gain is the normalSamplePreAmp scale:
+    //   CompatibleFT2 (our calibration target): preamp 192
+    //   Compatible:                              preamp 256
+    //   Original:                                preamp 256
+    // The 256/192 = 1.333× difference is exactly the outlier ratio
+    // we see for several MilkyTracker XM files in the corpus.
+    //
+    // For MilkyTracker without a version string (pre-0.90.87 — the
+    // explicit branch in OMT only sets MixLevels::CompatibleFT2 when
+    // bytes 12..20 of the tracker name carry a non-space version),
+    // OMT leaves the default MixLevels::Compatible from
+    // Sndfile.cpp:211 in place. Detect this case and scale our
+    // mixing_volume to land at the same level — without it, files
+    // like xem_fdl / xem_po / db_night render 33% too loud.
+    let is_milky_tracker_no_version =
+        tracker_name.starts_with("MilkyTracker ")
+        && tracker_name.len() >= 20
+        && tracker_name.as_bytes()[13..20].iter().all(|&b| b == b' ');
+    // Sample-preamp ratio scaling: Compatible mode renders at 192/256 of
+    // CompatibleFT2 mode. Encode that in mixing_volume (rounded to u8).
+    let mixing_volume: u8 = if is_milky_tracker_no_version {
+        ((128u32 * 192) / 256) as u8  // = 96
+    } else {
+        128
+    };
+
     let header_size = file.read_u32()?;
     let mut song_length = file.read_u16()?;
     let restart_position = file.read_u16()?;
@@ -312,7 +340,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
         initial_channel_surround: [false; 64],
         global_volume:           64,
         master_volume:           128,
-        mixing_volume:           128,
+        mixing_volume,
         old_effects: false,
         compatible_g: false,
         fast_volume_slides: false,
