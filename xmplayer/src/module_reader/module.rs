@@ -152,32 +152,23 @@
                     // <= period (table is descending — bigger period =
                     // lower note). period=0 is "no note" → note=0.
                     //
-                    // Special case: a non-zero period that's *below* the
-                    // table's smallest value (28) is a note above the
-                    // table's range. PT/MOD trackers commonly wrote
-                    // out-of-range periods (e.g., Zoqfot.mod ch0 rows 0C/
-                    // 0D have period 12 and 24 — well below 28). OMT
-                    // treats these as the **highest representable note**
-                    // and retriggers normally; our previous code mapped
-                    // them to note=0 (no trigger), which silently dropped
-                    // those notes from the song. Match OMT: clamp to the
-                    // last slot.
+                    // A non-zero period below the smallest table value
+                    // (28) leaves note=0 — i.e., "no trigger". OMT
+                    // handles these via m_nMinPeriod clamping at the
+                    // mixer and produces a high but in-tune note.
+                    // Replicating that in our parser by clamping to
+                    // note 96 produced a 2× too-high pitch burst (our
+                    // frequency_tables.periods scale doesn't align
+                    // with AMIGA_PERIOD index 95). Until note→period
+                    // for MOD is rebased on the AMIGA scale, silence
+                    // on out-of-range periods is the lesser evil — and
+                    // matches what master shipped (the user reported
+                    // master sounds correct on Zoqfot).
                     let mut note = 0u8;
-                    if period > 0 {
-                        for i in 0..8 * 12usize {
-                            if period >= AMIGA_PERIOD[i] {
-                                note = (i + 1) as u8;
-                                break;
-                            }
-                        }
-                        // Period below the smallest table value = no
-                        // match in the loop = above the highest note.
-                        // Clamp to the top of the range so the note
-                        // triggers; OMT does the same via m_nMinPeriod
-                        // clamping at the mixer (Load_mod.cpp:428 sets
-                        // m_nMinPeriod = 14*4 = 56).
-                        if note == 0 {
-                            note = (8 * 12) as u8;
+                    for i in 0..8 * 12usize {
+                        if period >= AMIGA_PERIOD[i] {
+                            note = (i + 1) as u8;
+                            break;
                         }
                     }
 
