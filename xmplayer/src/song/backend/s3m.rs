@@ -115,6 +115,25 @@ impl ModuleBackend for S3MBackend {
 
                                 voice.trigger_note(instruments, pattern.instrument != 0, channel.vibrato_retrig, channel.tremolo_retrig);
 
+                                // ST3 quirk (OpenMPT test case OxxMemory.s3m):
+                                // when a note row has no instrument number,
+                                // ST3 reuses the previously-applied Oxx offset
+                                // for this trigger. The shared SampleOffset
+                                // effect handler doesn't fire on rows without
+                                // an Oxx command, so seed sample_position
+                                // here. If this row *also* carries an Oxx
+                                // effect, that handler runs later in the same
+                                // tick and overwrites the position with the
+                                // (possibly updated) value.
+                                if pattern.instrument == 0 {
+                                    let offset = channel.mem(
+                                        crate::channel_state::EffectMemorySlot::SampleOffset,
+                                    );
+                                    if offset != 0 {
+                                        voice.sample_position = (offset as f32) * 256.0 + 4.0;
+                                    }
+                                }
+
                                 let sample = &instrument.samples[final_sample_idx];
                                 let mapped_note = it_mapping.0 + 1;
                                 set_channel_note(channel, voice, sample.relative_note, sample.finetune, mapped_note, r.rate, r.frequency_tables);

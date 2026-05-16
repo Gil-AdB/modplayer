@@ -1402,12 +1402,33 @@ pub(super) fn apply_effect(
         }
         EffectKind::SampleOffset => {
             if ctx.first_tick {
+                // Always memorize the param so a later note row using
+                // bare Oxx (param 00) picks up the most recent value
+                // (OMT Snd_fx.cpp:CMD_OFFSET via the effect memory).
                 let param = channel.recall_or_set(
                     crate::channel_state::EffectMemorySlot::SampleOffset,
                     pattern.effect_param,
                 );
-                if let Some(v) = voice.as_deref_mut() {
-                    v.sample_position = (param as f32) * 256.0 + 4.0;
+                // Only apply the offset to a voice when the row also
+                // triggers a fresh note. Bare Oxx (no note) just sets
+                // memory — applying it would scrub the playhead on a
+                // sustaining voice and produce phantom audio (OpenMPT
+                // S3M test case OxxMemory.s3m: "Should remain silent",
+                // 300× too loud before this).
+                //
+                // FT2 quirk (XM only): porta-to-note + offset on the
+                // same row ignores the offset entirely — see OMT's
+                // porta-offset.xm test note.
+                let triggers = matches!(
+                    pattern.note_action(ctx.song_type),
+                    crate::pattern::NoteAction::Trigger(_),
+                );
+                let xm_porta_offset_skip = ctx.song_type == SongType::XM
+                    && pattern.is_porta_to_note(ctx.song_type);
+                if triggers && !xm_porta_offset_skip {
+                    if let Some(v) = voice.as_deref_mut() {
+                        v.sample_position = (param as f32) * 256.0 + 4.0;
+                    }
                 }
             }
         }
