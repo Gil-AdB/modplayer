@@ -51,6 +51,15 @@ OCTAVE_CENTERS = [125, 250, 500, 1000, 2000, 4000, 8000]
 # tolerate normal cubic-vs-linear-interp HF differences across songs.
 BAND_DEVIATION_THRESHOLD = 1.6
 
+# Minimum band amplitude (relative to the song's full-song RMS) below
+# which band ratios become numerically meaningless. A 30-second
+# rendering of a song whose HF content lives past second 40 will have
+# near-zero 8 kHz energy; the ratio of two near-zero numbers is noise
+# and produces spurious deviations (Star Control II - Intro.MOD showed
+# us/omt=20.9 at 8 kHz at length=30, but us/omt=1.17 over the full song
+# — the early window was simply silent at 8 kHz).
+BAND_NOISE_FLOOR_REL = 0.02
+
 
 def render(binary: Path, path: Path, out: Path, length: float) -> bool:
     res = subprocess.run(
@@ -142,10 +151,19 @@ def main():
             ratio = u_full / o_full if o_full > 1e-6 else float("inf")
             u_bands = band_rms(ua, ur)
             o_bands = band_rms(oa, or_)
-            band_ratios = {
-                fc: (u_bands[fc] / o_bands[fc]) if o_bands[fc] > 1e-8 else float("nan")
-                for fc in OCTAVE_CENTERS
-            }
+            # Noise floor: if either render's band amplitude is well
+            # below the song's full-song RMS, the ratio is dominated by
+            # whichever side picked up a tiny nonzero from windowing and
+            # the comparison is not informative. NaN it out so the
+            # deviation pass skips it.
+            floor = BAND_NOISE_FLOOR_REL * max(u_full, o_full)
+            band_ratios = {}
+            for fc in OCTAVE_CENTERS:
+                if (u_bands[fc] < floor or o_bands[fc] < floor
+                        or o_bands[fc] <= 1e-8):
+                    band_ratios[fc] = float("nan")
+                else:
+                    band_ratios[fc] = u_bands[fc] / o_bands[fc]
         except Exception as e:
             failures.append((src.name, str(e)[:80]))
             continue
