@@ -85,11 +85,11 @@ def render(binary: Path, path: Path, out: Path, length: float) -> bool:
 
 def render_canonical(binary: Path, path: Path, out: Path, length: float) -> bool:
     """Render via a 8bitbubsy *play binary (pt2-clone-cli / st3play-cli /
-    it2play-cli). These tools render the whole song; we (a) cap the
-    on-disk size at roughly `length` seconds of stereo float32 so a
-    song with an internal Bxx loop can't bloat to gigabytes, and (b)
-    kill the process once output size stabilizes — songs whose natural
-    end is shorter than the cap still terminate cleanly."""
+    it2play-cli). These tools render the whole song with no --end-time
+    flag of their own; we kill them either when output size stabilizes
+    (= song reached its natural end) or after `length` seconds elapsed
+    real-time (safety cap for looping songs like inside_out.s3m, which
+    would otherwise render forever)."""
     import time
     if out.exists(): out.unlink()
     proc = subprocess.Popen(
@@ -97,25 +97,17 @@ def render_canonical(binary: Path, path: Path, out: Path, length: float) -> bool
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
     )
-    # Size cap (bytes). pt2-clone writes 44.1 kHz stereo int16 (4 B/frame),
-    # st3play/it2play write 48 kHz stereo int16 (4 B/frame). Use the higher
-    # rate as worst case; +1 MB slack for WAV header & ramp. The actual
-    # truncation happens in-memory at analysis time; this is just to keep
-    # the on-disk file from running away on looping songs.
-    max_bytes = int(length * 48000 * 4) + 1_000_000
     last_size, stable = -1, 0
-    deadline = time.time() + length + 30
+    deadline = time.time() + length
     while time.time() < deadline:
         time.sleep(0.5)
         try:
             size = out.stat().st_size
         except FileNotFoundError:
             size = 0
-        if size >= max_bytes:
-            break
         if size > 0 and size == last_size:
             stable += 1
-            if stable >= 3: break
+            if stable >= 3: break  # song reached its natural end
         else:
             stable = 0
         last_size = size
@@ -168,7 +160,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--include-sc2", action="store_true",
                     help="include Star Control II MOD batch (~60 files, slow)")
-    ap.add_argument("--length", type=float, default=30.0)
+    ap.add_argument("--length", type=float, default=480.0,
+                    help="Max render seconds per song. Whichever comes first: "
+                         "song's natural end, or this cap. Default 480 (8 min) "
+                         "covers virtually every real tracker song while still "
+                         "bounding looping songs like inside_out.s3m. Per-song "
+                         "cleanup keeps peak disk to one song's three renders "
+                         "(~280 MB at the default).")
     ap.add_argument("--bands-only", action="store_true",
                     help="suppress per-song RMS line; only print band-flagged songs")
     ap.add_argument("--keep-wavs", action="store_true",
@@ -232,32 +230,35 @@ def main():
             c_full, c_bands = None, None
             if canonical_bin and canonical_bin.exists():
                 if render_canonical(canonical_bin, src, can, args.length):
-                    cr, cana = load_wav(can)
-                    # Hard time cap before any further processing — a
-                    # truncated WAV header from the render-side size cap
-                    # can leave the data buffer technically longer than
-                    # the meaningful audio, and we'd waste memory/CPU
-                    # resampling an hours-long buffer for a 30-second
-                    # analysis window.
-                    cana = cana[: int(args.length * cr)]
-                    n_can = len(cana)
-                    if cr != ur:
-                        # Resample canonical to our analysis rate.
-                        from scipy.signal import resample
-                        cana = resample(cana, int(n_can * ur / cr)).astype(np.float32)
-                    # Compare only on the overlapping prefix.
-                    n = min(len(ua), len(cana))
-                    cana = cana[:n]
-                    c_full = rms(cana)
-                    # Sanity: st3play renders some S3M files as effective
-                    # silence (e.g. AdLib-only songs that need the OPL2
-                    # driver and don't produce SBPro output). Treating
-                    # those as a valid reference produces useless 22x
-                    # divergence flags — overdriv.s3m was the canary.
-                    if c_full < 0.005 or float(np.max(np.abs(cana))) < 0.05:
+                    # Isolate the canonical load+analysis so a malformed
+                    # WAV header (scipy.io.wavfile.read raises
+                    # UnboundLocalError when it can't reconcile the
+                    # advertised data size against the actual bytes —
+                    # happens when the *play binary gets killed mid-
+                    # write and our final header patching is incomplete)
+                    # just means "no canonical for this song" rather
+                    # than dropping the whole row.
+                    try:
+                        cr, cana = load_wav(can)
+                        n_can = len(cana)
+                        if cr != ur:
+                            from scipy.signal import resample
+                            cana = resample(cana, int(n_can * ur / cr)).astype(np.float32)
+                        n = min(len(ua), len(cana))
+                        cana = cana[:n]
+                        c_full = rms(cana)
+                        # Sanity: st3play renders some S3M files as
+                        # effective silence (AdLib-only songs that need
+                        # the OPL2 driver and don't produce SBPro
+                        # output). Treating those as a valid reference
+                        # produces useless 22x divergence flags —
+                        # overdriv.s3m was the canary.
+                        if c_full < 0.005 or float(np.max(np.abs(cana))) < 0.05:
+                            c_full = None
+                        else:
+                            c_bands = band_rms(cana, ur)
+                    except Exception:
                         c_full = None
-                    else:
-                        c_bands = band_rms(cana, ur)
         except Exception as e:
             failures.append((src.name, str(e)[:80]))
             # Best-effort cleanup even on failure so a mid-corpus error
