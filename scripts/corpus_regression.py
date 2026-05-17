@@ -41,7 +41,8 @@ TMP = Path("/tmp/corpus_reg")
 CANONICAL = {
     ".mod":  Path("/tmp/pt2-clone/pt2-clone-cli"),
     ".s3m":  Path("/tmp/st3play/st3play-cli"),
-    # ".xm" / ".it" → add when ft2play / it2play CLIs are built.
+    ".it":   Path("/tmp/it2play/it2play-cli"),
+    # ".xm" → add when ft2play CLI is built.
 }
 
 # Per-format expected full-song RMS ratio band (from prior calibration).
