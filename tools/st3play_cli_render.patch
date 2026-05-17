@@ -1,0 +1,71 @@
+diff --git a/st3play/src/st3play.c b/st3play/src/st3play.c
+index 30406f6..429bf5a 100644
+--- a/st3play/src/st3play.c
++++ b/st3play/src/st3play.c
+@@ -26,7 +26,7 @@ static int32_t mixingBufferSize = DEFAULT_MIX_BUFSIZE;
+ // ----------------------------------------------------------
+ 
+ static volatile bool programRunning;
+-static char *filename, *WAVRenderFilename;
++static char *filename, *WAVRenderFilename, *renderOutPath = NULL;
+ 
+ static void showUsage(void);
+ static void handleArguments(int argc, char *argv[]);
+@@ -244,6 +244,11 @@ static void handleArguments(int argc, char *argv[])
+ 			{
+ 				renderToWavFlag = true;
+ 			}
++			else if (!_stricmp(argv[i], "--render") && i+1 < argc)
++			{
++				renderToWavFlag = true;
++				renderOutPath = argv[i+1];
++			}
+ 		}
+ 	}
+ }
+@@ -280,18 +285,26 @@ static void readKeyboard(void)
+ 
+ static int32_t renderToWav(void)
+ {
+-	const size_t filenameLen = strlen(filename);
+-	WAVRenderFilename = (char *)malloc(filenameLen+5);
+-
+-	if (WAVRenderFilename == NULL)
++	if (renderOutPath != NULL)
+ 	{
+-		printf("Error: Out of memory!\n");
+-		closeMusic();
+-		return 1;
++		// Caller-provided path (harness mode): use it verbatim.
++		WAVRenderFilename = renderOutPath;
+ 	}
++	else
++	{
++		const size_t filenameLen = strlen(filename);
++		WAVRenderFilename = (char *)malloc(filenameLen+5);
++
++		if (WAVRenderFilename == NULL)
++		{
++			printf("Error: Out of memory!\n");
++			closeMusic();
++			return 1;
++		}
+ 
+-	strcpy(WAVRenderFilename, filename);
+-	strcat(WAVRenderFilename, ".wav");
++		strcpy(WAVRenderFilename, filename);
++		strcat(WAVRenderFilename, ".wav");
++	}
+ 
+ 	/* The WAV render loop also sets/listens/clears "WAVRender_Flag", but let's set it now
+ 	** since we're doing the render in a separate thread (to be able to force-abort it if
+@@ -328,7 +341,8 @@ static int32_t renderToWav(void)
+ 
+ 	closeSingleThread();
+ 
+-	free(WAVRenderFilename);
++	if (renderOutPath == NULL)
++		free(WAVRenderFilename);
+ 	closeMusic();
+ 
+ 	return 0;
