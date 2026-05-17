@@ -536,9 +536,16 @@ pub enum PortaDecode {
     ItMagicNibble,
 }
 
-/// Period clamp range (FT2 vs ST3/IT use different floors and ceilings).
+/// Period clamp range (FT2 vs ST3/IT vs PT/MOD use different floors).
+/// MOD is the strictest: real Amiga Paula has period range [113, 856];
+/// internal storage is period * 4 so the clamp is [452, 3424]. Without
+/// this, fast porta-up on MOD files runs the period below 113 (i.e.
+/// real-Amiga-impossible high pitches), and high-note positive-finetune
+/// table lookups land below 113 (AmigaLimitsFinetune.mod is the canonical
+/// reproducer: B-3 ft+4 hits internal period 440 = real 110 in our
+/// FT2-derived table; pt2-clone and OMT both clamp it at 113).
 #[derive(Copy, Clone, Debug)]
-pub enum PortaClamp { Xm, It }
+pub enum PortaClamp { Xm, It, Mod }
 
 #[derive(Copy, Clone, Debug)]
 pub struct PortaSpec {
@@ -1004,7 +1011,7 @@ impl ChannelState {
                 direction: PortaDir::Up,
                 memory: PortaMemory::Separate(EffectMemorySlot::PortaUp),
                 decode: PortaDecode::XmNormal,
-                clamp: PortaClamp::Xm,
+                clamp: if song_type == SongType::MOD { PortaClamp::Mod } else { PortaClamp::Xm },
             },
         };
         self.apply_porta(first_tick, amount, spec);
@@ -1087,7 +1094,7 @@ impl ChannelState {
                 direction: PortaDir::Down,
                 memory: PortaMemory::Separate(EffectMemorySlot::PortaDown),
                 decode: PortaDecode::XmNormal,
-                clamp: PortaClamp::Xm,
+                clamp: if song_type == SongType::MOD { PortaClamp::Mod } else { PortaClamp::Xm },
             },
         };
         self.apply_porta(first_tick, amount, spec);
@@ -1097,6 +1104,8 @@ impl ChannelState {
         // XM/MOD E1x. (IT/S3M handle fine via the magic nibble inside porta_up.)
         let clamp = if matches!(song_type, SongType::S3M | SongType::IT) {
             PortaClamp::It
+        } else if song_type == SongType::MOD {
+            PortaClamp::Mod
         } else {
             PortaClamp::Xm
         };
@@ -1197,8 +1206,9 @@ impl ChannelState {
             PortaDir::Down =>  mag as i32,
         };
         let (min_p, max_p) = match spec.clamp {
-            PortaClamp::Xm => (1i32, 31999i32),
-            PortaClamp::It => (113i32, 27392i32),
+            PortaClamp::Xm  => (1i32, 31999i32),
+            PortaClamp::It  => (113i32, 27392i32),
+            PortaClamp::Mod => (452i32, 3424i32),  // PT period 113..856, ×4
         };
         let new = (self.note.period as i32 + signed).clamp(min_p, max_p);
         self.note.period = new as u16;
@@ -1231,6 +1241,8 @@ impl ChannelState {
         // XM/MOD E2x.
         let clamp = if matches!(song_type, SongType::S3M | SongType::IT) {
             PortaClamp::It
+        } else if song_type == SongType::MOD {
+            PortaClamp::Mod
         } else {
             PortaClamp::Xm
         };
