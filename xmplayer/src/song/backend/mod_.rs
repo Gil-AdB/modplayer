@@ -172,6 +172,17 @@ impl ModuleBackend for ModBackend {
                 use_amiga: r.song_data.use_amiga,
                 fast_volume_slides: r.song_data.fast_volume_slides,
             };
+            // period_shift is a per-tick transient written only by arpeggio
+            // (channel_state/mod.rs::arpeggio). It must be cleared at the
+            // start of every row so the value from the last tick of the
+            // previous row's arpeggio doesn't leak: Redalert.mod rows 6/12/18
+            // run arp 006 whose tick-5 leaves period_shift=-592, which
+            // would otherwise corrupt the porta-up sweep on rows 7/13/19.
+            // Arpeggio itself rewrites period_shift each tick, so clearing
+            // here is invisible on rows where arpeggio is the active effect.
+            if first_tick {
+                channel.period_shift = 0;
+            }
             dispatch_main_and_extended(
                 pattern, channel, voice_ref.as_deref_mut(),
                 &mut ctx, &MOD_EFFECT_TABLE, &MOD_E_TABLE,
