@@ -31,6 +31,19 @@ OMT_SOLO = REPO / "target" / "release" / "openmpt_solo"
 CORPUS = REPO / "scratch" / "corpus_src"
 TMP = Path("/tmp/corpus_reg")
 
+# Per-format canonical-tracker reference. These predate OMT and are the
+# closest thing to ground truth for files authored in their native
+# tracker — pt2-clone is ProTracker 2 (MOD), st3play is a direct C port
+# of Scream Tracker 3.21 (S3M). Used to surface "us and OMT both wrong"
+# cases that pure us/OMT comparison can't catch (Redalert.mod was the
+# motivating example). Optional: if the binary isn't present, fall back
+# to us/OMT-only output.
+CANONICAL = {
+    ".mod":  Path("/tmp/pt2-clone/pt2-clone-cli"),
+    ".s3m":  Path("/tmp/st3play/st3play-cli"),
+    # ".xm" / ".it" → add when ft2play / it2play CLIs are built.
+}
+
 # Per-format expected full-song RMS ratio band (from prior calibration).
 BANDS = {
     ".mod":  (0.90, 1.20),
@@ -67,6 +80,38 @@ def render(binary: Path, path: Path, out: Path, length: float) -> bool:
         capture_output=True, timeout=120,
     )
     return res.returncode == 0
+
+
+def render_canonical(binary: Path, path: Path, out: Path, length: float) -> bool:
+    """Render via a 8bitbubsy *play binary (pt2-clone-cli / st3play-cli).
+    These tools render the whole song; we kill the process after the
+    output file's size stabilizes so we don't block forever on songs
+    with internal loops. Length is the cap, not a `--end-time` arg."""
+    import time
+    if out.exists(): out.unlink()
+    proc = subprocess.Popen(
+        [str(binary), str(path), "--render", str(out)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )
+    last_size, stable = -1, 0
+    deadline = time.time() + length + 30
+    while time.time() < deadline:
+        time.sleep(0.5)
+        try:
+            size = out.stat().st_size
+        except FileNotFoundError:
+            size = 0
+        if size > 0 and size == last_size:
+            stable += 1
+            if stable >= 3: break
+        else:
+            stable = 0
+        last_size = size
+    proc.terminate()
+    try: proc.wait(timeout=2)
+    except subprocess.TimeoutExpired: proc.kill()
+    return out.exists() and out.stat().st_size > 0
 
 
 def load_wav(path: Path):
@@ -139,6 +184,8 @@ def main():
         tag = src.stem.replace(" ", "_")[:50]
         us = TMP / f"{tag}_us.wav"
         omt = TMP / f"{tag}_omt.wav"
+        can = TMP / f"{tag}_can.wav"
+        canonical_bin = CANONICAL.get(ext)
         try:
             if not render(RENDER_WAV, src, us, args.length):
                 raise RuntimeError("us render failed")
@@ -164,12 +211,38 @@ def main():
                     band_ratios[fc] = float("nan")
                 else:
                     band_ratios[fc] = u_bands[fc] / o_bands[fc]
+            # Optional canonical reference. Skip silently if the binary
+            # isn't built; we only want extra signal when available.
+            c_full, c_bands = None, None
+            if canonical_bin and canonical_bin.exists():
+                if render_canonical(canonical_bin, src, can, args.length):
+                    cr, cana = load_wav(can)
+                    n_can = len(cana)
+                    if cr != ur:
+                        # Resample canonical to our analysis rate.
+                        from scipy.signal import resample
+                        cana = resample(cana, int(n_can * ur / cr)).astype(np.float32)
+                    # Compare only on the overlapping prefix; canonical
+                    # tools render whole songs, length is just a cap.
+                    n = min(len(ua), len(cana))
+                    cana = cana[:n]
+                    c_full = rms(cana)
+                    # Sanity: st3play renders some S3M files as effective
+                    # silence (e.g. AdLib-only songs that need the OPL2
+                    # driver and don't produce SBPro output). Treating
+                    # those as a valid reference produces useless 22x
+                    # divergence flags — overdriv.s3m was the canary.
+                    if c_full < 0.005 or float(np.max(np.abs(cana))) < 0.05:
+                        c_full = None
+                    else:
+                        c_bands = band_rms(cana, ur)
         except Exception as e:
             failures.append((src.name, str(e)[:80]))
             continue
         rows_by_format[ext].append({
             "name": src.name, "ratio": ratio, "u": u_full, "o": o_full,
-            "band_ratios": band_ratios,
+            "c": c_full, "band_ratios": band_ratios,
+            "u_bands": u_bands, "o_bands": o_bands, "c_bands": c_bands,
         })
 
     # Per-format per-band median, used as the reference for deviation.
@@ -183,6 +256,18 @@ def main():
                     if not np.isnan(r["band_ratios"][fc])]
             per_band[fc] = float(np.median(vals)) if vals else 1.0
         band_medians[ext] = per_band
+
+    # Per-format gain normalization for the canonical reference. st3play
+    # and pt2-clone use different default output gains than OMT (e.g.
+    # st3play renders S3M at ~2x OMT amplitude in Original mix-levels
+    # mode). The corpus median of (omt_rms / canonical_rms) tells us the
+    # constant offset to apply before declaring spectral divergence.
+    canonical_gain = {}
+    for ext, rows in rows_by_format.items():
+        ratios = [r["o"] / r["c"] for r in rows
+                  if r["c"] is not None and r["c"] > 1e-6]
+        if ratios:
+            canonical_gain[ext] = float(np.median(ratios))
 
     # Pass 2: print and flag.
     for ext in (".mod", ".xm", ".s3m", ".it"):
@@ -205,13 +290,35 @@ def main():
                 if dev > worst_dev:
                     worst_dev, worst_fc = dev, fc
             band_flag = "B" if worst_dev > BAND_DEVIATION_THRESHOLD else " "
-            if args.bands_only and band_flag == " ":
+            # Canonical-disagreement flag (C): us and OMT agree, but the
+            # format-native tracker disagrees in the same direction. This
+            # is the Redalert-class signal — both modern players have an
+            # inherited bug that the original tracker doesn't.
+            canon_flag = " "
+            canon_tail = ""
+            if r["c"] is not None and r["c"] > 1e-6 and ext in canonical_gain:
+                g = canonical_gain[ext]
+                # Normalized canonical RMS at OMT's gain.
+                c_norm = r["c"] * g
+                # us/canonical and omt/canonical at normalized gain.
+                uc = r["u"] / c_norm
+                oc = r["o"] / c_norm
+                # Both diverge from canonical in the same direction, and
+                # neither is wildly off from the other (i.e. us-vs-OMT
+                # roughly agrees). The threshold for "agreement with
+                # canonical" is per-format band loose vs the RMS band.
+                same_dir = (uc > 1.15 and oc > 1.15) or (uc < 0.87 and oc < 0.87)
+                us_omt_agree = 0.85 <= r["ratio"] <= 1.15
+                if same_dir and us_omt_agree:
+                    canon_flag = "C"
+                    canon_tail = f"  us/canon={uc:.2f}  omt/canon={oc:.2f}"
+            if args.bands_only and band_flag == " " and canon_flag == " ":
                 continue
             tail = ""
             if band_flag == "B":
                 tail = f"  band={worst_fc}Hz dev={worst_dev:.2f}x (us/omt={r['band_ratios'][worst_fc]:.2f}, fmt-med={meds[worst_fc]:.2f})"
-            print(f"  {rms_flag}{band_flag} {ext[1:]:<3} {r['ratio']:6.3f}  "
-                  f"us={r['u']:.4f} omt={r['o']:.4f}  {r['name']}{tail}")
+            print(f"  {rms_flag}{band_flag}{canon_flag} {ext[1:]:<3} {r['ratio']:6.3f}  "
+                  f"us={r['u']:.4f} omt={r['o']:.4f}  {r['name']}{tail}{canon_tail}")
 
     print("\n=== Per-format summary ===")
     for ext, rows in rows_by_format.items():
@@ -233,8 +340,11 @@ def main():
                 if max(br / meds[fc], meds[fc] / br) > BAND_DEVIATION_THRESHOLD:
                     n_band_flagged += 1
                     break
+        canon_info = ""
+        if ext in canonical_gain:
+            canon_info = f"  canon-gain={canonical_gain[ext]:.2f} (omt/canon median)"
         print(f"  {ext[1:]:<5} {in_band}/{len(rows)} RMS in band [{lo}, {hi}]  "
-              f"median={median:.3f}  band-flagged={n_band_flagged}")
+              f"median={median:.3f}  band-flagged={n_band_flagged}{canon_info}")
         # Per-band corpus median for diagnostic context.
         print(f"         per-band medians:  " +
               "  ".join(f"{fc}Hz={meds[fc]:.2f}" for fc in OCTAVE_CENTERS))
