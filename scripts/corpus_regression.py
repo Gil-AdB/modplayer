@@ -6,7 +6,15 @@ the documented per-format baseline band. Use as a regression check
 after changes that could affect real-song playback (effect handlers,
 loaders, mixer math).
 
-Usage: scripts/corpus_regression.py [--include-sc2]
+Also computes per-octave-band us/omt ratios and flags songs where any
+band drifts far from the per-format band median. This catches bugs
+that are invisible to full-song RMS — e.g. the Redalert.mod arpeggio
+period_shift leak (commit da45510): full-RMS ratio 1.04 looked fine,
+but the 4 kHz band was 2.5x pt2 because every porta-up sweep started
+~6 semitones high. RMS averaged out across the band coverage; the
+band check would have flagged it.
+
+Usage: scripts/corpus_regression.py [--include-sc2] [--bands-only]
 """
 import argparse
 import subprocess
@@ -23,15 +31,25 @@ OMT_SOLO = REPO / "target" / "release" / "openmpt_solo"
 CORPUS = REPO / "scratch" / "corpus_src"
 TMP = Path("/tmp/corpus_reg")
 
-# Per-format expected ratio band (from prior calibration sessions). A
-# song outside these bounds is flagged; a song *inside* but very close
-# to the edge is informational only.
+# Per-format expected full-song RMS ratio band (from prior calibration).
 BANDS = {
     ".mod":  (0.90, 1.20),
     ".xm":   (0.85, 1.15),
     ".s3m":  (0.70, 1.40),
     ".it":   (0.85, 1.15),
 }
+
+# Octave-band centers (Hz) for spectrum-domain ratio check. Each band
+# spans [fc/sqrt(2), fc*sqrt(2)] so the bands tile log-frequency space
+# without gaps or overlap. 8 kHz is the highest band that matters for
+# tracker output (sample rates rarely exceed 32 kHz playback Nyquist).
+OCTAVE_CENTERS = [125, 250, 500, 1000, 2000, 4000, 8000]
+
+# A band ratio that deviates from the per-format band median by more
+# than this factor is flagged. 1.6x = ±4 dB; tight enough to catch the
+# Redalert-class bug (4 kHz band was 2.5x median), loose enough to
+# tolerate normal cubic-vs-linear-interp HF differences across songs.
+BAND_DEVIATION_THRESHOLD = 1.6
 
 
 def render(binary: Path, path: Path, out: Path, length: float) -> bool:
@@ -42,7 +60,8 @@ def render(binary: Path, path: Path, out: Path, length: float) -> bool:
     return res.returncode == 0
 
 
-def rms(path: Path) -> float:
+def load_wav(path: Path):
+    """Load a wav as float32 mono at its native rate."""
     r, a = wavfile.read(path)
     if a.dtype == np.int16:
         a = a.astype(np.float32) / 32768.0
@@ -50,7 +69,34 @@ def rms(path: Path) -> float:
         a = a.astype(np.float32)
     if a.ndim == 2:
         a = a.mean(axis=1)
+    return r, a
+
+
+def rms(a: np.ndarray) -> float:
     return float(np.sqrt(np.mean(a ** 2)))
+
+
+def band_rms(a: np.ndarray, rate: int, centers=OCTAVE_CENTERS, nfft=4096) -> dict:
+    """Per-octave-band RMS via averaged power spectrum. Returns
+    {center_hz: rms} so a band absent from the signal still gets a
+    well-defined zero rather than KeyError downstream."""
+    hop = nfft // 2
+    win = np.hanning(nfft)
+    nb = max((len(a) - nfft) // hop, 1)
+    psd = np.zeros(nfft // 2 + 1)
+    for i in range(nb):
+        seg = a[i * hop : i * hop + nfft] * win
+        psd += np.abs(np.fft.rfft(seg)) ** 2
+    psd /= nb
+    freqs = np.fft.rfftfreq(nfft, 1.0 / rate)
+    out = {}
+    for fc in centers:
+        lo, hi = fc / np.sqrt(2), fc * np.sqrt(2)
+        mask = (freqs >= lo) & (freqs < hi)
+        # mean PSD in band -> equivalent band RMS. sqrt because PSD is
+        # power; we want amplitude units for ratio comparisons.
+        out[fc] = float(np.sqrt(psd[mask].mean())) if mask.any() else 0.0
+    return out
 
 
 def main():
@@ -58,6 +104,8 @@ def main():
     ap.add_argument("--include-sc2", action="store_true",
                     help="include Star Control II MOD batch (~60 files, slow)")
     ap.add_argument("--length", type=float, default=30.0)
+    ap.add_argument("--bands-only", action="store_true",
+                    help="suppress per-song RMS line; only print band-flagged songs")
     args = ap.parse_args()
 
     TMP.mkdir(parents=True, exist_ok=True)
@@ -70,7 +118,9 @@ def main():
         if sc2.exists():
             candidates.extend(sorted(sc2.glob("*.mod")) + sorted(sc2.glob("*.MOD")))
 
-    by_format = {".mod": [], ".xm": [], ".s3m": [], ".it": []}
+    # Two passes: (1) render and collect ratios + per-band ratios;
+    # (2) compute per-format band medians and flag deviations.
+    rows_by_format = {".mod": [], ".xm": [], ".s3m": [], ".it": []}
     failures = []
 
     for src in candidates:
@@ -81,27 +131,96 @@ def main():
         us = TMP / f"{tag}_us.wav"
         omt = TMP / f"{tag}_omt.wav"
         try:
-            if not render(RENDER_WAV, src, us, args.length): raise RuntimeError("us render failed")
-            if not render(OMT_SOLO, src, omt, args.length):   raise RuntimeError("omt render failed")
-            u, o = rms(us), rms(omt)
-            ratio = u / o if o > 1e-6 else float("inf")
+            if not render(RENDER_WAV, src, us, args.length):
+                raise RuntimeError("us render failed")
+            if not render(OMT_SOLO, src, omt, args.length):
+                raise RuntimeError("omt render failed")
+            ur, ua = load_wav(us)
+            or_, oa = load_wav(omt)
+            u_full = rms(ua)
+            o_full = rms(oa)
+            ratio = u_full / o_full if o_full > 1e-6 else float("inf")
+            u_bands = band_rms(ua, ur)
+            o_bands = band_rms(oa, or_)
+            band_ratios = {
+                fc: (u_bands[fc] / o_bands[fc]) if o_bands[fc] > 1e-8 else float("nan")
+                for fc in OCTAVE_CENTERS
+            }
         except Exception as e:
             failures.append((src.name, str(e)[:80]))
             continue
-        by_format[ext].append((src.name, ratio, u, o))
+        rows_by_format[ext].append({
+            "name": src.name, "ratio": ratio, "u": u_full, "o": o_full,
+            "band_ratios": band_ratios,
+        })
+
+    # Per-format per-band median, used as the reference for deviation.
+    band_medians = {}
+    for ext, rows in rows_by_format.items():
+        if not rows:
+            continue
+        per_band = {}
+        for fc in OCTAVE_CENTERS:
+            vals = [r["band_ratios"][fc] for r in rows
+                    if not np.isnan(r["band_ratios"][fc])]
+            per_band[fc] = float(np.median(vals)) if vals else 1.0
+        band_medians[ext] = per_band
+
+    # Pass 2: print and flag.
+    for ext in (".mod", ".xm", ".s3m", ".it"):
+        rows = rows_by_format[ext]
+        if not rows:
+            continue
         lo, hi = BANDS[ext]
-        marker = " " if lo <= ratio <= hi else "!"
-        print(f"  {marker} {ext[1:]:<3} {ratio:6.3f}  us={u:.4f} omt={o:.4f}  {src.name}")
+        meds = band_medians[ext]
+        for r in rows:
+            rms_flag = " " if lo <= r["ratio"] <= hi else "!"
+            # Band-deviation flag: any band whose ratio is far from the
+            # per-format band median. The factor we use is symmetric in
+            # log space (max(x, 1/x)).
+            worst_fc, worst_dev = None, 1.0
+            for fc in OCTAVE_CENTERS:
+                br = r["band_ratios"][fc]
+                if np.isnan(br) or br <= 0 or meds[fc] <= 0:
+                    continue
+                dev = max(br / meds[fc], meds[fc] / br)
+                if dev > worst_dev:
+                    worst_dev, worst_fc = dev, fc
+            band_flag = "B" if worst_dev > BAND_DEVIATION_THRESHOLD else " "
+            if args.bands_only and band_flag == " ":
+                continue
+            tail = ""
+            if band_flag == "B":
+                tail = f"  band={worst_fc}Hz dev={worst_dev:.2f}x (us/omt={r['band_ratios'][worst_fc]:.2f}, fmt-med={meds[worst_fc]:.2f})"
+            print(f"  {rms_flag}{band_flag} {ext[1:]:<3} {r['ratio']:6.3f}  "
+                  f"us={r['u']:.4f} omt={r['o']:.4f}  {r['name']}{tail}")
 
     print("\n=== Per-format summary ===")
-    for ext, rows in by_format.items():
-        if not rows: continue
-        ratios = [r for _, r, _, _ in rows if r != float("inf")]
-        if not ratios: continue
+    for ext, rows in rows_by_format.items():
+        if not rows:
+            continue
+        ratios = [r["ratio"] for r in rows if r["ratio"] != float("inf")]
+        if not ratios:
+            continue
         median = sorted(ratios)[len(ratios) // 2]
         lo, hi = BANDS[ext]
         in_band = sum(1 for r in ratios if lo <= r <= hi)
-        print(f"  {ext[1:]:<5} {in_band}/{len(rows)} in band [{lo}, {hi}]  median={median:.3f}")
+        n_band_flagged = 0
+        meds = band_medians[ext]
+        for r in rows:
+            for fc in OCTAVE_CENTERS:
+                br = r["band_ratios"][fc]
+                if np.isnan(br) or br <= 0 or meds[fc] <= 0:
+                    continue
+                if max(br / meds[fc], meds[fc] / br) > BAND_DEVIATION_THRESHOLD:
+                    n_band_flagged += 1
+                    break
+        print(f"  {ext[1:]:<5} {in_band}/{len(rows)} RMS in band [{lo}, {hi}]  "
+              f"median={median:.3f}  band-flagged={n_band_flagged}")
+        # Per-band corpus median for diagnostic context.
+        print(f"         per-band medians:  " +
+              "  ".join(f"{fc}Hz={meds[fc]:.2f}" for fc in OCTAVE_CENTERS))
+
     if failures:
         print("\n=== Render failures ===")
         for name, err in failures:
