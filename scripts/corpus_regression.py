@@ -84,10 +84,12 @@ def render(binary: Path, path: Path, out: Path, length: float) -> bool:
 
 
 def render_canonical(binary: Path, path: Path, out: Path, length: float) -> bool:
-    """Render via a 8bitbubsy *play binary (pt2-clone-cli / st3play-cli).
-    These tools render the whole song; we kill the process after the
-    output file's size stabilizes so we don't block forever on songs
-    with internal loops. Length is the cap, not a `--end-time` arg."""
+    """Render via a 8bitbubsy *play binary (pt2-clone-cli / st3play-cli /
+    it2play-cli). These tools render the whole song; we (a) cap the
+    on-disk size at roughly `length` seconds of stereo float32 so a
+    song with an internal Bxx loop can't bloat to gigabytes, and (b)
+    kill the process once output size stabilizes — songs whose natural
+    end is shorter than the cap still terminate cleanly."""
     import time
     if out.exists(): out.unlink()
     proc = subprocess.Popen(
@@ -95,6 +97,12 @@ def render_canonical(binary: Path, path: Path, out: Path, length: float) -> bool
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
     )
+    # Size cap (bytes). pt2-clone writes 44.1 kHz stereo int16 (4 B/frame),
+    # st3play/it2play write 48 kHz stereo int16 (4 B/frame). Use the higher
+    # rate as worst case; +1 MB slack for WAV header & ramp. The actual
+    # truncation happens in-memory at analysis time; this is just to keep
+    # the on-disk file from running away on looping songs.
+    max_bytes = int(length * 48000 * 4) + 1_000_000
     last_size, stable = -1, 0
     deadline = time.time() + length + 30
     while time.time() < deadline:
@@ -103,6 +111,8 @@ def render_canonical(binary: Path, path: Path, out: Path, length: float) -> bool
             size = out.stat().st_size
         except FileNotFoundError:
             size = 0
+        if size >= max_bytes:
+            break
         if size > 0 and size == last_size:
             stable += 1
             if stable >= 3: break
@@ -161,6 +171,11 @@ def main():
     ap.add_argument("--length", type=float, default=30.0)
     ap.add_argument("--bands-only", action="store_true",
                     help="suppress per-song RMS line; only print band-flagged songs")
+    ap.add_argument("--keep-wavs", action="store_true",
+                    help="leave intermediate WAVs in /tmp/corpus_reg/ after analysis "
+                         "(default deletes per-song wavs as soon as the metrics are "
+                         "extracted; the canonical renderers can produce multi-GB "
+                         "outputs on looping songs)")
     args = ap.parse_args()
 
     TMP.mkdir(parents=True, exist_ok=True)
@@ -218,13 +233,19 @@ def main():
             if canonical_bin and canonical_bin.exists():
                 if render_canonical(canonical_bin, src, can, args.length):
                     cr, cana = load_wav(can)
+                    # Hard time cap before any further processing — a
+                    # truncated WAV header from the render-side size cap
+                    # can leave the data buffer technically longer than
+                    # the meaningful audio, and we'd waste memory/CPU
+                    # resampling an hours-long buffer for a 30-second
+                    # analysis window.
+                    cana = cana[: int(args.length * cr)]
                     n_can = len(cana)
                     if cr != ur:
                         # Resample canonical to our analysis rate.
                         from scipy.signal import resample
                         cana = resample(cana, int(n_can * ur / cr)).astype(np.float32)
-                    # Compare only on the overlapping prefix; canonical
-                    # tools render whole songs, length is just a cap.
+                    # Compare only on the overlapping prefix.
                     n = min(len(ua), len(cana))
                     cana = cana[:n]
                     c_full = rms(cana)
@@ -239,12 +260,25 @@ def main():
                         c_bands = band_rms(cana, ur)
         except Exception as e:
             failures.append((src.name, str(e)[:80]))
+            # Best-effort cleanup even on failure so a mid-corpus error
+            # doesn't leak megabytes per song.
+            if not args.keep_wavs:
+                for p in (us, omt, can):
+                    try: p.unlink()
+                    except FileNotFoundError: pass
             continue
         rows_by_format[ext].append({
             "name": src.name, "ratio": ratio, "u": u_full, "o": o_full,
             "c": c_full, "band_ratios": band_ratios,
             "u_bands": u_bands, "o_bands": o_bands, "c_bands": c_bands,
         })
+        # Per-song cleanup: we've extracted all the metrics we'll ever
+        # need (full+band RMS) into rows_by_format. The WAVs themselves
+        # are pure waste at this point. Peak disk = one song's renders.
+        if not args.keep_wavs:
+            for p in (us, omt, can):
+                try: p.unlink()
+                except FileNotFoundError: pass
 
     # Per-format per-band median, used as the reference for deviation.
     band_medians = {}
