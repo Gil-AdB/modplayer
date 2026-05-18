@@ -47,29 +47,43 @@ Two recent failure modes that map onto this rule:
 - **SHOOTING.XM, 2026-05-18.** Multiple wrong turns in one
   investigation, all the same anti-pattern:
 
-  1. First wrong call: "OMT uses sinc, we use cubic — interpolation
+  1. **Wrong call 1**: "OMT uses sinc, we use cubic — interpolation
      difference, just build ft2play to confirm cosmetics." User
      pushed back: we *already* support user-selectable interpolators
      (default is `FilterType::Sinc` per `song/mod.rs:377,705`); the
      audible divergence is way bigger than sinc-vs-cubic could
      explain.
 
-  2. Second wrong call: per-channel us-vs-OMT showed ch0/1/2 at
+  2. **Wrong call 2**: per-channel us-vs-OMT showed ch0/1/2 at
      spectrogram-corr 0.765, those three all use **instrument 12**
      (the only one with auto-vibrato in the file). I went straight to
      "auto-vibrato implementation differs". User had to push back
-     again ("master plays this right — use it for comparison if
-     needed").
+     ("master plays this right — use it for comparison").
 
-  3. Actual finding once I checked master: branch is **1.45× louder
-     than master across every octave band**, while master matches
-     ft2play to 0.84× (close, within Compatible-vs-Original mix-levels
-     spread). The audible "flanging" is the consequence of clipping
-     headroom violation, not a state-machine bug. The regression is
-     somewhere between master and feat/s3m-refactor, most likely the
-     XM MixLevels commits (`207274e` / `2de767e`).
+  3. **Wrong call 3**: After confirming branch is **1.45× louder
+     than master across every octave band**, I claimed the audible
+     "flanging" was clipping headroom violation from the gain
+     regression. User pushed back again: **uniform gain scaling
+     cannot produce flanging.** A flat gain × everything ≠ beat
+     patterns. The per-channel waveform divergence I'd already found
+     (us-ch0 vs OMT-ch0 spectrogram-corr 0.765, residual concentrated
+     at the 2nd harmonic of the channel fundamental — **same notes,
+     different waveform shape over time**) is the actual audible
+     issue, not the gain.
 
-  Diagnostic numbers (30 s of SHOOTING.XM):
+  So the SHOOTING.XM picture is TWO findings, not one:
+
+  | finding | scope | evidence |
+  |---------|-------|----------|
+  | Branch is **1.45× louder than master** across all bands | full-mix amplitude | per-octave 1.31–1.58, flat |
+  | Per-channel waveform diverges from OMT on ch0/1/2/14/15 | individual channels | spectrogram-corr 0.765 on ch0; same envelope, different shape |
+
+  Neither alone explains the audible flanging. The gain regression
+  causes clipping at transients; the per-channel waveform divergence
+  causes beating/timbre differences. Both need fixing; only one of
+  them is the user's reported "flanging".
+
+  Numbers (30 s of SHOOTING.XM):
 
   | renderer | RMS | peak | gain vs ft2 |
   |----------|------|------|-------------|
@@ -78,23 +92,27 @@ Two recent failure modes that map onto this rule:
   | OMT      | 0.203 | 1.49 | 1.27× |
   | ft2play  | 0.162 | 1.02 | 1.00× |
 
-  Branch-vs-master per-octave ratios: 1.31–1.58 (flat, not
-  frequency-dependent → straight gain, not a spectral bug).
+The pattern across all four wrong calls: I reach for a single-cause
+explanation (filter, interpolation, vibrato, gain) because it's the
+*cheapest* hypothesis to articulate, and dismiss prior evidence
+when the new hypothesis "explains everything". **Multiple findings
+can coexist.** A gain regression and a per-channel state-machine
+divergence are independent — both can be present, and the user's
+audible complaint can be sensitive to one but not the other.
 
-The pattern across all of these: I reach for a "stylistic" explanation
-(filter, interpolation, mix levels, vibrato semantics) because it's
-the *cheapest* hypothesis to articulate, and only switch to looking
-for a real bug when the user pushes back. Reverse the default —
-assume real bug, articulate cheap hypothesis only as a foil to
-falsify, not as a conclusion.
+**Specifically: when investigating an XM audio bug, run BOTH:**
 
-**Specifically: before opining on category for an XM audio bug, do
-the two-minute master-vs-branch sanity check first.** Build
-`render_wav` in a `git worktree add /tmp/modplayer_master master`,
-render the same file from both, compute RMS + per-octave ratios. If
-master and branch differ by >10% on the full mix, the bug is a
-regression in our recent work — start with `git log master..` for
-suspects, not with FT2 vs OMT theorizing.
+1. **Master-vs-branch sanity check** (cheap, catches gain regressions
+   and other our-fault changes since master). Build `render_wav` in
+   a `git worktree add /tmp/modplayer_master master`, render the
+   same file from both, compute per-octave ratios.
+2. **Per-channel diff against the canonical (ft2play)** (catches
+   state-machine / effect-handling divergences invisible in full-mix
+   numbers). Use the `--render` patches in `tools/` plus the
+   instrumentation patch (see "Existing instrumentation" below) for
+   per-tick channel state.
+
+Do not collapse the two into one. They measure different things.
 
 ## Canonical references in this repo
 
