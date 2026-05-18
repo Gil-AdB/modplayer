@@ -405,7 +405,17 @@ impl VibratoEnvelopeState {
     pub(crate) fn reset(&mut self, env: &VibratoEnvelope) {
         self.vibrato_pos = 0;
         if env.vibrato_sweep > 0 {
-            self.vibrato_sweep = env.vibrato_sweep as u16;
+            // FT2 stores the *derived per-tick increment* in eVibSweep,
+            // not the raw 0..255 sweep param. The increment is
+            //   depth × 256 / sweep
+            // so that the amp reaches `depth × 256` (its cap) after
+            // exactly `sweep` ticks. SHOOTING.XM inst 12 has
+            // depth=15, sweep=255 → eVibSweep = 15·256/255 = 15.
+            // Storing the raw 255 here made auto-vibrato ramp up 17×
+            // too fast (full depth by tick 1), audible as a flanging
+            // "wobble" on every note using an auto-vibrato instrument.
+            self.vibrato_sweep =
+                ((env.vibrato_depth as u32 * 256) / env.vibrato_sweep as u32) as u16;
             self.vibrato_amp = 0;
         } else {
             self.vibrato_sweep = 0;

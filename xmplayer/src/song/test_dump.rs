@@ -20,6 +20,14 @@ pub struct VoiceDump {
     pub sustained: bool,
     pub volume_envelope_pos: u16,
     pub panning_envelope_pos: u16,
+    /// Auto-vibrato accumulator (instrument-level vibrato, XM
+    /// vib_type/sweep/depth/rate). Maps onto ft2play's
+    /// `eVibPos / eVibAmp / eVibSweep` for cross-engine diffs against
+    /// `[FT2]` trace lines. Stays 0 when the instrument has no
+    /// auto-vibrato (depth == 0).
+    pub auto_vibrato_pos: u16,
+    pub auto_vibrato_amp: u16,
+    pub auto_vibrato_sweep: u16,
     pub effect: u8,
     pub effect_param: u8,
     pub note_str: String,
@@ -81,7 +89,7 @@ impl TickDump {
             // distinguish "still being mixed" from "frozen at trigger" —
             // the prior 119-121s investigation made the wrong call there.
             out.push_str(&format!(
-                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | {} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} (Vraw:{:02} CV:{:02}) | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | Eff {:02x} {:02x} | Rel:{:4} Fine:{:4} | R:{:>10}\n",
+                "  Ch {:02}: ON | Inst {:02} | Samp {:02} | {} | Pos {:>9.3} | dU {:>7.3} | Vol {:>7.3} (Vraw:{:02} CV:{:02}) | Pan {:03} ({:03}) | Sus {} | Env V:{:03} P:{:03} | AVib pos:{:03} amp:{:>5} swp:{:>5} | Eff {:02x} {:02x} | Rel:{:4} Fine:{:4} | R:{:>10}\n",
                 v.channel_idx,
                 v.instrument,
                 v.sample,
@@ -96,6 +104,9 @@ impl TickDump {
                 if v.sustained { "Y" } else { "N" },
                 v.volume_envelope_pos,
                 v.panning_envelope_pos,
+                v.auto_vibrato_pos,
+                v.auto_vibrato_amp,
+                v.auto_vibrato_sweep,
                 v.effect,
                 v.effect_param,
                 v.relative_note,
@@ -140,6 +151,9 @@ pub fn dump_tick(song: &Song) -> TickDump {
             sustained: voice.sustained,
             volume_envelope_pos: voice.volume_envelope_state.frame,
             panning_envelope_pos: voice.panning_envelope_state.frame,
+            auto_vibrato_pos: voice.vibrato_envelope_state.vibrato_pos,
+            auto_vibrato_amp: voice.vibrato_envelope_state.vibrato_amp,
+            auto_vibrato_sweep: voice.vibrato_envelope_state.vibrato_sweep,
             effect: pattern.effect,
             effect_param: pattern.effect_param,
             note_str: match voice.last_played_note {

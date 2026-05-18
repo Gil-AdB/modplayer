@@ -868,7 +868,7 @@ impl ChannelState {
             let ord = DUMP_CTX_ORD.load(Ordering::Relaxed);
             let row = DUMP_CTX_ROW.load(Ordering::Relaxed);
             let tick = DUMP_CTX_TICK.load(Ordering::Relaxed);
-            eprintln!("[OUR] ord={} row={} tick={} ch={} note={} period={} vib_shift={} period_shift={} freq={} vibpos={} vibdep={} vibspd={} vibwf={} fine={} vraw={} pos={:.0}",
+            eprintln!("[OUR] ord={} row={} tick={} ch={} note={} period={} vib_shift={} period_shift={} freq={} vibpos={} vibdep={} vibspd={} vibwf={} fine={} vraw={} pos={:.0} aVibPos={} aVibAmp={} aVibSwp={} envVPos={} envPPos={} freq_shift={:.1}",
                 ord, row, tick,
                 voice.channel_idx, voice.last_played_note,
                 self.note.period as i32 + self.period_shift as i32 + vib_shift,
@@ -880,7 +880,13 @@ impl ChannelState {
                 self.vibrato_waveform,
                 voice.vibrato_state.fine,
                 voice.volume.volume,
-                voice.sample_position);
+                voice.sample_position,
+                voice.vibrato_envelope_state.vibrato_pos,
+                voice.vibrato_envelope_state.vibrato_amp,
+                voice.vibrato_envelope_state.vibrato_sweep,
+                voice.volume_envelope_state.frame,
+                voice.panning_envelope_state.frame,
+                voice.frequency_shift);
         }
     }
 
