@@ -156,10 +156,60 @@ External-reference side:
 - `tools/build_pt2_clone_cli.sh` / `build_st3play_cli.sh` /
   `build_it2play_cli.sh` / `build_ft2play_cli.sh` — canonical-tracker
   CLI binaries with `--render <out>`.
-- **No ft2play / ft2-clone per-tick instrumentation exists yet.**
-  ft2play has `--no-intrp` (linear interp, FT2-native) and
-  `--no-vramp` (no volume ramp). ft2-clone has no CLI render at all
-  (it's a full GUI tracker; `wavRenderer` is GUI-only).
+- `tools/ft2play_instrumentation.patch` — applied by
+  `build_ft2play_cli.sh`. Adds an `FT2_DUMP_CH`-gated `[FT2]`
+  per-tick stderr trace at the end of `pmp_main.c::mainPlayer`.
+  Fields: ord, row, tick, ch, inst, samp, finalPeriod, finalVol,
+  realVol, outVol, outPan, finalPan, envVPos, envVAmp, envPPos,
+  envPAmp, eVibPos, eVibAmp, eVibSweep, effTyp, eff, relTonNr,
+  fineTune, fadeOutAmp, status. The Order/Row/Tick prefix matches
+  our `[OUR]` state_dump exactly so the traces align line-for-line
+  on common ticks.
+
+**ft2-clone has no CLI render at all** (it's a full GUI tracker;
+`wavRenderer` is GUI-only). For XM bug investigation, use
+ft2play-cli + FT2_DUMP_CH instead.
+
+### XM bug investigation workflow
+
+When the user reports an XM audio defect on channel N:
+
+```bash
+# 1. Build everything (idempotent; skips work if already done).
+cargo build --release --bin render_wav --bin state_dump
+tools/build_ft2play_cli.sh    # applies both --render + instrumentation patches
+
+# 2. Render the same window from both engines.
+RA="/path/to/song.xm"
+target/release/render_wav "$RA" /tmp/ours.wav --end-time 60
+/tmp/ft2play/ft2play-cli "$RA" --render /tmp/ft2.wav
+
+# 3. Capture per-tick state for channel N from both.
+OUR_DUMP_CH=N target/release/render_wav "$RA" /tmp/null.wav --end-time 60 2>/tmp/our.trace
+FT2_DUMP_CH=N /tmp/ft2play/ft2play-cli "$RA" --render /tmp/null2.wav 2>/tmp/ft2.trace
+
+# 4. Diff at a specific (order, row) where audio diverges.
+grep "ord=3 row=[0-3] " /tmp/our.trace
+grep "ord=3 row=[0-3] " /tmp/ft2.trace
+
+# 5. Per-channel solo bisect to confirm which channel is the bug source.
+python3 scripts/bisect_channel.py "$RA" 10.0 --win 1.0 --channels 18 --end-time 30
+```
+
+Field mapping (`[OUR]` ↔ `[FT2]`):
+- our `period` ↔ FT2 `finalPeriod`
+- our `freq` derives from period via the format-table
+- our `vraw` ↔ FT2 `realVol` / `outVol` (channel slot vol)
+- **Auto-vibrato state**: FT2 has `eVibPos`, `eVibAmp`, `eVibSweep`.
+  Our state_dump currently does NOT expose
+  `vibrato_envelope_state.{vibrato_pos,vibrato_amp,vibrato_sweep}`.
+  Add those fields to `xmplayer/src/song/test_dump.rs::VoiceDump`
+  before comparing auto-vibrato semantics.
+- **Envelope position**: our `volume_envelope_pos` ↔ FT2 `envVPos`
+  (point index), but FT2 also exposes the inter-point `envVAmp`
+  (interpolated value × 256). Our existing
+  `volume_envelope_state.frame` is a different field; verify
+  semantics before drawing conclusions from a mismatch.
 
 Existing diagnostic Python:
 - `scripts/compare_renders.py` — window-by-window FFT/RMS/cc.

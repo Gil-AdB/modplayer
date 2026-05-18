@@ -31,6 +31,17 @@ if ! grep -q "renderOutPath" "$FT2_SRC/ft2play/src/ft2play.c"; then
     patch -d "$FT2_SRC" -p1 < "$REPO/tools/ft2play_cli_render.patch"
 fi
 
+# Apply the per-tick state-dump patch in pmp_main.c. Sets up an
+# FT2_DUMP_CH-gated stderr trace ([FT2] ord/row/tick/inst/sample/
+# finalPeriod/finalVol/envelopes/eVibAmp/effect/...). Cross-engine
+# diff target for our [OUR] state_dump output — same Order/Row/Tick
+# axis so the lines align grep-friendly. See
+# tools/ft2play_instrumentation.patch and the docs section in
+# CLAUDE.md for the full field semantics.
+if ! grep -q "FT2_DUMP_CH" "$FT2_SRC/pmp_main.c"; then
+    patch -d "$FT2_SRC" -p1 < "$REPO/tools/ft2play_instrumentation.patch"
+fi
+
 # Upstream's macOS recipe uses AudioQueue + Cocoa. Use SDL2 instead to
 # match the rest of our canonical CLI binaries — simpler builds, no
 # extra framework dependencies.

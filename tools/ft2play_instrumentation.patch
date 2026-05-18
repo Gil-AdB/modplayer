@@ -1,0 +1,59 @@
+diff --git a/pmp_main.c b/pmp_main.c
+index 9cc90e5..6910933 100644
+--- a/pmp_main.c
++++ b/pmp_main.c
+@@ -12,6 +12,7 @@
+ #include <stdio.h>
+ #include <stdint.h>
+ #include <stdbool.h>
++#include <stdlib.h>
+ #include "pmplay.h"
+ #include "pmp_mix.h"
+ #include "snd_masm.h"
+@@ -1890,4 +1891,46 @@ void mainPlayer(void)
+ 
+ 	if (song.timer == 1)
+ 		getNextPos();
++
++	// === instrumentation hook (modplayer harness) ===
++	// Per-tick state dump for one channel, gated by FT2_DUMP_CH env var.
++	// Output format mirrors xmplayer's state_dump --output, picking
++	// the FT2 fields that map onto our VoiceDump (instrument, sample,
++	// final period/volume, envelope positions, effect+param, auto-vib
++	// state, fadeout). Time-aligned by Order/Row/Tick so a diff against
++	// our [OUR] trace is byte-comparable on the matching ticks.
++	static int s_dump_ch = -2; // -2 = not yet read; -1 = disabled
++	if (s_dump_ch == -2)
++	{
++		const char *env = getenv("FT2_DUMP_CH");
++		s_dump_ch = (env != NULL) ? atoi(env) : -1;
++	}
++	if (s_dump_ch >= 0 && s_dump_ch < song.antChn)
++	{
++		// song.tempo is speed (ticks/row); song.timer counts DOWN from
++		// tempo to 1. Internal tick index = tempo - timer (0..tempo-1).
++		const int tick = (int)song.tempo - (int)song.timer;
++		const stmTyp *c = &stm[s_dump_ch];
++		fprintf(stderr,
++			"[FT2] ord=%d row=%d tick=%d ch=%d inst=%d samp=%d "
++			"finalPeriod=%u finalVol=%u realVol=%u outVol=%u "
++			"outPan=%u finalPan=%u "
++			"envVPos=%u envVAmp=%u envPPos=%u envPAmp=%u "
++			"eVibPos=%u eVibAmp=%u eVibSweep=%u "
++			"effTyp=0x%02x eff=0x%02x "
++			"relTonNr=%d fineTune=%d "
++			"fadeOutAmp=%u status=0x%02x\n",
++			(int)song.songPos, (int)song.pattPos, tick, s_dump_ch,
++			(int)c->instrNr, (int)c->sampleNr,
++			(unsigned)c->finalPeriod, (unsigned)c->finalVol,
++			(unsigned)c->realVol, (unsigned)c->outVol,
++			(unsigned)c->outPan, (unsigned)c->finalPan,
++			(unsigned)c->envVPos, (unsigned)c->envVAmp,
++			(unsigned)c->envPPos, (unsigned)c->envPAmp,
++			(unsigned)c->eVibPos, (unsigned)c->eVibAmp, (unsigned)c->eVibSweep,
++			(unsigned)c->effTyp, (unsigned)c->eff,
++			(int)c->relTonNr, (int)c->fineTune,
++			(unsigned)c->fadeOutAmp, (unsigned)c->status);
++	}
++	// === end instrumentation ===
+ }
