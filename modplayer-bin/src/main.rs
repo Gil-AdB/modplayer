@@ -51,16 +51,33 @@ fn main() {
 
     let cli_args: Vec<String> = env::args().skip(1).collect();
     let dump_mode = cli_args.iter().any(|a| a == "--dump");
-    let non_flag: Vec<&String> = cli_args.iter().filter(|a| !a.starts_with("--")).collect();
+    // Pattern-debug mode is now explicit. `--print-patterns 5,10 file.s3m`
+    // replaces the old positional-integer heuristic, which silently
+    // misdispatched playlist invocations whose first file happened to be
+    // loadable (the rest got "not a valid pattern index" spam).
+    let print_patterns_arg: Option<String> = {
+        let mut iter = cli_args.iter();
+        let mut found = None;
+        while let Some(a) = iter.next() {
+            if a == "--print-patterns" {
+                found = iter.next().cloned();
+                break;
+            }
+        }
+        found
+    };
+    let non_flag: Vec<&String> = cli_args.iter()
+        .enumerate()
+        .filter(|(i, a)| {
+            // Drop the --flag itself AND the next arg if the flag takes a value.
+            if a.starts_with("--") { return false; }
+            // If the previous element was --print-patterns, this is its value.
+            if *i > 0 && cli_args[*i - 1] == "--print-patterns" { return false; }
+            true
+        })
+        .map(|(_, a)| a)
+        .collect();
     if non_flag.is_empty() { return; }
-
-    // Heuristic: treat extra args as a playlist only if every one of them is
-    // an existing file. If any extra isn't a file, fall back to the legacy
-    // print_module debug shorthand (`modplayer file.s3m 5 10` → debug-print
-    // patterns 5 and 10 of the first file). This keeps backward compat for
-    // the existing single-file flow while making `modplayer a.s3m b.xm c.it`
-    // do the obvious thing.
-    let all_files = non_flag.iter().all(|a| Path::new(a.as_str()).is_file());
 
     if dump_mode {
         // Dump mode is a developer affordance; only the first file is dumped.
@@ -72,11 +89,10 @@ fn main() {
         return;
     }
 
-    if !all_files && non_flag.len() > 1 {
-        // Legacy print_module path — first arg is the file, rest are pattern
-        // indices to debug-print.
+    if let Some(spec) = print_patterns_arg {
+        // --print-patterns 5,10 file.s3m  →  print order entries 5 and 10.
         let path = non_flag[0].clone();
-        let extras: Vec<String> = non_flag[1..].iter().map(|s| s.to_string()).collect();
+        let extras: Vec<String> = spec.split(',').map(|s| s.trim().to_string()).collect();
         match SongState::new(&path) {
             Ok((song, _consumer)) => print_module(&song, extras.into_iter()),
             Err(e) => { dbg!(e); }
@@ -84,7 +100,23 @@ fn main() {
         return;
     }
 
-    let playlist: Vec<PathBuf> = non_flag.iter().map(|s| PathBuf::from(s.as_str())).collect();
+    // Playlist mode for any number of file args. Non-existing entries are
+    // dropped here with a stderr warning so a stale glob or typo doesn't
+    // kick us into a confusing legacy code path; the user still gets the
+    // valid files queued up.
+    let mut playlist: Vec<PathBuf> = Vec::new();
+    for s in &non_flag {
+        let p = PathBuf::from(s.as_str());
+        if p.is_file() {
+            playlist.push(p);
+        } else {
+            eprintln!("skipping non-file arg: {}", s);
+        }
+    }
+    if playlist.is_empty() {
+        eprintln!("no playable files in args; exiting.");
+        return;
+    }
     run_playlist(playlist);
 }
 
@@ -196,6 +228,11 @@ fn run_playlist(items: Vec<PathBuf>) {
     // playlist keeps the user's preferences.
     let mut settings = Settings::load();
     let mut idx: usize = 0;
+    // Direction we last moved in. On a load failure we keep moving in the
+    // same direction until we find a song that loads — pressing PrevSong
+    // and hitting a broken module shouldn't bounce back to where you came
+    // from. +1 = forward (initial), -1 = backward.
+    let mut direction: i32 = 1;
 
     while idx < items.len() {
         let path = items[idx].to_string_lossy().to_string();
@@ -204,7 +241,16 @@ fn run_playlist(items: Vec<PathBuf>) {
         eprintln!("[{}/{}] loading: {}", idx + 1, items.len(), path);
         let (mut song_data, consumer) = match SongState::new(&path) {
             Ok(s) => s,
-            Err(e) => { eprintln!("  load failed: {:?}", e); idx += 1; continue; }
+            Err(e) => {
+                eprintln!("  load failed: {:?}", e);
+                if direction < 0 {
+                    if idx == 0 { break; }  // backed off start, nothing left
+                    idx -= 1;
+                } else {
+                    idx += 1;
+                }
+                continue;
+            }
         };
 
         // Push the new song's title to Control Center + flip to Playing.
@@ -245,8 +291,14 @@ fn run_playlist(items: Vec<PathBuf>) {
 
         match exit {
             LoopExit::Quit => break,
-            LoopExit::SongEnded | LoopExit::NextSong => { idx = idx.saturating_add(1); }
-            LoopExit::PrevSong => { idx = idx.saturating_sub(1); }
+            LoopExit::SongEnded | LoopExit::NextSong => {
+                idx = idx.saturating_add(1);
+                direction = 1;
+            }
+            LoopExit::PrevSong => {
+                idx = idx.saturating_sub(1);
+                direction = -1;
+            }
         }
     }
 }
