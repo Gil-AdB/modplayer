@@ -418,7 +418,15 @@ impl Song {
             // Runs in every code path — regular playback,
             // compute_total_duration, user seeks — so all of them exit
             // via the same `CallbackState::Complete`.
-            if self.row == 0 {
+            //
+            // Skip the check entirely when the user has asked us to
+            // loop the current pattern (`/` hotkey → loop_pattern=true).
+            // Otherwise the second pass through the pattern wraps row
+            // back to 0 at the same order, the visited-set already has
+            // this hash from the first pass, and we'd terminate
+            // immediately — manifesting as "playback quits at end of
+            // pattern when looping is on".
+            if self.row == 0 && !self.loop_pattern {
                 let order = self.song_position;
                 if order < self.visited_rows.len() {
                     let h = Self::channel_loop_state_hash(&self.channels);
