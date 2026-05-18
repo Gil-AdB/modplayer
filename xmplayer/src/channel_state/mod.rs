@@ -388,6 +388,15 @@ impl Voice {
         self.loop_started = false;
         self.sustained = true;
         self.on = true;
+        // Auto-vibrato / pitch-envelope accumulator. Without this,
+        // a freshly-triggered note inherits the previous note's last
+        // tick's frequency_shift on its own tick 0 (e.g. SHOOTING.XM
+        // ch0 trace showed ord=3 row=39 tick=2 freq_shift=-36 →
+        // ord=4 row=0 tick=0 freq_shift=189 before update_envelopes
+        // recomputes — leaked state that wouldn't matter if the mixer
+        // didn't ever sample the channel between trigger and the next
+        // update_envelopes pass).
+        self.frequency_shift = 0.0;
 
         self.volume.fadeout_vol = 65536;
         self.volume.fadeout_speed = instruments[self.instrument].volume_fadeout as i32;
