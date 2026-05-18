@@ -1,0 +1,79 @@
+diff --git a/ft2play/src/ft2play.c b/ft2play/src/ft2play.c
+index 05400d3..273d5e5 100644
+--- a/ft2play/src/ft2play.c
++++ b/ft2play/src/ft2play.c
+@@ -34,7 +34,7 @@ static int32_t mixingBufferSize = DEFAULT_MIX_BUFSIZE;
+ // ----------------------------------------------------------
+ 
+ static volatile bool programRunning;
+-static char *filename, *WAVRenderFilename;
++static char *filename, *WAVRenderFilename, *renderOutPath = NULL;
+ 
+ static void showUsage(void);
+ static void handleArguments(int argc, char *argv[]);
+@@ -230,6 +230,11 @@ static void handleArguments(int argc, char *argv[])
+ 			{
+ 				renderToWavFlag = true;
+ 			}
++			else if (!_stricmp(argv[i], "--render") && i+1 < argc)
++			{
++				renderToWavFlag = true;
++				renderOutPath = argv[i+1];
++			}
+ 		}
+ 	}
+ }
+@@ -268,18 +273,26 @@ static void readKeyboard(void)
+ 
+ static int32_t renderToWav(void)
+ {
+-	const size_t filenameLen = strlen(filename);
+-	WAVRenderFilename = (char *)malloc(filenameLen+5);
+-
+-	if (WAVRenderFilename == NULL)
++	if (renderOutPath != NULL)
+ 	{
+-		printf("Error: Out of memory!\n");
+-		freeMusic();
+-		return 1;
++		// Caller-provided path (harness mode): use it verbatim.
++		WAVRenderFilename = renderOutPath;
+ 	}
++	else
++	{
++		const size_t filenameLen = strlen(filename);
++		WAVRenderFilename = (char *)malloc(filenameLen+5);
+ 
+-	strcpy(WAVRenderFilename, filename);
+-	strcat(WAVRenderFilename, ".wav");
++		if (WAVRenderFilename == NULL)
++		{
++			printf("Error: Out of memory!\n");
++			freeMusic();
++			return 1;
++		}
++
++		strcpy(WAVRenderFilename, filename);
++		strcat(WAVRenderFilename, ".wav");
++	}
+ 
+ 	/* The WAV render loop also sets/listens/clears "WAVDump_Flag", but let's set it now
+ 	** since we're doing the render in a separate thread (to be able to force-abort it if
+@@ -294,7 +307,7 @@ static int32_t renderToWav(void)
+ 	if (!createSingleThread(wavRecordingThread))
+ 	{
+ 		printf("Error: Couldn't create WAV rendering thread!\n");
+-		free(WAVRenderFilename);
++		if (renderOutPath == NULL) free(WAVRenderFilename);
+ 		freeMusic();
+ 		return 1;
+ 	}
+@@ -316,7 +329,7 @@ static int32_t renderToWav(void)
+ 
+ 	closeSingleThread();
+ 
+-	free(WAVRenderFilename);
++	if (renderOutPath == NULL) free(WAVRenderFilename);
+ 	freeMusic();
+ 
+ 	return 0;
