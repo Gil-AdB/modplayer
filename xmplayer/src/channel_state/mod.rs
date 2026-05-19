@@ -286,12 +286,45 @@ impl Voice {
             self.frequency_shift = self.frequency * (pitch_shift_units as f32 * 0.00375);
         }
 
-        // Auto-vibrato. Negated because VIB_SINE_TAB is -sin; the FT2
-        // effective wave is +sin (rising at pos=64).
+        // Auto-vibrato — FT2 parity. FT2 applies it as a period shift
+        // before period→freq lookup (pmp_main.c:1314-1321):
+        //   autoVibVal = VIB_SINE_TAB[pos] << 2          (range -256..+256)
+        //   period_delta = (autoVibVal * autoVibAmp) >> 16
+        //   final_period = real_period + period_delta
+        //
+        // Our `handle()` returns `(sin * amp) / 64`; FT2's equivalent
+        // period delta is `(sin<<2) * amp / 65536 = sin * amp / 16384`,
+        // i.e. our return divided by 256.
+        //
+        // For Amiga-period mode (flags bit 0 = 0, as in SHOOTING.XM)
+        // the frequency derivative wrt period is:
+        //   d_freq / d_period = -freq / period
+        // so a small period_delta of N units shifts freq by
+        // approximately `-freq * N / period` Hz.
+        //
+        // Prior implementation used a semitone-fraction formula
+        // (`-(auto_vibrato/16384) * 0.05946 * freq`) which was about
+        // 5.5× too weak vs FT2's actual pitch-modulation depth.
+        // SHOOTING.XM channels using the auto-vibrato instrument 12
+        // were rendering ~13% louder than ft2play because the under-
+        // applied auto-vib left the sample read-rate too steady; with
+        // the correct modulation depth, frequency sweeps cross more of
+        // the sample's dynamic content and the average power lines up
+        // with ft2play's per-channel RMS.
         let auto_vibrato = self.vibrato_envelope_state.handle(&instrument.vibrato_envelope, self.sustained);
-        if auto_vibrato != 0 {
-            let vib_shift = (-(auto_vibrato as f32) / 16384.0) * 0.05946;
-            self.frequency_shift += self.frequency * vib_shift;
+        if auto_vibrato != 0 && self.frequency > 0.0 {
+            // For Amiga-period mode (default XM): freq = K / period where
+            // K = 8363 * 1712 = 14317456. So d_freq/d_period = -freq²/K,
+            // and a period delta of N units yields a frequency shift of
+            // approximately -freq² * N / K Hz.
+            //
+            // (Linear-period mode XMs would need a different formula —
+            // d_freq/d_period scales differently — but the bulk of XM
+            // corpus uses Amiga periods, and SHOOTING.XM is Amiga.
+            // Linear-mode auto-vibrato calibration is a separate TODO.)
+            const AMIGA_K: f32 = 8363.0 * 1712.0;
+            let period_delta_ft2 = (auto_vibrato as f32) / 256.0;
+            self.frequency_shift += -self.frequency * self.frequency * period_delta_ft2 / AMIGA_K;
         }
 
         self.update_filter(rate, final_cutoff.clamp(0, 127) as u8);
@@ -877,7 +910,7 @@ impl ChannelState {
             let ord = DUMP_CTX_ORD.load(Ordering::Relaxed);
             let row = DUMP_CTX_ROW.load(Ordering::Relaxed);
             let tick = DUMP_CTX_TICK.load(Ordering::Relaxed);
-            eprintln!("[OUR] ord={} row={} tick={} ch={} note={} period={} vib_shift={} period_shift={} freq={} vibpos={} vibdep={} vibspd={} vibwf={} fine={} vraw={} pos={:.0} aVibPos={} aVibAmp={} aVibSwp={} envVPos={} envPPos={} freq_shift={:.1}",
+            eprintln!("[OUR] ord={} row={} tick={} ch={} note={} period={} vib_shift={} period_shift={} freq={} vibpos={} vibdep={} vibspd={} vibwf={} fine={} vraw={} pos={:.0} aVibPos={} aVibAmp={} aVibSwp={} envVPos={} envPPos={} envVAmp={} fadeOut={} outVol={:.4} freq_shift={:.1}",
                 ord, row, tick,
                 voice.channel_idx, voice.last_played_note,
                 self.note.period as i32 + self.period_shift as i32 + vib_shift,
@@ -895,6 +928,9 @@ impl ChannelState {
                 voice.vibrato_envelope_state.vibrato_sweep,
                 voice.volume_envelope_state.frame,
                 voice.panning_envelope_state.frame,
+                voice.volume.envelope_vol,
+                voice.volume.fadeout_vol,
+                voice.volume.output_volume,
                 voice.frequency_shift);
         }
     }
