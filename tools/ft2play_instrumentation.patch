@@ -1,5 +1,5 @@
 diff --git a/pmp_main.c b/pmp_main.c
-index 9cc90e5..6910933 100644
+index 9cc90e5..92bb3c1 100644
 --- a/pmp_main.c
 +++ b/pmp_main.c
 @@ -12,6 +12,7 @@
@@ -10,12 +10,40 @@ index 9cc90e5..6910933 100644
  #include "pmplay.h"
  #include "pmp_mix.h"
  #include "snd_masm.h"
-@@ -1890,4 +1891,46 @@ void mainPlayer(void)
+@@ -1890,4 +1891,74 @@ void mainPlayer(void)
  
  	if (song.timer == 1)
  		getNextPos();
 +
 +	// === instrumentation hook (modplayer harness) ===
++	// Per-channel solo: FT2_SOLO_CH=N forces all channels except N to
++	// mute. Used for direct audio comparison against our --mute-channels
++	// renders. The mute flag is consulted by fixaEnvelopeVibrato (line
++	// 1060) so we apply it once per tick after that pass.
++	static int s_solo_ch = -2;
++	if (s_solo_ch == -2)
++	{
++		const char *env_solo = getenv("FT2_SOLO_CH");
++		s_solo_ch = (env_solo != NULL) ? atoi(env_solo) : -1;
++	}
++	if (s_solo_ch >= 0)
++	{
++		stmTyp *cc = stm;
++		for (int i = 0; i < song.antChn; i++, cc++)
++		{
++			cc->mute = (i == s_solo_ch) ? 0 : 1;
++			if (cc->mute)
++			{
++				// fixaEnvelopeVibrato already set finalVol=0 in the
++				// mute branch, but the output mixer only picks up
++				// finalVol when IS_Vol is in status. Force the flag
++				// so the muted channel actually goes silent in audio.
++				cc->finalVol = 0;
++				cc->status |= IS_Vol;
++			}
++		}
++	}
++
 +	// Per-tick state dump for one channel, gated by FT2_DUMP_CH env var.
 +	// Output format mirrors xmplayer's state_dump --output, picking
 +	// the FT2 fields that map onto our VoiceDump (instrument, sample,
