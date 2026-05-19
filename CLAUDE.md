@@ -1,5 +1,31 @@
 # modplayer — Claude instructions
 
+## Project policy: native-player parity, not OMT parity
+
+**The canonical reference for each format is the native tracker's own
+replayer**, not libopenmpt. When us, OMT, and the native disagree, we
+always align with the native:
+
+| Format | Native canonical | Why |
+|--------|------------------|-----|
+| MOD    | **pt2-clone**    | ProTracker 2 is the format spec; OMT has documented MOD-effect divergences |
+| XM     | **ft2play** / ft2-clone | FastTracker 2 is the format spec; OMT calibrates differently |
+| S3M    | **st3play**      | Scream Tracker 3 is the format spec |
+| IT     | **it2play**      | Impulse Tracker 2 is the format spec; OMT applies its own MixLevels matrix |
+
+OMT remains a *secondary* reference for cases where the native tracker
+itself had a bug fixed by Schism / MPT / OMT — but it is not the gain
+or behaviour target. Per-format gain calibration in
+`xmplayer/src/song/backend.rs::*_MIX` should track the native tracker,
+not OMT.
+
+Examples of recalibration following this policy:
+- `348d58f` XM_MIX.global_scale 0.7468 → 0.6 (was OMT-tuned, now
+  ft2play-tuned; SHOOTING.XM 1.45× too loud → 1.00× of ft2play).
+- Pending: MOD_MIX.global_scale, S3M_MIX.global_scale, IT_MIX.global_scale
+  should be re-checked against pt2-clone / st3play / it2play
+  respectively.
+
 ## Default stance on audio-divergence reports
 
 **Read this every session.** This is a project-wide instruction, not a
