@@ -57,6 +57,38 @@ If those three things don't all line up, the correct response is
 **"I don't have enough evidence yet, here's what I'll measure next"**,
 not a hand-wavy category label.
 
+### Numerical match ≠ audible match — do not declare victory on metrics
+
+This is a separate recurring failure mode. After finding and fixing
+one or two real bugs in an audible-bug investigation, the temptation
+is to keep tuning a knob (gain calibration, scale constants, ratio
+thresholds) until a *metric* lines up with the reference — then
+declare the bug fixed. **Don't.** The user can hear things that don't
+show up in RMS, peak, per-octave-band RMS, full-mix cross-correlation,
+or even spectrogram magnitude. Specifically: phase, timing, per-event
+envelopes, click/pop transients, per-effect mis-handling, per-channel
+phase drift — all can be present at 1.003× RMS of the reference and
+still sound clearly wrong.
+
+Real example (SHOOTING.XM, 2026-05-19): two real bugs landed
+(auto-vibrato sweep, frequency_shift reset). I then "fixed" the gain
+by recalibrating `XM_MIX.global_scale` so SHOOTING.XM's RMS matched
+ft2play's RMS to 0.3%, declared the bug fixed, and got the response
+"the module sounds wrong, no amount of average gain is going to fix
+it, you are gaming the system." Lesson: **audible-bug investigations
+end when the user says it sounds right, not when the numbers line up.**
+
+Before claiming a fix on an audible bug:
+- Ask **what specifically** they hear — which note, which moment,
+  which channel, what symptom (pitch / timing / timbre / click /
+  missing). One sentence from the user beats another hour of metric
+  tuning.
+- If you've fixed two bugs and the user is still hearing something,
+  there's a third bug. Don't reach for a knob; ask.
+- Gain/calibration constants are the easiest knobs to turn. They're
+  also the most attractive to me as cheap "fixes" — which is why
+  they're suspect on an *audible* (not numerical) report.
+
 ## Historical incidents
 
 Two recent failure modes that map onto this rule:
