@@ -262,13 +262,27 @@ impl EnvelopeState {
             }
         }
 
-        // Handle Sustain Loop jump
-        if in_sustain_loop && self.frame > loop_end_frame {
+        // Handle Sustain Loop jump. FT2 / IT semantics: at the loop
+        // end point's frame, jump to loop_start_point WITHOUT
+        // outputting the loop_end_point's value. Use `>=` not `>` so
+        // the loop fires on the same tick we'd otherwise emit the
+        // endpoint — matching pmp_main.c:1078-1090 in ft2play, which
+        // resets envPos to loop_start the moment envCnt reaches
+        // p[loop_end].frame.
+        //
+        // SHOOTING.XM inst 12 was the canary: vol envelope = 3 points
+        // [(0,64), (5,0), (6,64)] loop 0..2. With the prior `>`
+        // condition we emitted at frame=6 (peak from p[2]) then
+        // looped to frame=0 (peak from p[0]) — two consecutive peaks
+        // per cycle, integrating ~14% extra average power vs FT2.
+        // That ratio matched the observed per-channel us-vs-ft2 RMS
+        // gap of 1.128× on channels using inst 12.
+        if in_sustain_loop && self.frame >= loop_end_frame {
             self.idx = env.sustain_loop_start_point as usize;
             self.frame = env.points[self.idx].frame;
         }
         // Handle Normal Loop jump
-        else if can_normal_loop && self.frame > loop_end_frame {
+        else if can_normal_loop && self.frame >= loop_end_frame {
             self.idx = env.loop_start_point as usize;
             self.frame = env.points[self.idx].frame;
         }
