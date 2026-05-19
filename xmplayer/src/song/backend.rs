@@ -265,14 +265,16 @@ pub(super) struct VoiceMixFormula {
 const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: false,
     apply_global_vol: true,  global_vol_div: 64.0,
-    // Calibrated empirically: 25/34-song XM corpus inlier-median sat
-    // at 0.947 with FRAC_1_SQRT_2 (0.7071). Bumping the scale by
-    // 1/0.947 = 1.056 lands the bulk of the corpus at ratio ~1.0.
-    // The bumped value is close to OMT's MixLevels::CompatibleFT2
-    // 192/256 sample-pre-amp ratio (0.75), via 0.7071 * 1.056 ≈
-    // 0.7468 ≈ sqrt(192/256) = 0.866 / sqrt(2). Coincidence or not,
-    // empirical median is the source of truth for matching OMT.
-    master_byte_mask: 0xFF,  global_scale: 0.7468,
+    // Project policy is FT2 parity, not OMT parity. ft2play
+    // (8bitbubsy's accurate FT2 replayer port) is the source of truth.
+    // The mixer applies (voice.output_volume * 0.5) * master_gain *
+    // global_scale per voice; master_gain itself is
+    // (master_vol/128) * (mixing_vol/128). For SHOOTING.XM (both 128)
+    // master_gain = 1.0, so net per-voice scale = 0.5 * global_scale.
+    // At global_scale = 0.6, SHOOTING.XM lands at RMS 0.162 = ft2play
+    // RMS 0.1619 exactly (1.00x). Prior value 0.7468 was calibrated
+    // to OMT median (~1.5x ft2play); master used output/4 = ~0.84x.
+    master_byte_mask: 0xFF,  global_scale: 0.6,
     freq_scale: 1.0,
     pan_law: PanLaw::Ft2Sqrt,
 };
