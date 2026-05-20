@@ -1581,7 +1581,36 @@ pub(super) fn apply_effect(
         EffectKind::KeyOffAtTick => {
             if ctx.tick == pattern.effect_param as u32 {
                 if let Some(v) = voice.as_deref_mut() {
+                    // FT2 K00 quirk (effTyp=0x14, param=0): `getNewNote`
+                    // runs `keyOff → retrigVolume → checkEffects(vol col)`
+                    // in that order, so the FINAL realVol is the vol-col
+                    // value (if present) or sample.vol. Our dispatch
+                    // already ran vol col before us, so if `key_off`
+                    // takes the no-envelope branch (which zeros vraw),
+                    // it would undo the vol-col SetVolume that already
+                    // ran this tick. Snapshot the running vol before
+                    // keyOff and restore it if the env-off zero hits.
+                    // Only XM K00 has this restore; K0x (x>0) fires
+                    // from doEffects without a retrigVolume step.
+                    let is_xm_k00 = ctx.song_type == SongType::XM
+                        && pattern.effect_param == 0;
+                    // Only restore when vol-col SetVolume is on the row
+                    // (XM range 0x10..=0x50). FT2's vol col fires AFTER
+                    // retrigVolume in checkEffects, so its value wins;
+                    // our pre_vol captures it (vol col ran earlier in
+                    // our dispatch). Without vol col and without inst,
+                    // FT2 just leaves realVol at 0 — don't restore.
+                    let has_vol_col_setvol = pattern.volume >= 0x10
+                        && pattern.volume <= 0x50;
+                    let pre_vol = v.volume.volume;
                     v.key_off(ctx.instruments, ctx.song_type);
+                    if is_xm_k00
+                        && has_vol_col_setvol
+                        && v.volume.volume == 0
+                        && pre_vol != 0
+                    {
+                        v.volume.set_volume(pre_vol as i32);
+                    }
                 }
             }
         }

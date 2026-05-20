@@ -61,7 +61,19 @@ impl ModuleBackend for XmBackend {
                 _ => 0,
             };
 
-            if trigger_note_value != 0 {
+            // FT2 quirk: K00 (effTyp=0x14, param=0) short-circuits
+            // `getNewNote` before `startTone` runs, so the row's note
+            // byte is silently dropped — the voice keeps playing the
+            // previous note and the K00 handler keys it off. Without
+            // this gate, a `C-5 inst K00` row triggers C-5 (wrong
+            // period) then keys it off (test fixture: key_off.xm row 4
+            // expects period to stay at C-4's 4608, not jump to
+            // C-5's). Only XM has this short-circuit; MOD has no Kxx.
+            let suppress_trigger_for_k00 =
+                r.song_data.song_type == crate::module_reader::SongType::XM
+                && pattern.effect == 0x14
+                && pattern.effect_param == 0;
+            if trigger_note_value != 0 && !suppress_trigger_for_k00 {
                 if pattern.is_porta_to_note(r.song_data.song_type) {
                     if first_tick {
                         // FT2 preparePortamento: target period uses the
