@@ -265,16 +265,15 @@ pub(super) struct VoiceMixFormula {
 const XM_MIX:  VoiceMixFormula = VoiceMixFormula {
     update_envelopes: true,  channel_vol: false, instrument_global: false,
     apply_global_vol: true,  global_vol_div: 64.0,
-    // Project policy is FT2 parity, not OMT parity. ft2play
-    // (8bitbubsy's accurate FT2 replayer port) is the source of truth.
-    // The mixer applies (voice.output_volume * 0.5) * master_gain *
-    // global_scale per voice; master_gain itself is
-    // (master_vol/128) * (mixing_vol/128). For SHOOTING.XM (both 128)
-    // master_gain = 1.0, so net per-voice scale = 0.5 * global_scale.
-    // At global_scale = 0.6, SHOOTING.XM lands at RMS 0.162 = ft2play
-    // RMS 0.1619 exactly (1.00x). Prior value 0.7468 was calibrated
-    // to OMT median (~1.5x ft2play); master used output/4 = ~0.84x.
-    master_byte_mask: 0xFF,  global_scale: 0.6,
+    // Calibrated empirically: 25/34-song XM corpus inlier-median sat
+    // at 0.947 with FRAC_1_SQRT_2 (0.7071). Bumping the scale by
+    // 1/0.947 = 1.056 lands the bulk of the corpus at ratio ~1.0.
+    // 348d58f tried 0.6 to match SHOOTING.XM's RMS to ft2play, but
+    // user pushed back: tuning a single song's average gain after
+    // finding two real bugs is gaming the metric — the audible bug
+    // (retrigger crossfade phase mismatch, fixed via channel.real_vol
+    // mirror) is what matters, not the per-song RMS knob.
+    master_byte_mask: 0xFF,  global_scale: 0.7468,
     freq_scale: 1.0,
     pan_law: PanLaw::Ft2Sqrt,
 };
@@ -415,6 +414,9 @@ pub(super) fn init_channel_iter(
 ) -> bool {
     channel.tremor_silenced = false;
     channel.vibrato_active_this_row = pattern.has_vibrato(song_type);
+    if first_tick {
+        channel.xm_vol_col_porta_this_row = false;
+    }
     if pattern.instrument != 0 {
         channel.last_instrument = if (pattern.instrument as usize) < instruments.len() {
             pattern.instrument as usize
@@ -897,6 +899,11 @@ pub(super) struct EffectCtx<'a> {
     pub instruments:    &'a Vec<Instrument>,
     pub frequency_tables: &'a AudioTables,
     pub tick:           u32,
+    /// Row's speed (ticks-per-row). Read by FT2-style arp which indexes
+    /// `arpTab[speed - tick]` rather than walking `tick % 3` — at
+    /// speed > 16 the table reads from FT2's buggy overflow region and
+    /// the apparent arp cycle becomes non-cyclic.
+    pub speed:          u32,
     pub row:            usize,
     pub first_tick:     bool,
     pub first_row_tick: bool,
@@ -1001,10 +1008,21 @@ pub(super) fn apply_extended(
             // not on every EEx pattern-delay repeat. Use first_row_tick
             // which factors in `pattern_change.in_delay_repeat`. Test:
             // PatternDelaysRetrig.xm.
-            channel.fine_volume_slide(voice.as_deref_mut(), first_row_tick, y as i8);
+            //
+            // FT2: EAx and EBx have SEPARATE memory slots (`fVolSlideUp/
+            // DownSpeed`). param=0 recalls the slot, otherwise the new
+            // param updates it. Test: FineVol-LinkMem.xm row 1 EBy=0
+            // expects vol -= prior EBy magnitude, not no-op.
+            let amount = channel.recall_or_set(
+                crate::channel_state::EffectMemorySlot::FineVolSlideUp, y,
+            );
+            channel.fine_volume_slide(voice.as_deref_mut(), first_row_tick, amount as i8);
         }
         ExtendedCmdKind::FineVolSlideDown => {
-            channel.fine_volume_slide(voice.as_deref_mut(), first_row_tick, -(y as i8));
+            let amount = channel.recall_or_set(
+                crate::channel_state::EffectMemorySlot::FineVolSlideDown, y,
+            );
+            channel.fine_volume_slide(voice.as_deref_mut(), first_row_tick, -(amount as i8));
         }
         ExtendedCmdKind::NoteCutAtTick => {
             if tick == y as u32 {
@@ -1301,7 +1319,15 @@ pub(super) fn apply_effect(
             // S3M/IT: arpeggio is `J` and has memory.
             let has_memory = matches!(ctx.song_type, SongType::S3M | SongType::IT);
             if pattern.effect_param != 0 || has_memory {
-                channel.arpeggio(ctx.tick, pattern.get_x(), pattern.get_y(), has_memory);
+                // XM uses FT2's `arpTab[speed - tick]` indexing (see
+                // `arpeggio_xm`). Other formats keep the PT-style
+                // `tick % 3` cycle — MOD/S3M/IT spec the cycle that way
+                // explicitly and don't share FT2's overflow quirk.
+                if ctx.song_type == SongType::XM {
+                    channel.arpeggio_xm(ctx.tick, ctx.speed, ctx.first_row_tick, pattern.get_x(), pattern.get_y());
+                } else {
+                    channel.arpeggio(ctx.tick, pattern.get_x(), pattern.get_y(), has_memory);
+                }
                 // S3M/IT amiga: recompute period_shift via the c5_speed
                 // formula so arp steps land on exact semitones.
                 let arpeggio_via_formula = matches!(ctx.song_type, SongType::S3M | SongType::IT)
@@ -1363,9 +1389,21 @@ pub(super) fn apply_effect(
             channel.porta_down(ctx.song_type, ctx.first_tick, pattern.effect_param);
         }
         EffectKind::PortaToNote => {
+            // XM: when vol-col Fx already dispatched porta on this row,
+            // FT2 short-circuits before eff-col 3xx can set portaSpeed
+            // (getNewNote returns after fixTonePorta from the vol-col
+            // branch). Mirror by zeroing the speed param so our
+            // porta_to_note recalls vol-col F's value instead of
+            // overwriting it. The slide itself still fires on tick > 0
+            // via the normal tick-loop path.
+            let param = if ctx.song_type == SongType::XM && channel.xm_vol_col_porta_this_row {
+                0
+            } else {
+                pattern.effect_param
+            };
             channel.porta_to_note(
                 ctx.song_type, voice.as_deref_mut(), ctx.first_tick,
-                pattern.effect_param, ctx.compatible_g, ctx.rate, ctx.frequency_tables,
+                param, ctx.compatible_g, ctx.rate, ctx.frequency_tables,
             );
         }
         EffectKind::Vibrato => {
@@ -1715,10 +1753,24 @@ pub(super) fn dispatch_vol_col(
                         mag, ctx.compatible_g, ctx.rate, ctx.frequency_tables,
                     );
                 } else {
+                    // XM vol-col Fy: FT2 maps y → portaSpeed = y << 4
+                    // (then porta_to_note's *4 brings it to y * 64).
+                    // Without this shift, vol-col F1 produces 4× weaker
+                    // porta than effect-col 310 (Test: TonePortamento-
+                    // Memory.xm row 2 vol-col F1 — period went 2000→2004
+                    // instead of 2000→2064). Also flag the channel so
+                    // eff-col 3xx/5xx skips its own "set portaSpeed"
+                    // step (FT2's getNewNote returns early after vol-
+                    // col Fx, so eff-col 3 never gets to write its
+                    // own speed).
+                    let speed = if ctx.song_type == SongType::XM { mag << 4 } else { mag };
                     channel.porta_to_note(
                         ctx.song_type, voice.as_deref_mut(), ctx.note_delay_first_tick,
-                        mag, ctx.compatible_g, ctx.rate, ctx.frequency_tables,
+                        speed, ctx.compatible_g, ctx.rate, ctx.frequency_tables,
                     );
+                    if ctx.song_type == SongType::XM {
+                        channel.xm_vol_col_porta_this_row = true;
+                    }
                 }
             }
         }
@@ -1741,7 +1793,13 @@ pub(super) const XM_VOL_COL: &[VolColEntry] = &[
     // FT2 vol-col: D = pan-slide left (lo nibble), E = pan-slide right (hi nibble).
     VolColEntry { start: 0xd0, end: 0xdf, action: VolColAction::PanningSlide { hi_nibble: false } },
     VolColEntry { start: 0xe0, end: 0xef, action: VolColAction::PanningSlide { hi_nibble: true  } },
-    VolColEntry { start: 0xf0, end: 0xfe, action: VolColAction::PortaToNote { with_memory: false } },
+    // FT2 vol-col F: high nibble F covers the full 0xF0..=0xFF range
+    // (FT2's `(volKolVol & 0xF0) == 0xF0` matches all 16 low-nibble
+    // values, not just 0..14). Without 0xFF in the range, songs that
+    // encode the fastest vol-col porta (`Ff`) fall through to the
+    // catch-all and never trigger porta — test fixture
+    // `TonePortamentoMemory.xm` row 13 carries vol-col `0xff`.
+    VolColEntry { start: 0xf0, end: 0xff, action: VolColAction::PortaToNote { with_memory: false } },
 ];
 
 /// IT volume-column layout (decimal range encoding; ranges of 10 except

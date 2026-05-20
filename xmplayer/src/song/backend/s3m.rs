@@ -206,6 +206,7 @@ impl ModuleBackend for S3MBackend {
                 instruments,
                 frequency_tables: r.frequency_tables,
                 tick: *r.tick,
+                speed: *r.speed,
                 row: *r.row,
                 first_tick,
                 first_row_tick: first_tick,

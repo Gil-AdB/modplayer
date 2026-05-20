@@ -91,9 +91,15 @@ impl ModuleBackend for XmBackend {
 
                                 let prev_voice_idx = channel.voice_idx.unwrap_or(i);
                                 // FT2: a note WITHOUT an instrument column keeps
-                                // the current voice volume. Only an explicit
-                                // instrument reloads sample default vol+pan.
-                                let prev_vol = r.voices[prev_voice_idx].volume.volume;
+                                // the current channel volume (ch->realVol).
+                                // Read it from the channel-level mirror —
+                                // voices[prev_voice_idx].volume is unreliable
+                                // once the prior voice has been reclaimed
+                                // by the pool (channel.voice_idx == None
+                                // fallback used to read voices[i] which is
+                                // some unrelated channel's slot, leaking
+                                // its vol into ours).
+                                let prev_vol = channel.real_vol;
                                 cut_or_nna_existing_voice(r.voices, channel, instruments, r.song_data.song_type, i, prev_voice_idx);
 
                                 let voice_idx = alloc_voice(r.voices);
@@ -140,6 +146,31 @@ impl ModuleBackend for XmBackend {
                         // current ownership before keying-off.
                         if r.voices[v_idx].channel_idx == i {
                             r.voices[v_idx].key_off(instruments, r.song_data.song_type);
+                            // FT2 getNewNote: after keyOff, if `inst > 0`
+                            // on the row, retrigVolume runs unconditionally
+                            // — `realVol = oldVol = sample.vol`. The env-off
+                            // keyOff branch sets realVol=0 first, but this
+                            // restores it. retrigEnvelopeVibrato is NOT run
+                            // on key-off (FT2 gates that on `ton != KEYOFF`).
+                            // Without this, an OFF row carrying an inst byte
+                            // ends up at vol=0 for the no-envelope case
+                            // (RetrigFade.xm row 1 ch0).
+                            if pattern.instrument != 0 {
+                                let inst_idx = channel.last_instrument;
+                                if inst_idx != 0 && inst_idx < instruments.len() {
+                                    let instrument = &instruments[inst_idx];
+                                    let lookup_note = channel.last_played_note;
+                                    if lookup_note >= 1 && (lookup_note as usize - 1) < instrument.sample_indexes.len() {
+                                        let it_mapping = instrument.sample_indexes[lookup_note as usize - 1];
+                                        let sample_idx = it_mapping.1 as usize;
+                                        if sample_idx > 0 && (sample_idx - 1) < instrument.samples.len() {
+                                            let sample = &instrument.samples[sample_idx - 1];
+                                            r.voices[v_idx].volume.retrig(sample.volume as i32);
+                                            channel.real_vol = sample.volume;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -198,6 +229,7 @@ impl ModuleBackend for XmBackend {
                 instruments,
                 frequency_tables: r.frequency_tables,
                 tick: *r.tick,
+                speed: *r.speed,
                 row: *r.row,
                 first_tick,
                 first_row_tick,
@@ -268,6 +300,12 @@ impl ModuleBackend for XmBackend {
                 if channel.vibrato_active_this_row && !first_tick {
                     channel.advance_vibrato_pos(v);
                 }
+                // Mirror FT2's ch->realVol: the channel-level running
+                // volume that survives voice death. Used by a later
+                // note-without-instrument trigger to retain the slid
+                // volume even when the previous voice has fully faded
+                // and been returned to the pool.
+                channel.real_vol = v.volume.volume;
             }
         }
 

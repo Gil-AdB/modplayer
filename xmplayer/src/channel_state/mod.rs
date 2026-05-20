@@ -738,6 +738,31 @@ pub enum EffectMemorySlot {
 
 const EFFECT_MEMORY_LEN: usize = EffectMemorySlot::Count as usize;
 
+/// FT2's arpeggio table (mirrors `arpTab` in ft2play/tables.c). The
+/// first 16 entries are the clean `0,1,2` cycle Protracker uses; the
+/// rest are the actual byte values that FT2.08/.09 read from out-of-
+/// bounds memory when the song's speed exceeded 16. Reproducing the
+/// overflow is what lets Arpeggio.xm (speed=19) match ft2play tick-
+/// for-tick — without it the cycle becomes plain `tick % 3`.
+const FT2_ARP_TAB: [u8; 256] = [
+    0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0,
+    0x00, 0x18, 0x31, 0x4A, 0x61, 0x78, 0x8D, 0xA1, 0xB4, 0xC5, 0xD4, 0xE0, 0xEB, 0xF4, 0xFA, 0xFD,
+    0xFF, 0xFD, 0xFA, 0xF4, 0xEB, 0xE0, 0xD4, 0xC5, 0xB4, 0xA1, 0x8D, 0x78, 0x61, 0x4A, 0x31, 0x18,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x03, 0x00, 0x02, 0x00, 0x04, 0x00, 0x00,
+    0x00, 0x05, 0x06, 0x00, 0x00, 0x07, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x04, 0x05, 0x00, 0x00,
+    0x0B, 0x00, 0x0A, 0x02, 0x01, 0x03, 0x04, 0x07, 0x00, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x79, 0x02, 0x00, 0x00, 0x8F, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46, 0x4F, 0x52, 0x4D, 0x49, 0x4C, 0x42, 0x4D, 0x42, 0x4D,
+];
+
 pub struct ChannelState {
     pub voice_idx:                      Option<usize>, // Which voice is currently "active" for this channel
     pub last_instrument:                usize,
@@ -814,6 +839,21 @@ pub struct ChannelState {
     /// new volume-affecting command (per OpenMPT TremorRecover.xm:
     /// "volume commands should be able to override this effect").
     pub(crate) tremor_active:                  bool,
+    /// XM: mirror of the live voice's `volume.volume` (FT2's `ch->realVol`).
+    /// Survives voice death so that a note-without-instrument trigger
+    /// at row N can pick up the running channel vol even when the
+    /// previous voice has fully faded out and been returned to the pool
+    /// (`channel.voice_idx = None`). Updated at end-of-tick by the XM
+    /// backend after vol-col / effect dispatch.
+    pub(crate) real_vol:                       u8,
+    /// XM: set by vol-col Fx (porta-to-note in volume column) on a row,
+    /// checked by eff-col 3xx/5xx so its "set portaSpeed" update is
+    /// suppressed. FT2's `getNewNote` returns early after vol-col Fx,
+    /// so eff-col 3 never overwrites `portaSpeed`. Without this gate,
+    /// row `vol=F1, eff=31` ends up with portaSpeed=4 (from eff-col 31)
+    /// instead of 64 (from vol-col F1). Reset at the start of every
+    /// channel iter in `init_channel_iter`.
+    pub(crate) xm_vol_col_porta_this_row:      bool,
 }
 
 impl ChannelState {
@@ -851,6 +891,8 @@ impl ChannelState {
             loop_row: 0,
             loop_count: 0,
             frequency_scale: 1.0,
+            real_vol: 64,
+            xm_vol_col_porta_this_row: false,
         }
     }
 
@@ -1039,6 +1081,52 @@ impl ChannelState {
                 _ => {}
             }
         }
+    }
+
+    /// FT2's quirky arpeggio: instead of a clean `tick % 3` cycle,
+    /// indexes a 256-byte table by the falling timer (`speed - tick`).
+    /// At small speeds (<=15) the first 15 entries `0,1,2,0,1,2,...`
+    /// reproduce the PT-style cycle, but the table's "buggy overflow"
+    /// region (added in FT2.08/.09 from out-of-bounds reads of the
+    /// playback binary itself) is what plays back at speeds > 15.
+    /// Without this, Arpeggio.xm (which sets speed=19 via F13) shows a
+    /// completely different per-tick pattern from ft2play. See
+    /// `/tmp/ft2play/tables.c::arpTab` and `pmp_main.c::arp`.
+    ///
+    /// arpTab entry semantics: 0 → base, 1 → high nibble (param>>4),
+    /// anything else → low nibble (param & 0x0F).
+    pub(crate) fn arpeggio_xm(&mut self, tick: u32, speed: u32, first_row_tick: bool, x: u8, y: u8) {
+        // FT2 only skips arp at the *readNewNote* tick — the literal
+        // first tick of a fresh row, where getNewNote sets state but
+        // doEffects doesn't run. On a pattern-delay repeat's first
+        // tick, tickZero is still true but readNewNote is false (FT2:
+        // `readNewNote = tickZero && pattDelTime2 == 0`); doEffects
+        // fires with `song.timer == tempo`, so arpTab[tempo] picks the
+        // first value. Gating on `first_row_tick` mirrors this. Test:
+        // Arpeggio.xm row 3 (EEx pattern-delay) at speed=17 — without
+        // this our period reset to base at the repeat's tick=0 while
+        // ft2play applied the low-nibble offset.
+        if first_row_tick {
+            self.period_shift = 0;
+            return;
+        }
+        // FT2 indexes arpTab with the FALLING timer value. Internal tick
+        // (0..speed-1 ascending) maps to timer (speed..1 descending) as
+        // timer = speed - internal_tick. With our `tick` numbering
+        // matching FT2's `tempo - timer`, arpTab[timer] = arpTab[speed - tick].
+        let idx = (speed.saturating_sub(tick) & 0xFF) as usize;
+        let entry = FT2_ARP_TAB[idx];
+        let note = match entry {
+            0 => { self.period_shift = 0; return; }
+            1 => x,
+            _ => y,
+        };
+        // Linear-period semitone shift: -note * 64. Amiga-mode XM uses
+        // the same convention here since FT2's relocateTon for linear
+        // resolves to a constant -64 per semitone, and Amiga XM is rare
+        // enough that the same approximation is acceptable until a
+        // real Amiga module surfaces an audible deviation.
+        self.period_shift = -((note as i16) * 64);
     }
 
     pub(crate) fn porta_up(&mut self, song_type: SongType, first_tick: bool, amount: u8) {

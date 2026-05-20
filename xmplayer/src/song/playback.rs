@@ -522,6 +522,7 @@ impl Song {
                             instruments: &self.song_data.instruments,
                             frequency_tables: self.frequency_tables,
                             tick: self.tick,
+                            speed: self.speed,
                             row,
                             first_tick,
                             first_row_tick: first_tick,
