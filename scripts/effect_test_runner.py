@@ -153,15 +153,41 @@ def iter_our_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], OurR
     single line per tick reflecting post-row state. To get an
     apples-to-apples diff we collapse contiguous OUR lines with the
     same key, keeping the LAST one (= post-row).
+
+    Stops iteration at song-loop boundary: when ord wraps back to 0
+    after a strictly higher ord was seen, OR when row regresses on
+    the same ord by more than a few positions (allowing E6x pattern
+    loops, which jump backward by a handful of rows). Without this,
+    short songs that wrap during the `--end-time` window produce
+    second-pass entries that mis-align with FT2's first-pass entries
+    via the diff's FIFO (e.g. retrig.xm: our voice ends on row 7,
+    no dump on row 9 primary, but song-loop replay does dump).
     """
     cur_key: Optional[Tuple[int, int, int, int]] = None
     cur_row: Optional[OurRow] = None
+    # Stop iteration after a clear song-loop wrap: track the highest
+    # (ord, row) tuple seen and break when a new line jumps backward
+    # by more than 16 rows on the same/lower ord. Pattern loops (E6x)
+    # rarely jump back by that much; song wraps land on row 0 of the
+    # repS order. Without this gate, fixtures whose voices end before
+    # song-end (e.g. retrig.xm ch5: inst 2 sample is non-looping,
+    # 60 ms long) produce stretched dump traces where our missing
+    # primary-pass entries mis-align with FT2's via the FIFO.
+    max_ord_row = (-1, -1)
     with open(path, "r", errors="replace") as f:
         for line in f:
             m = OUR_RE.match(line)
             if not m:
                 continue
             ord_, row, tick, ch, _note, period, vraw = (int(x) for x in m.groups())
+            cur_ord_row = (ord_, row)
+            if max_ord_row > (-1, -1) and (
+                ord_ < max_ord_row[0]
+                or (ord_ == max_ord_row[0] and row + 16 < max_ord_row[1])
+            ):
+                break
+            if cur_ord_row > max_ord_row:
+                max_ord_row = cur_ord_row
             key = (ord_, row, tick, ch)
             if cur_key is None or key == cur_key:
                 cur_key = key
@@ -193,12 +219,25 @@ def iter_ft2_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], FtRo
     """
     prev_row: Optional[int] = None
     prev_ord: Optional[int] = None
+    max_ord_row = (-1, -1)
     with open(path, "r", errors="replace") as f:
         for line in f:
             m = FT2_RE.match(line)
             if not m:
                 continue
             ord_, row, tick, ch, period, vraw = (int(x) for x in m.groups())
+            # Stop on song-loop wrap: see `iter_our_trace` for the same
+            # backward-jump heuristic. Both engines wrap the song
+            # naturally when `--end-time` exceeds song length; we want
+            # to compare only the first pass.
+            cur_ord_row = (ord_, row)
+            if max_ord_row > (-1, -1) and (
+                ord_ < max_ord_row[0]
+                or (ord_ == max_ord_row[0] and row + 16 < max_ord_row[1])
+            ):
+                break
+            if cur_ord_row > max_ord_row:
+                max_ord_row = cur_ord_row
             fixed_row = row
             fixed_ord = ord_
             if (
