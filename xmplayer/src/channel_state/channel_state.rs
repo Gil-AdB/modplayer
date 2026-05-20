@@ -123,6 +123,13 @@ pub struct VibratoState {
     /// resolution). Wraps via u8 overflow.
     pub pos:    u8,
     pub fine:   bool,
+    /// Shift FT2 displays at the readNewNote tick of a row, when
+    /// `doEffects` doesn't run and `vibrato2` doesn't recompute
+    /// `outPeriod`. Cached at the END of every non-first-tick compute
+    /// so it survives the row boundary; returned by `cached_shift()`.
+    /// Reset to 0 by `trigger_note` on `vibrato_retrig` so a fresh
+    /// note doesn't inherit a stale shift from a prior vibrato cycle.
+    pub last_shift: i32,
 }
 
 impl VibratoState {
@@ -133,9 +140,19 @@ impl VibratoState {
             depth: 0,
             pos: 0,
             fine: false,
+            last_shift: 0,
         }
     }
 
+    /// Return the cached shift from the previous `get_frequency_shift`
+    /// call without advancing or recomputing. Used at FT2's
+    /// readNewNote tick (our tick 0 of a fresh row) to preserve the
+    /// shift the last `doEffects` tick applied — FT2's
+    /// `vibrato2` runs in doEffects only, so at readNewNote
+    /// `outPeriod` keeps its tick-5 value.
+    pub(crate) fn cached_shift(&self) -> i32 {
+        self.last_shift
+    }
 
     pub(crate) fn get_frequency_shift(&mut self, wave_control: WaveControl) -> i32 {
         // pos (0..255) → FT2 logical position (0..63) by divide-by-4.
@@ -155,7 +172,11 @@ impl VibratoState {
         // Fine vibrato (S3M Uxy / IT u) gets an extra >>2 for 1/4 swing.
         let shift_amt = if self.fine { 7 } else { 5 };
         let s = delta >> shift_amt;
-        if in_negative_half { -s } else { s }
+        let signed = if in_negative_half { -s } else { s };
+        // Stash for `cached_shift()` — at FT2's readNewNote tick the
+        // shift persists from this last apply without recomputing.
+        self.last_shift = signed;
+        signed
     }
 
     pub(crate) fn next_tick(&mut self) {

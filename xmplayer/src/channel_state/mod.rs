@@ -464,7 +464,15 @@ impl Voice {
             self.vibrato_envelope_state.reset(&instrument.vibrato_envelope);
         }
 
-        if vibrato_retrig { self.vibrato_state.pos = 0; }
+        if vibrato_retrig {
+            self.vibrato_state.pos = 0;
+            // Reset cached shift too, so a fresh trigger at row N+1
+            // tick 0 doesn't inherit the prior note's vibrato shift
+            // via `cached_shift()`. Without this, the readNewNote
+            // tick of a retriggered note would display the dying
+            // voice's last vibrato offset.
+            self.vibrato_state.last_shift = 0;
+        }
         if tremolo_retrig { self.tremolo_state.pos = 0; }
     }
 }
@@ -940,7 +948,27 @@ impl ChannelState {
 
     pub(crate) fn update_frequency_voice(&mut self, voice: &mut Voice, rate: f32, semitone: bool, frequency_tables: &AudioTables) {
         let vib_shift = if self.vibrato_active_this_row {
-            voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform))
+            // FT2 quirk: at the readNewNote tick (tick 0 of a fresh
+            // row, not pattern-delay repeat), `vibrato2` doesn't run
+            // — outPeriod keeps its tick-(speed-1) value. Mirror this
+            // by returning the cached shift from the previous tick's
+            // apply. Without this, our row-N+1 tick 0 reads a shift
+            // computed from the just-post-advanced pos (one step ahead
+            // of FT2), test fixture VibratoWaveforms.xm row 2 tick 0
+            // diverged by exactly one vibrato step.
+            //
+            // Pattern-delay repeats: those run doEffects at tick 0
+            // (FT2 readNewNote = tickZero && pattDelTime2==0), so
+            // vibrato2 DOES run there and we want the fresh compute.
+            // We approximate by checking DUMP_CTX_TICK==0 only; the
+            // pattern-delay-with-vibrato edge case stays as a known
+            // small divergence until proven audible.
+            let tick = DUMP_CTX_TICK.load(Ordering::Relaxed);
+            if tick == 0 {
+                voice.vibrato_state.cached_shift()
+            } else {
+                voice.vibrato_state.get_frequency_shift(WaveControl::from(self.vibrato_waveform))
+            }
         } else { 0 };
         self.frequency = self.note.frequency(self.period_shift, vib_shift, semitone, frequency_tables) * self.frequency_scale + voice.frequency_shift;
         voice.set_frequency(self.frequency, rate);
