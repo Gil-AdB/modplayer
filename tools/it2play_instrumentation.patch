@@ -1,0 +1,64 @@
+diff --git a/it_music.c b/it_music.c
+--- a/it_music.c
++++ b/it_music.c
+@@ -1947,6 +1947,60 @@
+ 		UpdateInstruments();
+ 	else
+ 		UpdateSamples();
++
++	// === instrumentation hook (modplayer harness) ===
++	// Per-tick state dump for one HOST channel, gated by IT2_DUMP_CH env
++	// var. Order/Row/Tick prefix matches OUR [OUR] state_dump so a
++	// per-tick diff aligns line-for-line. IT2's tick-axis convention:
++	//   * Song.CurrentTick counts DOWN from CurrentSpeed to 1 inside
++	//     UpdateData(): just-processed tick T (OUR axis) corresponds
++	//     to CurrentTick == CurrentSpeed - T (so T=0 == CurrentTick =
++	//     CurrentSpeed; T = CurrentSpeed-1 == CurrentTick = 1).
++	//   * OUR's tick=0 = "just read pattern row data". UpdateNoteData()
++	//     is called from UpdateData()'s CurrentTick==0 branch, which
++	//     fires when CurrentTick reaches 0 then is immediately reset
++	//     to CurrentSpeed -- so the very tick that we've finished is
++	//     OUR's tick=0 of the NEW row. Hence: emit OUR-tick =
++	//     CurrentSpeed - CurrentTick.
++	// Snapshot the order/row AFTER UpdateData() so they reflect the
++	// row that was just processed (UpdateData advances Process/Current
++	// Order+Row before calling UpdateNoteData).
++	//
++	// IT period semantics: slaveChn_t::Frequency is a HZ value (not an
++	// Amiga-style period). It's reported here as "period=" for regex
++	// regularity with the FT2/PT2/ST3 traces -- downstream comparison
++	// against OUR's period field needs format-specific reconciliation.
++	static int s_dump_ch = -2; // -2 = not yet read; -1 = disabled
++	if (s_dump_ch == -2)
++	{
++		const char *env = getenv("IT2_DUMP_CH");
++		s_dump_ch = (env != NULL) ? atoi(env) : -1;
++	}
++	if (s_dump_ch >= 0 && s_dump_ch < MAX_HOST_CHANNELS)
++	{
++		const hostChn_t *hc = &hChn[s_dump_ch];
++		const slaveChn_t *sc2 = (const slaveChn_t *)hc->SlaveChnPtr;
++		const int our_tick = (int)Song.CurrentSpeed - (int)Song.CurrentTick;
++		const int period = (sc2 != NULL) ? (int)sc2->Frequency : 0;
++		const int vol    = (sc2 != NULL) ? (int)sc2->Vol      : 0;
++		const int sIns   = (sc2 != NULL) ? (int)sc2->Ins      : 0;
++		const int sSmp   = (sc2 != NULL) ? (int)sc2->Smp      : 0;
++		const int sNote  = (sc2 != NULL) ? (int)sc2->Note     : 0;
++		const unsigned sFlg = (sc2 != NULL) ? (unsigned)sc2->Flags : 0u;
++		fprintf(stderr,
++			"[IT2] ord=%d row=%d tick=%d ch=%d ins=%d samp=%d "
++			"note=%d period=%d volume=%d chnVol=%d chnPan=%u "
++			"cmd=0x%02x cmdVal=0x%02x volCmd=0x%02x volCmdVal=0x%02x "
++			"sFlags=0x%04x\n",
++			(int)Song.CurrentOrder, (int)Song.CurrentRow, our_tick,
++			s_dump_ch, sIns, sSmp, sNote, period, vol,
++			(int)hc->ChnVol, (unsigned)hc->ChnPan,
++			(unsigned)hc->Cmd, (unsigned)hc->CmdVal,
++			(unsigned)hc->VolCmd, (unsigned)hc->VolCmdVal,
++			sFlg);
++		fflush(stderr);
++	}
++	// === end instrumentation ===
+ }
+ 
+ void Music_FillAudioBuffer(int16_t *buffer, int32_t numSamples)

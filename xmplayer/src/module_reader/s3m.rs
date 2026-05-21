@@ -122,10 +122,28 @@
         // marks the channel disabled, 0xFF is an unused slot. Only allocate
         // engine channel slots for *sample* channels; everything else gets
         // channel_map[i] = 255, which the pattern reader skips at l. 268.
+        //
+        // ST3's channel-mixer state (`_zchn[]` in st3play) is indexed by
+        // the channel-TYPE byte itself, not by the file's slot column:
+        // see digread.c::getnote1 line 227, `tmpChannel = song.header.
+        // channel[dat & 0x1F]; ... ch = &song._zchn[tmpChannel]`. So
+        // file-slot N's pattern data routes to engine channel
+        // (channel_data[N] & 0x0F), and two file slots that happen to
+        // share the same type byte legitimately share an engine voice
+        // (later writes overwrite the earlier in `donotes`'s row pass).
+        // We previously packed file slots sequentially (slot N -> ch N),
+        // which mis-aligned every multi-channel S3M against st3play's
+        // axis — e.g. ascent.s3m enabled types [0,8,1,9,2,10,3,11,4]
+        // got packed to engine ch [0..8] instead of {0,1,2,3,4,8,9,10,11}.
+        // The bilateral runner's per-channel diff then compared
+        // unrelated voices.
         for i in 0..channel_data.len() {
             if channel_data[i] < 16 {
-                channel_map[i] = num_channels;
-                num_channels += 1;
+                let engine_ch = channel_data[i] & 0x0F;
+                channel_map[i] = engine_ch;
+                if (engine_ch as u16) + 1 > num_channels {
+                    num_channels = (engine_ch as u16) + 1;
+                }
             }
         }
         // Adlib-only / fully-disabled S3M files (e.g. the OpenMPT test

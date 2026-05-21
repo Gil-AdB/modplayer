@@ -31,6 +31,14 @@ if ! grep -q "renderOutPath" "$IT2_SRC/it2play/src/it2play.c"; then
     patch -d "$IT2_SRC" -p1 < "$REPO/tools/it2play_cli_render.patch"
 fi
 
+# Apply the per-tick instrumentation patch (idempotent: skip if grep hits).
+# Adds an IT2_DUMP_CH-gated `[IT2]` stderr trace at end of Update() in
+# it_music.c. Used by scripts/effect_test_runner.py for per-channel
+# us-vs-it2play diff.
+if ! grep -q "IT2_DUMP_CH" "$IT2_SRC/it_music.c"; then
+    patch -d "$IT2_SRC" -p1 < "$REPO/tools/it2play_instrumentation.patch"
+fi
+
 # Replicate the upstream macOS-arm recipe but link against Homebrew SDL2
 # instead of the framework (same approach as st3play-cli).
 cd "$IT2_SRC"

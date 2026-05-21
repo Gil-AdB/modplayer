@@ -68,7 +68,7 @@ HAS_TRACE = {
     ".xm":  True,
     ".mod": True,
     ".s3m": True,
-    ".it":  False,
+    ".it":  True,
 }
 
 OUR_RE = re.compile(
@@ -96,11 +96,25 @@ ST3_RE = re.compile(
     r"\[ST3\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+).*?"
     r"period=(-?\d+) volume=(-?\d+)"
 )
+# it2play trace format (tools/it2play_instrumentation.patch).
+# IT's `period` field here is actually slaveChn_t::Frequency — a Hz
+# value, NOT an Amiga-style period like S3M/MOD/XM. OUR's `period`
+# field is a period-table index. They don't compare directly without
+# format-specific reconciliation; the diff will surface as a units
+# mismatch on every IT tick until that calibration lands. The runner
+# pipeline (regex / FIFO / ord-offset) is otherwise wired identically.
+# IT2's order is 0-indexed (Song.CurrentOrder), matching OUR's
+# song_position — no ord_offset needed.
+IT2_RE = re.compile(
+    r"\[IT2\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+).*?"
+    r"period=(-?\d+) volume=(-?\d+)"
+)
 # Per-canonical trace regex used by `iter_ref_trace` dispatch.
 REF_RE = {
     ".xm":  FT2_RE,
     ".mod": PT2_RE,
     ".s3m": ST3_RE,
+    ".it":  IT2_RE,
 }
 
 
