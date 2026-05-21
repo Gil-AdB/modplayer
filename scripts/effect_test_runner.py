@@ -67,7 +67,7 @@ DUMP_ENV = {
 HAS_TRACE = {
     ".xm":  True,
     ".mod": True,
-    ".s3m": False,
+    ".s3m": True,
     ".it":  False,
 }
 
@@ -88,10 +88,19 @@ PT2_RE = re.compile(
     r"\[PT2\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+).*?"
     r"period=(-?\d+) volume=(-?\d+)"
 )
+# st3play trace format (tools/st3play_instrumentation.patch).
+# S3M's `aspd` is the playing period (Amiga-like units), `avol` the
+# channel volume (0..64). Order/row/tick captured BEFORE st3play's
+# post-tick row-advance so the axis matches OUR's tick=0=readNewNote.
+ST3_RE = re.compile(
+    r"\[ST3\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+).*?"
+    r"period=(-?\d+) volume=(-?\d+)"
+)
 # Per-canonical trace regex used by `iter_ref_trace` dispatch.
 REF_RE = {
     ".xm":  FT2_RE,
     ".mod": PT2_RE,
+    ".s3m": ST3_RE,
 }
 
 
@@ -218,7 +227,7 @@ def iter_our_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], OurR
         yield cur_key, cur_row
 
 
-def iter_ref_trace(path: Path, regex: re.Pattern, transition_fixup: bool) -> Iterator[Tuple[Tuple[int, int, int, int], FtRow]]:
+def iter_ref_trace(path: Path, regex: re.Pattern, transition_fixup: bool, ord_offset: int = 0) -> Iterator[Tuple[Tuple[int, int, int, int], FtRow]]:
     """Generic canonical-trace iterator. `regex` extracts (ord, row,
     tick, ch, period, vraw) groups in order. `transition_fixup`
     controls FT2-style row-transition re-keying.
@@ -248,6 +257,10 @@ def iter_ref_trace(path: Path, regex: re.Pattern, transition_fixup: bool) -> Ite
             if not m:
                 continue
             ord_, row, tick, ch, period, vraw = (int(x) for x in m.groups())
+            # Per-canonical order-numbering offset. st3play's np_ord is
+            # 1-indexed (incremented before pattern lookup); our
+            # `song_position` is 0-indexed. Subtract 1 to align axes.
+            ord_ += ord_offset
             # Stop on song-loop wrap: see `iter_our_trace` for the same
             # backward-jump heuristic. Both engines wrap the song
             # naturally when `--end-time` exceeds song length; we want
@@ -309,11 +322,13 @@ def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int,
     # Build canonical index. Keep insertion-order per key.
     # FT2 needs the row-transition fixup (getNextPos before dump);
     # pt2-clone's `currRow` is already the visible-current row at
-    # dump time, so MOD skips the fixup.
+    # dump time, so MOD skips the fixup. st3play uses 1-indexed
+    # np_ord; subtract 1 to align with our 0-indexed song_position.
     regex = REF_RE[ref_ext]
     transition_fixup = (ref_ext == ".xm")
+    ord_offset = -1 if ref_ext == ".s3m" else 0
     ref_queues: Dict[Tuple[int, int, int, int], list] = {}
-    for k, v in iter_ref_trace(ref_path, regex, transition_fixup):
+    for k, v in iter_ref_trace(ref_path, regex, transition_fixup, ord_offset):
         ref_queues.setdefault(k, []).append(v)
 
     # MOD: our internal period is stored at 4× the raw Amiga period

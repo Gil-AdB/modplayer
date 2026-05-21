@@ -67,6 +67,11 @@ impl ModuleBackend for ItBackend {
         let first_tick = *r.tick == 0;
         let instruments = &r.song_data.instruments;
 
+        // Context for the OUR_DUMP_CH-gated `[OUR]` debug dump.
+        crate::channel_state::DUMP_CTX_ORD.store(*r.song_position as i32, std::sync::atomic::Ordering::Relaxed);
+        crate::channel_state::DUMP_CTX_ROW.store(*r.row as i32, std::sync::atomic::Ordering::Relaxed);
+        crate::channel_state::DUMP_CTX_TICK.store(*r.tick as i32, std::sync::atomic::Ordering::Relaxed);
+
         // Deferred stale-pointer cleanup — see xm.rs's process_tick for
         // the rationale. alloc_voice's fallback paths hand us slots
         // whose previous owner still has a stale channels[old].voice_idx
@@ -401,6 +406,8 @@ impl ModuleBackend for ItBackend {
                 if channel.vibrato_active_this_row && !first_tick {
                     channel.advance_vibrato_pos(v);
                 }
+            } else {
+                channel.dump_idle(i);
             }
         }
 

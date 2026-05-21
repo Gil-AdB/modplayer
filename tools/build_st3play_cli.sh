@@ -31,6 +31,16 @@ if ! grep -q "renderOutPath" "$ST3_SRC/st3play/src/st3play.c"; then
     patch -d "$ST3_SRC" -p1 < "$REPO/tools/st3play_cli_render.patch"
 fi
 
+# Apply the per-tick state-dump patch in digread.c. Sets up an
+# ST3_DUMP_CH-gated stderr trace ([ST3] ord/row/tick/ch/ins/note/
+# period/volume/cmd/info/apan). Cross-engine diff target for our
+# [OUR] state_dump output — same Order/Row/Tick axis (with our
+# 0-indexed ord = st3play's 1-indexed np_ord minus 1, handled in
+# the runner). See tools/st3play_instrumentation.patch.
+if ! grep -q "ST3_DUMP_CH" "$ST3_SRC/digread.c"; then
+    patch -d "$ST3_SRC" -p1 < "$REPO/tools/st3play_instrumentation.patch"
+fi
+
 # st3play's make scripts are platform-specific; replicate the macOS-arm
 # recipe here but link against Homebrew SDL2 instead of the framework.
 cd "$ST3_SRC"

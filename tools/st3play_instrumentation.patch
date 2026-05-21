@@ -1,0 +1,64 @@
+diff --git a/digread.c b/digread.c
+index 6c0f1e9..ea3e5a5 100644
+--- a/digread.c
++++ b/digread.c
+@@ -16,11 +16,24 @@
+ static uint8_t getnote1(void);
+ static void donotes(void);
+ 
++#include <stdio.h>
++#include <stdlib.h>
++
+ void dorow(void) // 8bb: replayer ticker
+ {
+ 	if (song.np_pat == 255) // 8bb: bugfix if there are no patterns in the song!
+ 		return;
+ 
++	// Snapshot row/tick BEFORE st3play's `musiccount++` and row-advance
++	// happen below, so the instrumentation dump at end of dorow can
++	// emit the (ord, row, tick) tuple that matches OUR's convention
++	// (tick=0 = read-new-note moment). Without this, ST3's trace
++	// reports tick=K+1 for what OUR calls tick=K — the FT2-style
++	// getNextPos-before-dump quirk.
++	const int s_dump_ord_pre = (int)song.np_ord;
++	const int s_dump_row_pre = (int)song.np_row;
++	const int s_dump_tick_pre = (int)song.musiccount;
++
+ 	song.patmusicrand = (((song.patmusicrand * 0xCDEF) >> 16) + 0x1727) & 0xFFFF;
+ 
+ 	if (song.musiccount == 0)
+@@ -74,6 +87,34 @@ void dorow(void) // 8bb: replayer ticker
+ 
+ 		song.musiccount = 0;
+ 	}
++
++	// === instrumentation hook (modplayer harness) ===
++	// Per-tick state dump for one channel, gated by ST3_DUMP_CH env var.
++	// Order/Row/Tick prefix matches OUR [OUR] state_dump so a per-tick
++	// diff aligns line-for-line. S3M channel state: aspd is the playing
++	// period, avol is the channel volume (0..64), cmd/info are the
++	// active effect.
++	static int s_dump_ch = -2; // -2 = not yet read; -1 = disabled
++	if (s_dump_ch == -2)
++	{
++		const char *env = getenv("ST3_DUMP_CH");
++		s_dump_ch = (env != NULL) ? atoi(env) : -1;
++	}
++	if (s_dump_ch >= 0 && s_dump_ch < 32)
++	{
++		const zchn_t *c = &song._zchn[s_dump_ch];
++		fprintf(stderr,
++			"[ST3] ord=%d row=%d tick=%d ch=%d ins=%d note=%d "
++			"period=%d volume=%d cmd=0x%02x info=0x%02x apan=%u\n",
++			s_dump_ord_pre, s_dump_row_pre, s_dump_tick_pre,
++			s_dump_ch,
++			(int)c->ins, (int)c->note,
++			(int)c->aspd, (int)c->avol,
++			(unsigned)c->cmd, (unsigned)c->info,
++			(unsigned)c->apanpos);
++		fflush(stderr);
++	}
++	// === end instrumentation ===
+ }
+ 
+ int16_t neworder(void) // 8bb: rewritten to be more safe

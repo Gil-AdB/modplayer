@@ -17,6 +17,15 @@ impl ModuleBackend for S3MBackend {
     fn process_tick(&mut self, r: &mut SongPlaybackResources) {
         let first_tick = *r.tick == 0;
         let instruments = &r.song_data.instruments;
+
+        // Context for the OUR_DUMP_CH-gated `[OUR]` debug dump. Mirrors
+        // xm.rs / mod_.rs — without this S3M dumps had ord=-1 row=-1
+        // tick=-1 and the bilateral runner couldn't align with the
+        // st3play `[ST3]` trace.
+        crate::channel_state::DUMP_CTX_ORD.store(*r.song_position as i32, std::sync::atomic::Ordering::Relaxed);
+        crate::channel_state::DUMP_CTX_ROW.store(*r.row as i32, std::sync::atomic::Ordering::Relaxed);
+        crate::channel_state::DUMP_CTX_TICK.store(*r.tick as i32, std::sync::atomic::Ordering::Relaxed);
+
         // Deferred stale-pointer cleanup — see xm.rs's process_tick for
         // the rationale.
         let mut stale_clears: Vec<(usize, usize)> = Vec::new();
@@ -247,6 +256,11 @@ impl ModuleBackend for S3MBackend {
                 if channel.vibrato_active_this_row && !first_tick {
                     channel.advance_vibrato_pos(v);
                 }
+            } else {
+                // Idle channel — dump stub so runner's per-key FIFO
+                // can align with st3play's unconditional per-channel
+                // trace. See ChannelState::dump_idle for the rationale.
+                channel.dump_idle(i);
             }
         }
 
