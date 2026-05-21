@@ -73,7 +73,7 @@ HAS_TRACE = {
 
 OUR_RE = re.compile(
     r"\[OUR\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+) note=(-?\d+) "
-    r"period=(-?\d+).*?vraw=(-?\d+)"
+    r"period=(-?\d+) vib_shift=(-?\d+) period_shift=(-?\d+).*?vraw=(-?\d+)"
 )
 FT2_RE = re.compile(
     r"\[FT2\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+).*?"
@@ -149,8 +149,10 @@ def detect_channels(path: Path) -> int:
 
 @dataclass
 class OurRow:
-    period: int
+    period: int        # effective period = note + period_shift + vib_shift
     vraw: int
+    period_shift: int  # arp/glissando contribution (negative = pitch up)
+    vib_shift: int     # vibrato contribution
 
 
 @dataclass
@@ -193,7 +195,7 @@ def iter_our_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], OurR
             m = OUR_RE.match(line)
             if not m:
                 continue
-            ord_, row, tick, ch, _note, period, vraw = (int(x) for x in m.groups())
+            ord_, row, tick, ch, _note, period, vib_shift, period_shift, vraw = (int(x) for x in m.groups())
             cur_ord_row = (ord_, row)
             if max_ord_row > (-1, -1) and (
                 ord_ < max_ord_row[0]
@@ -205,13 +207,13 @@ def iter_our_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], OurR
             key = (ord_, row, tick, ch)
             if cur_key is None or key == cur_key:
                 cur_key = key
-                cur_row = OurRow(period=period, vraw=vraw)
+                cur_row = OurRow(period=period, vraw=vraw, period_shift=period_shift, vib_shift=vib_shift)
                 continue
             # New key — flush previous.
             assert cur_row is not None
             yield cur_key, cur_row
             cur_key = key
-            cur_row = OurRow(period=period, vraw=vraw)
+            cur_row = OurRow(period=period, vraw=vraw, period_shift=period_shift, vib_shift=vib_shift)
     if cur_key is not None and cur_row is not None:
         yield cur_key, cur_row
 
@@ -316,9 +318,21 @@ def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int,
 
     # MOD: our internal period is stored at 4× the raw Amiga period
     # for sub-step slide resolution; pt2-clone reports the raw value.
-    # Scale our period down before comparing. XM/S3M/IT use their
-    # respective period spaces directly.
+    # Scale our period down before comparing. Also: pt2-clone's dump
+    # emits `ch->n_period` (the channel's base note period, BEFORE
+    # arp/vibrato shifts are applied — pt2 writes the shifted period
+    # directly to the Paula register without touching n_period). Our
+    # dump emits the effective period `note + period_shift + vib_shift`.
+    # So for MOD we subtract our shifts and divide by 4 to get the
+    # same axis as pt2. XM/S3M/IT canonicals (FT2/ST3/IT2) dump the
+    # post-shift finalPeriod, which matches our effective period
+    # directly. Tests:
+    #   ArpWraparound.mod ch0: our effective period swings by ±25
+    #   period units across arp ticks; pt2's n_period stays at 113.
+    #   With this subtraction both reduce to 113. Without it we'd
+    #   report Δ=25 per arp tick as a spurious bug.
     our_period_div = 4 if ref_ext == ".mod" else 1
+    strip_shifts = (ref_ext == ".mod")
 
     compared = 0
     intersect = 0
@@ -340,9 +354,12 @@ def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int,
         if not triggered:
             continue
         intersect += 1
-        # period: +-1 tolerance, optionally scaled.
+        # period: +-1 tolerance, optionally scaled / shift-stripped.
         compared += 1
-        our_period = our_row.period // our_period_div if our_period_div != 1 else our_row.period
+        our_period_raw = our_row.period
+        if strip_shifts:
+            our_period_raw -= our_row.period_shift + our_row.vib_shift
+        our_period = our_period_raw // our_period_div if our_period_div != 1 else our_period_raw
         if abs(our_period - ref_row.period) > 1:
             if first_div is None:
                 first_div = Divergence(
