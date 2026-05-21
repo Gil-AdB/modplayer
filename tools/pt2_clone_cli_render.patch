@@ -1,8 +1,45 @@
 diff --git a/src/pt2_main.c b/src/pt2_main.c
-index aa251a2..f47ca18 100644
+index aa251a2..fc6f944 100644
 --- a/src/pt2_main.c
 +++ b/src/pt2_main.c
-@@ -348,6 +348,27 @@ int main(int argc, char *argv[])
+@@ -315,12 +315,17 @@ int main(int argc, char *argv[])
+ 	statusAllRight();
+ 
+ 	// load a .MOD from the command arguments if passed (also ignore OS X < 10.9 -psn argument on double-click launch)
++	// `--render` is a headless CLI mode: skip the modPlay() call so
++	// the speakers don't pipe out the song while mod2WavRender runs
++	// in parallel. modplayer's harness invokes pt2-clone-cli many
++	// times per test, and audio leaking out across those is loud.
++	const bool render_mode = (argc >= 4 && strcmp(argv[2], "--render") == 0);
+ 	if ((argc >= 2 && argv[1][0] != '\0') && (argc != 2 || strncmp(argv[1], "-psn_", 5)))
+ 	{
+ 		loadModFromArg(argv[1]);
+ 
+-		// play song
+-		if (song->loaded)
++		// play song (interactive only — skip when rendering headlessly)
++		if (song->loaded && !render_mode)
+ 		{
+ 			editor.playMode = PLAY_MODE_NORMAL;
+ 			modPlay(DONT_SET_PATTERN, 0, DONT_SET_ROW);
+@@ -338,9 +343,14 @@ int main(int argc, char *argv[])
+ 	fillToVuMetersBgBuffer();
+ 	updateCursorPos();
+ 
+-	SDL_ShowWindow(video.window);
++	// Headless render mode: keep the SDL window hidden. The GUI
++	// initialization above creates the window object, but never
++	// showing it keeps the harness clean — no flashing windows
++	// when the runner loops over many MOD fixtures.
++	if (!render_mode)
++		SDL_ShowWindow(video.window);
+ 
+-	if (config.startInFullscreen)
++	if (config.startInFullscreen && !render_mode)
+ 		toggleFullscreen();
+ 
+ 	changePathToDesktop(); // change path to desktop now
+@@ -348,6 +358,27 @@ int main(int argc, char *argv[])
  
  	SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
  

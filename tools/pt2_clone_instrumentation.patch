@@ -1,0 +1,47 @@
+diff --git a/src/pt2_replayer.c b/src/pt2_replayer.c
+index 9a285b3..a92d040 100644
+--- a/src/pt2_replayer.c
++++ b/src/pt2_replayer.c
+@@ -7,6 +7,8 @@
+ 
+ #include <stdint.h>
+ #include <stdbool.h>
++#include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include "pt2_audio.h"
+ #include "pt2_helpers.h"
+@@ -1495,6 +1497,33 @@ bool tickReplayer(void)
+ 		pointerSetModeThreadSafe(POINTER_MODE_IDLE, true);
+ 	}
+ 
++	// === instrumentation hook (modplayer harness) ===
++	// Per-tick state dump for one channel, gated by PT2_DUMP_CH env var.
++	// Order/Row/Tick prefix matches OUR [OUR] state_dump so per-tick
++	// diff aligns line-for-line. Fields chosen to map onto MOD's
++	// minimal channel state (no envelopes, no auto-vib): the playing
++	// period, channel volume, current sample number, packed effect+param.
++	static int s_dump_ch = -2; // -2 = not yet read; -1 = disabled
++	if (s_dump_ch == -2)
++	{
++		const char *env = getenv("PT2_DUMP_CH");
++		s_dump_ch = (env != NULL) ? atoi(env) : -1;
++	}
++	if (s_dump_ch >= 0 && s_dump_ch < 4 /* PAULA_VOICES */ && song != NULL)
++	{
++		const moduleChannel_t *c = &song->channels[s_dump_ch];
++		fprintf(stderr,
++			"[PT2] ord=%d row=%d tick=%d ch=%d samp=%d "
++			"period=%d volume=%d note=%d "
++			"cmd=0x%04x finetune=%u\n",
++			(int)song->currPos, (int)song->currRow, (int)song->tick, s_dump_ch,
++			(int)c->n_samplenum,
++			(int)c->n_period, (int)c->n_volume, (int)c->n_note,
++			(unsigned)c->n_cmd, (unsigned)c->n_finetune);
++		fflush(stderr); // line-flush so a SIGKILL doesn't lose the buffer
++	}
++	// === end instrumentation ===
++
+ 	return renderEndCheck(); // MOD2WAV/PAT2SMP listens to the return value (true = not done yet)
+ }
+ 

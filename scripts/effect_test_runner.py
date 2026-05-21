@@ -66,7 +66,7 @@ DUMP_ENV = {
 # Only ft2play has the instrumentation patch applied today.
 HAS_TRACE = {
     ".xm":  True,
-    ".mod": False,
+    ".mod": True,
     ".s3m": False,
     ".it":  False,
 }
@@ -79,6 +79,20 @@ FT2_RE = re.compile(
     r"\[FT2\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+).*?"
     r"finalPeriod=(\d+).*?realVol=(\d+)"
 )
+# pt2-clone trace format (tools/pt2_clone_instrumentation.patch).
+# MOD has no envelopes / auto-vib, so the per-tick state is minimal:
+# the analogue of FT2's `finalPeriod` is `period`, and `volume` is
+# the channel's running vol (0..64). MOD-side period maps to OUR's
+# `period` field directly (both are raw Amiga periods).
+PT2_RE = re.compile(
+    r"\[PT2\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+).*?"
+    r"period=(-?\d+) volume=(-?\d+)"
+)
+# Per-canonical trace regex used by `iter_ref_trace` dispatch.
+REF_RE = {
+    ".xm":  FT2_RE,
+    ".mod": PT2_RE,
+}
 
 
 def detect_xm_channels(path: Path) -> int:
@@ -202,8 +216,10 @@ def iter_our_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], OurR
         yield cur_key, cur_row
 
 
-def iter_ft2_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], FtRow]]:
-    """Yield (key, row) per FT2 trace line, with a row-transition fixup.
+def iter_ref_trace(path: Path, regex: re.Pattern, transition_fixup: bool) -> Iterator[Tuple[Tuple[int, int, int, int], FtRow]]:
+    """Generic canonical-trace iterator. `regex` extracts (ord, row,
+    tick, ch, period, vraw) groups in order. `transition_fixup`
+    controls FT2-style row-transition re-keying.
 
     FT2's `mainPlayer` calls `getNextPos()` BEFORE the dump for the
     last tick of every row (whenever `song.timer == 1`). So FT2
@@ -212,6 +228,10 @@ def iter_ft2_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], FtRo
     `(row=R, tick=N-1)` for the same moment. Without a fixup the
     runner would mis-key every row-boundary tick and report
     spurious vraw/period divergences.
+
+    pt2-clone uses `song->currRow` (the display-side field, updated
+    via `nextPosition()`), which doesn't have FT2's increment-before-
+    dump quirk — so the fixup is skipped for MOD.
 
     Heuristic: if a line has tick > 0 AND its row differs from the
     previous line's row, re-key the row back to the previous row.
@@ -222,7 +242,7 @@ def iter_ft2_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], FtRo
     max_ord_row = (-1, -1)
     with open(path, "r", errors="replace") as f:
         for line in f:
-            m = FT2_RE.match(line)
+            m = regex.match(line)
             if not m:
                 continue
             ord_, row, tick, ch, period, vraw = (int(x) for x in m.groups())
@@ -241,7 +261,8 @@ def iter_ft2_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], FtRo
             fixed_row = row
             fixed_ord = ord_
             if (
-                tick > 0
+                transition_fixup
+                and tick > 0
                 and prev_row is not None
                 and (row != prev_row or ord_ != prev_ord)
             ):
@@ -250,6 +271,11 @@ def iter_ft2_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], FtRo
             prev_row = row
             prev_ord = ord_
             yield (fixed_ord, fixed_row, tick, ch), FtRow(period=period, vraw=vraw)
+
+
+# Backwards-compatibility alias for the XM-specific call sites.
+def iter_ft2_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], FtRow]]:
+    return iter_ref_trace(path, FT2_RE, transition_fixup=True)
 
 
 @dataclass
@@ -262,7 +288,7 @@ class Divergence:
     ref: int
 
 
-def diff_traces(our_path: Path, ref_path: Path) -> Tuple[int, int, Optional[Divergence]]:
+def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int, Optional[Divergence]]:
     """
     Intersect both traces on (ord,row,tick,ch). Returns
     (compared_count, intersection_count, first_divergence_or_none).
@@ -278,9 +304,14 @@ def diff_traces(our_path: Path, ref_path: Path) -> Tuple[int, int, Optional[Dive
     Memory cost: FT2 trace is loaded fully (typically <2MB for a 5-min
     song; we never grew larger in practice). OUR is still streamed.
     """
-    # Build FT2 index. Keep insertion-order per key.
+    # Build canonical index. Keep insertion-order per key.
+    # FT2 needs the row-transition fixup (getNextPos before dump);
+    # pt2-clone's `currRow` is already the visible-current row at
+    # dump time, so MOD skips the fixup.
+    regex = REF_RE[ref_ext]
+    transition_fixup = (ref_ext == ".xm")
     ref_queues: Dict[Tuple[int, int, int, int], list] = {}
-    for k, v in iter_ft2_trace(ref_path):
+    for k, v in iter_ref_trace(ref_path, regex, transition_fixup):
         ref_queues.setdefault(k, []).append(v)
 
     compared = 0
@@ -336,13 +367,39 @@ def render_ref(fixture: Path, ch: int, trace_path: Path) -> None:
     env_var = DUMP_ENV[ext]
     env = dict(os.environ)
     env[env_var] = str(ch)
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as wav:
-        cmd = [str(bin_path), str(fixture), "--render", wav.name]
+    # Some canonicals (pt2-clone, st3play) don't accept an --end-time
+    # flag and will keep rendering until natural song end — which for
+    # looping test fixtures is never. Cap the subprocess at 15 s; the
+    # dump fflushes after each tick so the partial trace is still
+    # usable. Non-zero return / timeout doesn't raise here unless the
+    # trace file ends up empty.
+    #
+    # Use a non-pre-existing wav path: pt2-clone's mod2WavRender does
+    # stat() on the output and triggers an interactive "OVERWRITE
+    # FILE?" askBox prompt if it exists, which in headless mode hangs
+    # silently (no trace ever emitted). tempfile.mktemp returns a
+    # path that does NOT exist yet, which is what we want.
+    wav_path = tempfile.mktemp(suffix=".wav", prefix="effect_test_")
+    try:
+        # pt2-clone changes cwd internally so it needs an absolute
+        # fixture path. ft2play handles relative paths fine, but
+        # always using absolute keeps the code simple.
+        cmd = [str(bin_path), str(fixture.resolve()), "--render", wav_path]
         with open(trace_path, "w") as tf:
-            r = subprocess.run(cmd, env=env, stdout=subprocess.DEVNULL,
-                               stderr=tf)
-        if r.returncode != 0:
-            raise RuntimeError(f"canonical render failed: {r.returncode}")
+            try:
+                r = subprocess.run(cmd, env=env, stdout=subprocess.DEVNULL,
+                                   stderr=tf, timeout=15)
+                rc = r.returncode
+            except subprocess.TimeoutExpired:
+                rc = -1  # treated as timeout (partial trace ok)
+        # Trace empty == real error; non-empty partial trace is fine.
+        if trace_path.stat().st_size == 0 and rc != 0:
+            raise RuntimeError(f"canonical render failed: rc={rc}")
+    finally:
+        try:
+            os.unlink(wav_path)
+        except OSError:
+            pass
 
 
 def run_fixture(fixture: Path, end_time: float, verbose: bool) -> None:
@@ -383,16 +440,21 @@ def run_fixture(fixture: Path, end_time: float, verbose: bool) -> None:
             except Exception as e:
                 results.append((ch, "ERROR", str(e)))
                 continue
-            compared, intersect, div = diff_traces(our_trace, ref_trace)
+            compared, intersect, div = diff_traces(our_trace, ref_trace, ext)
             if intersect == 0:
                 results.append((ch, "EMPTY", "no overlapping ticks"))
             elif div is None:
                 results.append((ch, "PASS", f"{intersect} ticks"))
             else:
+                # Per-canonical label: "ft2:", "pt2:", "st3:", "it2:".
+                ref_label = {
+                    ".xm": "ft2", ".mod": "pt2",
+                    ".s3m": "st3", ".it": "it2",
+                }.get(ext, "ref")
                 results.append((
                     ch, "FAIL",
                     f"ord={div.ord_} row={div.row} tick={div.tick} "
-                    f"{div.field}={div.our} (ft2:{div.ref})",
+                    f"{div.field}={div.our} ({ref_label}:{div.ref})",
                 ))
 
     # One-line per fixture summary, with per-channel detail underneath

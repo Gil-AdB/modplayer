@@ -30,6 +30,16 @@ if ! grep -q "\\-\\-render" "$PT2_SRC/src/pt2_main.c"; then
     patch -d "$PT2_SRC" -p1 < "$REPO/tools/pt2_clone_cli_render.patch"
 fi
 
+# Apply the per-tick state-dump patch in pt2_replayer.c. Sets up a
+# PT2_DUMP_CH-gated stderr trace ([PT2] ord/row/tick/sample/period/
+# volume/note/cmd/finetune). Cross-engine diff target for our [OUR]
+# state_dump output — same Order/Row/Tick axis so the lines align
+# grep-friendly. See tools/pt2_clone_instrumentation.patch and the
+# `effect_test_runner.py` MOD path.
+if ! grep -q "PT2_DUMP_CH" "$PT2_SRC/src/pt2_replayer.c"; then
+    patch -d "$PT2_SRC" -p1 < "$REPO/tools/pt2_clone_instrumentation.patch"
+fi
+
 cd "$PT2_SRC"
 clang -O2 $(sdl2-config --cflags) -DNDEBUG \
     src/gfx/*.c src/modloaders/*.c src/smploaders/*.c src/*.c \
