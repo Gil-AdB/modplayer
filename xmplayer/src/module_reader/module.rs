@@ -27,7 +27,15 @@
 
         let id = file.read_bytes(4)?;
 
-        let num_channels = if id == "M.K.".as_bytes() {
+        let num_channels = if id == "M.K.".as_bytes() || id == "M!K!".as_bytes() {
+            // M.K. = standard ProTracker (≤64 patterns).
+            // M!K! = same 4-channel format with >64 patterns (Noisetracker /
+            // older ProTracker quirk for songs that exceeded the original
+            // 64-pattern limit). Identical layout otherwise; `file` and
+            // OMT both treat them as PT4ch. Test: ndj-power.mod.
+            4
+        } else if id == "FLT4".as_bytes() {
+            // Startrekker 4-channel — same layout as M.K., different magic.
             4
         } else if id == "6CHN".as_bytes() {
             6
