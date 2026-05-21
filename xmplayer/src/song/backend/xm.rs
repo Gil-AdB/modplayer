@@ -318,6 +318,14 @@ impl ModuleBackend for XmBackend {
                 // volume even when the previous voice has fully faded
                 // and been returned to the pool.
                 channel.real_vol = v.volume.volume;
+            } else {
+                // No live voice on this channel — emit a channel-state
+                // dump line so the [OUR] trace still includes a key the
+                // bilateral runner can match against the canonical's
+                // unconditional per-channel dump. Without this, idle
+                // ticks have no entry and the runner's per-key FIFO
+                // can't align the streams (every row reports EMPTY).
+                channel.dump_idle(i);
             }
         }
 

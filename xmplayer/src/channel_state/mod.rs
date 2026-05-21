@@ -1005,6 +1005,42 @@ impl ChannelState {
         }
     }
 
+    /// Emit an `[OUR]` dump line for a channel with no live voice
+    /// bound this tick. Mirrors the format `update_frequency_voice`
+    /// uses so the runner's line-by-line diff against pt2-clone's
+    /// unconditional per-channel dump still sees an entry. Voice-
+    /// only fields fall back to neutral defaults (sample_position=0,
+    /// envelope positions=0, etc.). pt2-clone dumps channel state
+    /// regardless of voice activity; for MOD fixtures whose ch0 is
+    /// silent for stretches, we used to emit zero trace lines while
+    /// PT2 emitted a full trace. The runner then reported every
+    /// diff as EMPTY. With this, idle ticks still produce a key
+    /// that the runner can match against the canonical's idle line.
+    pub(crate) fn dump_idle(&self, ch_idx: usize) {
+        let ours_dump_ch_env = std::env::var("OUR_DUMP_CH").ok();
+        let ours_dump_ch: i32 = ours_dump_ch_env.as_deref().and_then(|s| s.parse().ok()).unwrap_or(-1);
+        if ours_dump_ch < 0 || ch_idx as i32 != ours_dump_ch {
+            return;
+        }
+        // Only emit for *never-triggered* channels (`last_played_note
+        // == 0`). On a channel that has played a note at any point,
+        // a momentary unbound state (e.g. retrig gap, fadeout-then-
+        // reclaim) shouldn't emit a synthesized "silent" dump line
+        // that overrides the real voice state from the same tick's
+        // `update_frequency_voice` call. retrig.xm in particular had
+        // tick=1 of row=0 firing dump_idle and reporting vraw=0
+        // against ft2play's 64 — there the voice was alive, just
+        // briefly unbound during the retrig setup.
+        if self.last_played_note != 0 {
+            return;
+        }
+        let ord = DUMP_CTX_ORD.load(Ordering::Relaxed);
+        let row = DUMP_CTX_ROW.load(Ordering::Relaxed);
+        let tick = DUMP_CTX_TICK.load(Ordering::Relaxed);
+        eprintln!("[OUR] ord={} row={} tick={} ch={} note=0 period=0 vib_shift=0 period_shift=0 freq=0 vibpos=0 vibdep=0 vibspd=0 vibwf={} fine=false vraw=0 pos=0 aVibPos=0 aVibAmp=0 aVibSwp=0 envVPos=0 envPPos=0 envVAmp=0 fadeOut=0 outVol=0.0000 freq_shift=0.0",
+            ord, row, tick, ch_idx, self.vibrato_waveform);
+    }
+
     /// Update the LFO memory slots for an `Hxy` / `Rxy` style parameter
     /// and return the *current* (speed, depth) after the recall. See
     /// `LfoMemory` for the per-format quirk this captures.

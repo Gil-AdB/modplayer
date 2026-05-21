@@ -17,6 +17,14 @@ impl ModuleBackend for ModBackend {
         let first_tick = *r.tick == 0;
         let instruments = &r.song_data.instruments;
 
+        // Context for the OUR_DUMP_CH-gated `[OUR]` debug dump. Mirrors
+        // xm.rs's atomics so dump_idle / update_frequency_voice's
+        // diagnostic line has the right ord/row/tick. Without this MOD
+        // dumps had ord=-1 row=-1 tick=-1.
+        crate::channel_state::DUMP_CTX_ORD.store(*r.song_position as i32, std::sync::atomic::Ordering::Relaxed);
+        crate::channel_state::DUMP_CTX_ROW.store(*r.row as i32, std::sync::atomic::Ordering::Relaxed);
+        crate::channel_state::DUMP_CTX_TICK.store(*r.tick as i32, std::sync::atomic::Ordering::Relaxed);
+
         // Deferred stale-pointer cleanup — see xm.rs's process_tick for
         // the rationale.
         let mut stale_clears: Vec<(usize, usize)> = Vec::new();
@@ -204,6 +212,13 @@ impl ModuleBackend for ModBackend {
                 if channel.vibrato_active_this_row && !first_tick {
                     channel.advance_vibrato_pos(v);
                 }
+            } else {
+                // Idle channel — emit channel-state dump line so the
+                // bilateral diff runner sees an entry per (ch, tick).
+                // pt2-clone dumps unconditionally; without this our
+                // [OUR] trace skips silent channels and the runner
+                // can't FIFO-match. See `dump_idle` for the fields.
+                channel.dump_idle(i);
             }
         }
 

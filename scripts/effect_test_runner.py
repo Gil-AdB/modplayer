@@ -314,23 +314,40 @@ def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int,
     for k, v in iter_ref_trace(ref_path, regex, transition_fixup):
         ref_queues.setdefault(k, []).append(v)
 
+    # MOD: our internal period is stored at 4× the raw Amiga period
+    # for sub-step slide resolution; pt2-clone reports the raw value.
+    # Scale our period down before comparing. XM/S3M/IT use their
+    # respective period spaces directly.
+    our_period_div = 4 if ref_ext == ".mod" else 1
+
     compared = 0
     intersect = 0
     first_div: Optional[Divergence] = None
+
+    # Skip ticks before the first OUR period > 0 — that's pre-trigger
+    # idle state where pt2-clone and our engine pick different
+    # uninitialized defaults (us: vraw=64 from Volume::new(), pt2: 0).
+    # Diffs there are noise, not engine bugs.
+    triggered = False
 
     for our_key, our_row in iter_our_trace(our_path):
         q = ref_queues.get(our_key)
         if not q:
             continue
         ref_row = q.pop(0)
+        if our_row.period > 0 or ref_row.period > 0:
+            triggered = True
+        if not triggered:
+            continue
         intersect += 1
-        # period: +-1 tolerance.
+        # period: +-1 tolerance, optionally scaled.
         compared += 1
-        if abs(our_row.period - ref_row.period) > 1:
+        our_period = our_row.period // our_period_div if our_period_div != 1 else our_row.period
+        if abs(our_period - ref_row.period) > 1:
             if first_div is None:
                 first_div = Divergence(
                     ord_=our_key[0], row=our_key[1], tick=our_key[2],
-                    field="period", our=our_row.period, ref=ref_row.period,
+                    field="period", our=our_period, ref=ref_row.period,
                 )
         # vraw: exact match.
         compared += 1
