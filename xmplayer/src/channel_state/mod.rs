@@ -579,9 +579,15 @@ pub enum PortaDecode {
     XmNormal,
     /// XM/MOD E1x/E2x: `param << 2`, runs on the first tick only.
     XmFine,
-    /// IT/S3M E/F magic-nibble encoding:
-    ///   xF0..xFF → extra-fine (param & 0xF, ×1, first tick)
-    ///   xE0..xEF → fine       (param & 0xF, ×4, first tick)
+    /// IT/S3M E/F magic-nibble encoding. Both st3play
+    /// (`digcmd.c::s_slidedown`) and it2play (`it_m_eff.c::InitCommandE`)
+    /// agree on the per-range scale: high nibble 0xE multiplies the low
+    /// nibble by 1 (extra-fine), high nibble 0xF multiplies by 4 (fine).
+    /// We previously had these swapped, which made S3M Exy=0xE_ slides
+    /// step by 4× the intended amount (ascent.s3m row 11 ch3/ch4 was the
+    /// canonical reproducer: Δ=+16 per row vs ST3's Δ=+4).
+    ///   xE0..xEF → extra-fine (param & 0xF, ×1, first tick)
+    ///   xF0..xFF → fine       (param & 0xF, ×4, first tick)
     ///   else     → normal     (param, ×4, after first tick)
     ItMagicNibble,
 }
@@ -702,12 +708,17 @@ pub fn decode_porta(param: u8, decode: PortaDecode) -> (u16, SlideTiming) {
         PortaDecode::XmNormal => ((param as u16) << 2, SlideTiming::AfterFirstTick),
         PortaDecode::XmFine   => ((param as u16) << 2, SlideTiming::FirstTickOnly),
         PortaDecode::ItMagicNibble => {
+            // Match st3play (digcmd.c::s_slidedown) + it2play
+            // (it_m_eff.c::InitCommandE): high nibble 0xE = ×1 (extra-
+            // fine), high nibble 0xF = ×4 (fine). Earlier this branch
+            // had the two ranges swapped, scaling ascent.s3m row 11 ch3
+            // Exy=0xE4 to +16 per row instead of +4.
             if param >= 0xF0 {
-                // Extra-fine: low nibble, ×1, first-tick only.
-                ((param & 0x0F) as u16, SlideTiming::FirstTickOnly)
-            } else if param >= 0xE0 {
                 // Fine: low nibble, ×4, first-tick only.
                 (((param & 0x0F) as u16) << 2, SlideTiming::FirstTickOnly)
+            } else if param >= 0xE0 {
+                // Extra-fine: low nibble, ×1, first-tick only.
+                ((param & 0x0F) as u16, SlideTiming::FirstTickOnly)
             } else {
                 // Normal: whole byte, ×4, after first tick.
                 ((param as u16) << 2, SlideTiming::AfterFirstTick)
@@ -1672,19 +1683,21 @@ mod porta_decode_tests {
     }
 
     #[test]
-    fn it_magic_nibble_extra_fine_above_f0() {
-        // xF0..xFF → extra-fine, low nibble ×1, first tick.
+    fn it_magic_nibble_fine_above_f0() {
+        // xF0..xFF → fine, low nibble ×4, first tick (matches st3play
+        // digcmd.c::s_slidedown and it2play it_m_eff.c::InitCommandE).
         assert_eq!(decode_porta(0xF0, PortaDecode::ItMagicNibble), (0, SlideTiming::FirstTickOnly));
-        assert_eq!(decode_porta(0xF7, PortaDecode::ItMagicNibble), (7, SlideTiming::FirstTickOnly));
-        assert_eq!(decode_porta(0xFF, PortaDecode::ItMagicNibble), (15, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_porta(0xF3, PortaDecode::ItMagicNibble), (12, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_porta(0xFF, PortaDecode::ItMagicNibble), (60, SlideTiming::FirstTickOnly));
     }
 
     #[test]
-    fn it_magic_nibble_fine_e0_to_ef() {
-        // xE0..xEF → fine, low nibble ×4, first tick.
+    fn it_magic_nibble_extra_fine_e0_to_ef() {
+        // xE0..xEF → extra-fine, low nibble ×1, first tick. Reproducer:
+        // ascent.s3m row 11 ch3 Exy=0xE4 expects +4, not +16.
         assert_eq!(decode_porta(0xE0, PortaDecode::ItMagicNibble), (0, SlideTiming::FirstTickOnly));
-        assert_eq!(decode_porta(0xE3, PortaDecode::ItMagicNibble), (12, SlideTiming::FirstTickOnly));
-        assert_eq!(decode_porta(0xEF, PortaDecode::ItMagicNibble), (60, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_porta(0xE4, PortaDecode::ItMagicNibble), (4, SlideTiming::FirstTickOnly));
+        assert_eq!(decode_porta(0xEF, PortaDecode::ItMagicNibble), (15, SlideTiming::FirstTickOnly));
     }
 
     #[test]

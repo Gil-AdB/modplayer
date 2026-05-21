@@ -73,7 +73,7 @@ HAS_TRACE = {
 
 OUR_RE = re.compile(
     r"\[OUR\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+) note=(-?\d+) "
-    r"period=(-?\d+) vib_shift=(-?\d+) period_shift=(-?\d+).*?vraw=(-?\d+)"
+    r"period=(-?\d+) vib_shift=(-?\d+) period_shift=(-?\d+) freq=(-?\d+).*?vraw=(-?\d+)"
 )
 FT2_RE = re.compile(
     r"\[FT2\] ord=(\d+) row=(\d+) tick=(\d+) ch=(\d+).*?"
@@ -176,6 +176,7 @@ class OurRow:
     vraw: int
     period_shift: int  # arp/glissando contribution (negative = pitch up)
     vib_shift: int     # vibrato contribution
+    freq: int          # Hz; already folds period_shift+vib_shift via Note::frequency
 
 
 @dataclass
@@ -218,7 +219,7 @@ def iter_our_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], OurR
             m = OUR_RE.match(line)
             if not m:
                 continue
-            ord_, row, tick, ch, _note, period, vib_shift, period_shift, vraw = (int(x) for x in m.groups())
+            ord_, row, tick, ch, _note, period, vib_shift, period_shift, freq, vraw = (int(x) for x in m.groups())
             cur_ord_row = (ord_, row)
             if max_ord_row > (-1, -1) and (
                 ord_ < max_ord_row[0]
@@ -230,13 +231,13 @@ def iter_our_trace(path: Path) -> Iterator[Tuple[Tuple[int, int, int, int], OurR
             key = (ord_, row, tick, ch)
             if cur_key is None or key == cur_key:
                 cur_key = key
-                cur_row = OurRow(period=period, vraw=vraw, period_shift=period_shift, vib_shift=vib_shift)
+                cur_row = OurRow(period=period, vraw=vraw, period_shift=period_shift, vib_shift=vib_shift, freq=freq)
                 continue
             # New key — flush previous.
             assert cur_row is not None
             yield cur_key, cur_row
             cur_key = key
-            cur_row = OurRow(period=period, vraw=vraw, period_shift=period_shift, vib_shift=vib_shift)
+            cur_row = OurRow(period=period, vraw=vraw, period_shift=period_shift, vib_shift=vib_shift, freq=freq)
     if cur_key is not None and cur_row is not None:
         yield cur_key, cur_row
 
@@ -362,6 +363,17 @@ def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int,
     #   report Δ=25 per arp tick as a spurious bug.
     our_period_div = 4 if ref_ext == ".mod" else 1
     strip_shifts = (ref_ext == ".mod")
+    # IT compares on Hz, not Amiga-style period: it2play's instrumentation
+    # patch dumps `slaveChn_t::Frequency` (a Hz value) into its `period=`
+    # field (confusing name preserved for regex parallelism with FT2/PT2/
+    # ST3). Our `[OUR]` dump exposes `freq=` directly, which already folds
+    # period_shift + vib_shift via Note::frequency. So for IT we compare
+    # OUR freq vs IT2 "period" (= Hz) with a small tolerance: IT2's value
+    # is integer-truncated and our compute path is float, so per-tick
+    # rounding mismatches of a couple Hz are expected; anything wider is
+    # a real divergence.
+    compare_on_freq = (ref_ext == ".it")
+    freq_tol = 2  # ±2 Hz for IT integer-truncated reference
 
     compared = 0
     intersect = 0
@@ -378,23 +390,39 @@ def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int,
         if not q:
             continue
         ref_row = q.pop(0)
-        if our_row.period > 0 or ref_row.period > 0:
+        # For IT, both sides report Hz (ref_row.period is actually
+        # slaveChn_t::Frequency, our_row.freq is Note::frequency). The
+        # "triggered" gate stays the same: we only need either side to
+        # have a non-zero Hz/period to consider the voice live.
+        our_trigger_val = our_row.freq if compare_on_freq else our_row.period
+        if our_trigger_val > 0 or ref_row.period > 0:
             triggered = True
         if not triggered:
             continue
         intersect += 1
         # period: +-1 tolerance, optionally scaled / shift-stripped.
+        # IT exception: compare Hz with ±freq_tol tolerance.
         compared += 1
-        our_period_raw = our_row.period
-        if strip_shifts:
-            our_period_raw -= our_row.period_shift + our_row.vib_shift
-        our_period = our_period_raw // our_period_div if our_period_div != 1 else our_period_raw
-        if abs(our_period - ref_row.period) > 1:
-            if first_div is None:
-                first_div = Divergence(
-                    ord_=our_key[0], row=our_key[1], tick=our_key[2],
-                    field="period", our=our_period, ref=ref_row.period,
-                )
+        if compare_on_freq:
+            our_val = our_row.freq
+            ref_val = ref_row.period  # = IT2 slaveChn_t::Frequency (Hz)
+            if abs(our_val - ref_val) > freq_tol:
+                if first_div is None:
+                    first_div = Divergence(
+                        ord_=our_key[0], row=our_key[1], tick=our_key[2],
+                        field="freq", our=our_val, ref=ref_val,
+                    )
+        else:
+            our_period_raw = our_row.period
+            if strip_shifts:
+                our_period_raw -= our_row.period_shift + our_row.vib_shift
+            our_period = our_period_raw // our_period_div if our_period_div != 1 else our_period_raw
+            if abs(our_period - ref_row.period) > 1:
+                if first_div is None:
+                    first_div = Divergence(
+                        ord_=our_key[0], row=our_key[1], tick=our_key[2],
+                        field="period", our=our_period, ref=ref_row.period,
+                    )
         # vraw: exact match.
         compared += 1
         if our_row.vraw != ref_row.vraw:
