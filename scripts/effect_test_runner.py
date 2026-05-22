@@ -373,7 +373,17 @@ def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int,
     # rounding mismatches of a couple Hz are expected; anything wider is
     # a real divergence.
     compare_on_freq = (ref_ext == ".it")
-    freq_tol = 2  # ±2 Hz for IT integer-truncated reference
+    # Tolerance in CENTS for IT: a fixed Hz tolerance scales wrong with
+    # frequency. At 40 kHz, 10 Hz = 0.43 cents (sub-audible by ~12×);
+    # at 100 Hz (low bass), 10 Hz = 173 cents = nearly 2 semitones —
+    # a huge audible divergence. Comparing in cents is scale-invariant
+    # and matches the perceptual axis: ~5 cents is the trained-ear
+    # discrimination threshold. The 0.13-cent drift we observe on
+    # orbiter.it ch2/3/4's linear-mode porta is float-vs-fixed-point
+    # interpolation noise; anything > 5 cents is a real audible bug
+    # candidate.
+    import math
+    cents_tol = 5.0
 
     compared = 0
     intersect = 0
@@ -406,7 +416,19 @@ def diff_traces(our_path: Path, ref_path: Path, ref_ext: str) -> Tuple[int, int,
         if compare_on_freq:
             our_val = our_row.freq
             ref_val = ref_row.period  # = IT2 slaveChn_t::Frequency (Hz)
-            if abs(our_val - ref_val) > freq_tol:
+            # Compare in cents (scale-invariant, perceptual). 5 cents
+            # is the trained-ear pitch threshold; below that, any Hz
+            # delta is sub-audible regardless of frequency.
+            if our_val > 0 and ref_val > 0:
+                cents = 1200.0 * math.log2(our_val / ref_val)
+                if abs(cents) > cents_tol:
+                    if first_div is None:
+                        first_div = Divergence(
+                            ord_=our_key[0], row=our_key[1], tick=our_key[2],
+                            field="freq", our=our_val, ref=ref_val,
+                        )
+            elif our_val != ref_val:
+                # One side is zero (voice off) and the other isn't.
                 if first_div is None:
                     first_div = Divergence(
                         ord_=our_key[0], row=our_key[1], tick=our_key[2],

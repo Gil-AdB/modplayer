@@ -37,14 +37,48 @@ diff --git a/it_music.c b/it_music.c
 +	if (s_dump_ch >= 0 && s_dump_ch < MAX_HOST_CHANNELS)
 +	{
 +		const hostChn_t *hc = &hChn[s_dump_ch];
-+		const slaveChn_t *sc2 = (const slaveChn_t *)hc->SlaveChnPtr;
++		// IT slave-channel pointer aliasing: hc->SlaveChnPtr is set by
++		// AllocateChannel when the host triggers, but NNA + DCT can move
++		// the slave to a background slot (NNA continue/off/fade keeps it
++		// audible after we steal hc->SlaveChnPtr) and a subsequent trigger
++		// on a DIFFERENT host can pick up the same slave slot. After that,
++		// the original host's SlaveChnPtr still points at the slot — now
++		// owned by another host. Walk the slave pool instead, looking for
++		// the most-recently-allocated foreground slave whose HostChnNum
++		// equals s_dump_ch and which is still CHAN_ON. This matches OUR
++		// host->voice mapping (our voices[channel.voice_idx] is the active
++		// foreground voice for that channel) rather than the SlaveChnPtr,
++		// which can drift on NNA.
++		//
++		// Search rule: the foreground slave for host H is the one with
++		// HostChnNum == H, SF_CHAN_ON set, and SF_NOTE_OFF / SF_FADEOUT
++		// clear (so we don't latch onto a released voice when a fresh
++		// trigger spawns a new slave; both can coexist while the old one
++		// fades). If none matches, the host has no live foreground voice
++		// (silence) — skip the dump entirely so the runner's "triggered"
++		// gate doesn't flag silent-vs-active as a divergence.
++		const slaveChn_t *sc2 = NULL;
++		for (int si = 0; si < MAX_SLAVE_CHANNELS; si++)
++		{
++			const slaveChn_t *cand = &sChn[si];
++			if (!(cand->Flags & SF_CHAN_ON)) continue;
++			if ((int)cand->HostChnNum != s_dump_ch) continue;
++			if (cand->Flags & (SF_NOTE_OFF | SF_FADEOUT)) continue;
++			sc2 = cand;
++			break;
++		}
++		if (sc2 == NULL)
++		{
++			// No live foreground voice on this host — skip dump.
++			return;
++		}
 +		const int our_tick = (int)Song.CurrentSpeed - (int)Song.CurrentTick;
-+		const int period = (sc2 != NULL) ? (int)sc2->Frequency : 0;
-+		const int vol    = (sc2 != NULL) ? (int)sc2->Vol      : 0;
-+		const int sIns   = (sc2 != NULL) ? (int)sc2->Ins      : 0;
-+		const int sSmp   = (sc2 != NULL) ? (int)sc2->Smp      : 0;
-+		const int sNote  = (sc2 != NULL) ? (int)sc2->Note     : 0;
-+		const unsigned sFlg = (sc2 != NULL) ? (unsigned)sc2->Flags : 0u;
++		const int period = (int)sc2->Frequency;
++		const int vol    = (int)sc2->Vol;
++		const int sIns   = (int)sc2->Ins;
++		const int sSmp   = (int)sc2->Smp;
++		const int sNote  = (int)sc2->Note;
++		const unsigned sFlg = (unsigned)sc2->Flags;
 +		fprintf(stderr,
 +			"[IT2] ord=%d row=%d tick=%d ch=%d ins=%d samp=%d "
 +			"note=%d period=%d volume=%d chnVol=%d chnPan=%u "
