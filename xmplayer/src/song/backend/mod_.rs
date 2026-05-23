@@ -105,16 +105,22 @@ impl ModuleBackend for ModBackend {
 
                         let sample = &instruments[inst_idx].samples[sample_idx];
                         set_channel_note(channel, voice, sample.relative_note, sample.finetune, pattern.note, r.rate, r.frequency_tables);
-                        // Amiga period clamp. Our FT2-derived AMIGA_PERIODS
-                        // table extrapolates beyond real-Paula range and
-                        // returns periods <113 for high notes with positive
-                        // finetune (note 72 ft+4 = internal 440 = real 110;
-                        // pt2/OMT use 113). Clamp the trigger result so
-                        // playback rate matches Amiga limits.
-                        // AmigaLimitsFinetune.mod is the canonical repro.
-                        let p = channel.note.period.clamp(452, 3424);
-                        channel.note.period = p;
-                        channel.note.base_period = p;
+                        // Amiga period clamp — gated on the load-time
+                        // `mod_amiga_clamp` heuristic. When set, the song
+                        // looks Amiga-authored (Paula hardware would
+                        // clamp [113, 856] = internal [452, 3424]) and we
+                        // match that audibly. When unset (multi-channel
+                        // signatures, or pattern data with periods
+                        // outside the Amiga range, or 8xx panning), the
+                        // song was authored on a PC tracker and would
+                        // be over-clamped — leave raw periods alone.
+                        // See `scripts/mod_amiga_clamp_heuristics.py`
+                        // for the corpus analysis behind the policy.
+                        if r.song_data.mod_amiga_clamp {
+                            let p = channel.note.period.clamp(452, 3424);
+                            channel.note.period = p;
+                            channel.note.base_period = p;
+                        }
                         // STM uses c5_speed (loader-populated); MOD leaves
                         // it at 0. +11 mirrors S3M (STM parser octave shift).
                         if sample.c5_speed != 0 {

@@ -635,6 +635,7 @@ use crate::instrument::{Instrument, LoopType, Sample, VibratoEnvelope};
             old_effects: (flags & 0x10) != 0,
             compatible_g: (flags & 0x20) != 0,
             fast_volume_slides: false,
+            mod_amiga_clamp: false,
         })
     }
 

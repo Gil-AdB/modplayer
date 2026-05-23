@@ -414,6 +414,7 @@ fn read_xm_header<R: Read + Seek>(file: &mut R) -> SimpleResult<SongData>
         old_effects: false,
         compatible_g: false,
         fast_volume_slides: false,
+            mod_amiga_clamp: false,
     })
 }
 

@@ -241,6 +241,7 @@
             old_effects: false,
             compatible_g: true, // S3M always uses compatible G behavior
             fast_volume_slides,
+            mod_amiga_clamp: false,  // MOD-only flag
         })
     }
 

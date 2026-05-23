@@ -66,7 +66,15 @@
 
         let id_str = file.read_string(4);
 
-        let mut patterns = read_patterns(file, pattern_count as usize, num_channels as usize)?;
+        // `pattern_scan_signals` captures heuristic signals from raw
+        // pattern bytes during `read_patterns`. Used below to decide
+        // Amiga-clamp policy. See policy notes near `mod_amiga_clamp`.
+        let mut has_oob_period = false;
+        let mut has_8xx_effect = false;
+        let mut patterns = read_patterns(
+            file, pattern_count as usize, num_channels as usize,
+            &mut has_oob_period, &mut has_8xx_effect,
+        )?;
 
         read_sample_data(file, &mut instruments)?;
 
@@ -108,6 +116,23 @@
         let pre_amp = (256u32 / num_channels as u32).clamp(32, 128);
         let mixing_volume = ((128u32 * pre_amp) / 64).min(255) as u8;
 
+        // Amiga-clamp heuristic. Apply Paula's hardware period clamp
+        // [113, 856] ONLY when the song looks authored for Amiga
+        // playback. Multi-channel signatures (>4 channels) are never
+        // Amiga (Paula has 4 voices). For 4-channel signatures, the
+        // pattern scan above captures two PC-tracker tells:
+        //   - has_oob_period: any cell with period < 113 or > 856
+        //     (file encodes notes outside Amiga range — author used
+        //     a tracker that exposes the full range)
+        //   - has_8xx_effect: any cell uses 8xx (set panning) — PT
+        //     ignores this, so its presence means non-PT authoring
+        // Either signal demotes the song to "PC-authored": don't clamp.
+        // See `scripts/mod_amiga_clamp_heuristics.py` for the policy +
+        // corpus analysis (24/108 files trip a strong signal, mostly SC2).
+        let mod_amiga_clamp = num_channels == 4
+            && !has_oob_period
+            && !has_8xx_effect;
+
         Ok(SongData {
             id: id_str.trim().to_string(),
             name: name.trim().to_string(),
@@ -135,6 +160,7 @@
             old_effects: true,
             compatible_g: true,
             fast_volume_slides: false,
+            mod_amiga_clamp,
         })
     }
 
@@ -145,7 +171,13 @@
         Ok(())
     }
 
-    fn read_patterns<R: Read>(file: &mut R, pattern_count: usize, channel_count: usize) -> SimpleResult<Vec<Patterns>> {
+    fn read_patterns<R: Read>(
+        file: &mut R,
+        pattern_count: usize,
+        channel_count: usize,
+        out_has_oob_period: &mut bool,
+        out_has_8xx: &mut bool,
+    ) -> SimpleResult<Vec<Patterns>> {
         let mut patterns: Vec<Patterns> = vec![];
         patterns.reserve_exact(pattern_count as usize);
 
@@ -165,6 +197,14 @@
                     let period = ((data >> 16) & 0x0FFF) as u16;
                     let effect = ((data & 0xF00) >> 8) as u8;
                     let effect_param = (data & 0xFF) as u8;
+
+                    // Amiga-clamp heuristic signals (see SongData::mod_amiga_clamp).
+                    if period != 0 && (period < 113 || period > 856) {
+                        *out_has_oob_period = true;
+                    }
+                    if effect == 0x8 {
+                        *out_has_8xx = true;
+                    }
 
                     // Map period byte (MOD/PT cell) → 1-based note index.
                     // The table is descending (bigger period = lower

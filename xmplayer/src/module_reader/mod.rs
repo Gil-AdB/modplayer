@@ -126,6 +126,24 @@ pub struct SongData {
     /// fast-volume-slides flag bit (flags & 0x40) is set. Other formats
     /// leave this at false.
     pub                     fast_volume_slides:      bool,
+    /// MOD-only. When true, the song was authored to expect Amiga Paula's
+    /// hardware period clamp [113, 856] and we should match that
+    /// behavior audibly (pt2-clone emulates the clamp at the chip
+    /// level). When false, the song was authored on a PC tracker
+    /// (or with PC playback in mind — e.g. SC2's M.K. ditties) and
+    /// would be over-clamped by enforcing the Amiga range; in that
+    /// case we leave periods unclamped.
+    ///
+    /// Decided at load time by `module::mod_amiga_clamp_heuristic`
+    /// (see `scripts/mod_amiga_clamp_heuristics.py` for the policy
+    /// rationale). Default `true` for `M.K./M!K!/FLT4` 4-channel
+    /// signatures unless the pattern scan trips one of the
+    /// "definitely PC" signals:
+    ///   - any pattern cell with period < 113 or > 856 (file
+    ///     already encodes notes outside Amiga range)
+    ///   - any cell using effect 8xx (set panning — PT ignores it)
+    /// Multi-channel signatures (6CHN/8CHN/xxCH) are always false.
+    pub                     mod_amiga_clamp:         bool,
 }
 
 impl Default for SongData {
@@ -157,6 +175,7 @@ impl Default for SongData {
             old_effects: false,
             compatible_g: false,
             fast_volume_slides: false,
+            mod_amiga_clamp: false,
         }
     }
 }

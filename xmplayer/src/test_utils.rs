@@ -124,6 +124,7 @@ impl MockSongBuilder {
             old_effects: false,
             compatible_g: false,
             fast_volume_slides: false,
+            mod_amiga_clamp: false,
         }
     }
 
