@@ -194,6 +194,33 @@ impl SongState {
         &self.rx
     }
 
+    /// Current playback position, read **lock-free** from the display/status
+    /// triple-buffer snapshot (`PlayData`) the mixer publishes each buffer via
+    /// `Song::queue_display`. Never touches the song mutex, so it is safe to
+    /// call from any thread even while the sdl2 `play_thread` holds that mutex
+    /// for the whole track.
+    ///
+    /// Returns `(order, row, tick_in_row, song_tick_ms)`:
+    /// - `order` — pattern-order index (`song_position`)
+    /// - `row` — row within the current pattern
+    /// - `tick_in_row` — tick within the current row (0..speed-1)
+    /// - `song_tick_ms` — monotonic playback clock in milliseconds since
+    ///   playback start (`current_duration_ms`); survives `set_order` jumps.
+    ///
+    /// NOTE: the snapshot is only republished while the display path is
+    /// enabled (`set_display(true)`). With display disabled the mixer never
+    /// calls `queue_display`, so this returns the last-published (initially
+    /// zero) values.
+    pub fn get_position(&self) -> (u32, u32, u32, u64) {
+        let (play_data, _state) = self.triple_buffer_reader.get_read_buffer();
+        (
+            play_data.song_position as u32,
+            play_data.row as u32,
+            play_data.tick,
+            play_data.current_duration_ms as u64,
+        )
+    }
+
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
         self.triple_buffer_reader.wake_reader();

@@ -150,6 +150,30 @@ extern "C" fn Modplayer_SetDisplay(app_ptr: *mut c_void, on: bool) {
     self_.set_display(on);
 }
 
+// Read the current playback position lock-free (no song-mutex, never blocks
+// the mixer/audio thread). Mirrors Modplayer_SetOrder's calling convention.
+// Values are pulled from the display/status snapshot the player publishes
+// each audio buffer (see SongState::get_position), so they only advance while
+// the display path is enabled (Modplayer_SetDisplay(handle, true)); with
+// display off they hold their last-published value. Every out-pointer is
+// optional — a null pointer skips that field.
+#[unsafe(no_mangle)]
+extern "C" fn Modplayer_GetPosition(app_ptr: *mut c_void,
+                                    order: *mut u32,
+                                    row: *mut u32,
+                                    tick_in_row: *mut u32,
+                                    song_tick: *mut u64) {
+    if app_ptr.is_null() { return; }
+    let self_ = unsafe { &*(app_ptr as *const App) };
+    let (o, r, t, s) = self_.song_handle.get_position();
+    unsafe {
+        if !order.is_null()       { *order       = o; }
+        if !row.is_null()         { *row         = r; }
+        if !tick_in_row.is_null() { *tick_in_row = t; }
+        if !song_tick.is_null()   { *song_tick   = s; }
+    }
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn Modplayer_Create(path: *const c_char) -> *mut c_void {
          match App::new(unsafe { CStr::from_ptr(path) }.to_str().unwrap().to_string()) {
